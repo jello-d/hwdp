@@ -25,9 +25,11 @@ done
 # the man page landed
 [ -e "$XDG_DATA_HOME/man/man1/hwdp.1" ] || fail "man page not installed"
 
-# check runs against the sandbox (deps may be absent here; do not gate on RC,
-# only that it emits its markers and does not crash)
-sh "$HERE/setup.sh" check >"$T/check.out" 2>&1 || true
+# check runs against the sandbox: put the sandbox bin FIRST on PATH so
+# `command -v` resolves the just-linked tools, not whatever the box has. Deps
+# may be absent here, so do not gate on RC -- only that it reports the tools.
+PATH="$XDG_BIN_HOME:$PATH" sh "$HERE/setup.sh" check >"$T/check.out" 2>&1 \
+  || true
 grep -q '\[OK\].*hwprofile present' "$T/check.out" \
   || fail "check did not report the linked tools"
 
