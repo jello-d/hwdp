@@ -1,0 +1,181 @@
+#!/bin/sh
+# hwprofile -- detect hardware (and substrate) CAPABILITIES into a sticky,
+# fingerprinted profile so consumers gate on WHAT THE BOX HAS, not on its
+# hostname. The generalization of kanshi-autoscale (which sniffs the panel and
+# picks a scale with no host config). Most caps are hardware; btrfs-root is a
+# SUBSTRATE fact (the root filesystem), detected by the identical mechanism.
+#
+# Each capability names a detector below (a CLOSED vocabulary -- data selects a
+# detector, it never injects a command). A detector reads live hardware and
+# prints "<value><TAB><fingerprint>": an empty value means the capability is
+# ABSENT; the fingerprint is the hardware signature the value was derived from.
+#
+# STICKY + fingerprinted, exactly the auto-scale model: a record is recomputed
+# only when its fingerprint changes, so a hand edit of the profile file survives
+# until the hardware itself does. Safe to run any time; idempotent.
+#
+# The consumer is a reader (e.g. a has-capability helper in the integrator's
+# framework) which READS this file and never live-probes. This helper only emits
+# facts -- nothing here changes box state (no reauthorize, no driver load);
+# acting on a capability is the integrator's job. Run it at session start (wired
+# by the first consumer) or by hand.
+#
+# The profile file path is a seam: set HWPROFILE to share it with the reader (an
+# integrator points both at one path). The default is a tool-owned location.
+set -eu
+
+PROFILE=${HWPROFILE:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwprofile/profile}
+SYSUSB=${SYSUSB:-/sys/bus/usb/devices}
+BTCLASS=${BTCLASS:-/sys/class/bluetooth}
+ROOTMNT=${ROOTMNT:-/}
+TAB=$(printf '\t')
+
+# The closed catalog. Each name maps to a detect_<name> below (hyphens ->
+# underscores); an unknown name fails loud in detect().
+CAPABILITIES=${CAPABILITIES:-'bt-older-adapter nvidia-gpu chassis btrfs-root'}
+
+# --- bt-older-adapter (derived) ------------------------------------------
+# Two BT adapters means one brings a newer protocol; disable the OLDER (lowest
+# LMP version). The fingerprint is the SET of adapter USB ids, enumerated from
+# the device-class descriptor (e0/01/01) which sysfs keeps even when a device
+# is DEAUTHORIZED -- so the set stays stable after bt-dongle disables the loser,
+# and the sticky value holds. LMP is only readable from a LIVE hci, so a fresh
+# comparison needs every adapter up (a fresh box); otherwise we emit the
+# fingerprint alone and let the stored loser stand.
+
+_bt_adapters() {   # sorted vid:pid of every BT-class USB device (auth or not)
+  for _d in "$SYSUSB"/*; do
+    [ -f "$_d/idVendor" ] || continue
+    [ "$(cat "$_d/bDeviceClass" 2>/dev/null)" = e0 ] || continue
+    [ "$(cat "$_d/bDeviceSubClass" 2>/dev/null)" = 01 ] || continue
+    [ "$(cat "$_d/bDeviceProtocol" 2>/dev/null)" = 01 ] || continue
+    printf '%s:%s\n' "$(cat "$_d/idVendor")" "$(cat "$_d/idProduct")"
+  done | sort -u
+}
+
+_hci_vidpid() {   # <hciN path> -> vid:pid of its backing USB device
+  _p=$(readlink -f "$1/device" 2>/dev/null) || return 1
+  while [ -n "$_p" ] && [ "$_p" != / ]; do
+    if [ -f "$_p/idVendor" ]; then
+      printf '%s:%s' "$(cat "$_p/idVendor")" "$(cat "$_p/idProduct")"
+      return 0
+    fi
+    _p=$(dirname "$_p")
+  done
+  return 1
+}
+
+_hci_lmp() {   # <hciN name> -> LMP version token (0x..), '' if unreadable
+  hciconfig -a "$1" 2>/dev/null | sed -n \
+    's/.*LMP Version: *[^(]*(\(0x[0-9a-fA-F]*\)).*/\1/p' | head -1
+}
+
+detect_bt_older_adapter() {
+  _fp=$(_bt_adapters | paste -sd, -)
+  _n=$(_bt_adapters | grep -c . || true)
+  [ "${_n:-0}" -ge 2 ] || { printf '%s%s' '' "$TAB"; return 0; }
+
+  _pairs=; _live=0
+  for _h in "$BTCLASS"/hci*; do
+    [ -e "$_h" ] || continue
+    _vp=$(_hci_vidpid "$_h") || continue
+    _lmp=$(_hci_lmp "$(basename "$_h")"); [ -n "$_lmp" ] || continue
+    _live=$((_live + 1))
+    _pairs="$_pairs$_vp $((_lmp))
+"
+  done
+
+  # Incomplete view (a loser already deauthorized): emit the fingerprint only,
+  # so resolve() keeps the stored loser rather than guessing from a partial set.
+  if [ "$_live" -lt "$_n" ] || [ -z "$_pairs" ]; then
+    printf '%s%s' '' "$TAB$_fp"; return 0
+  fi
+
+  _min=$(printf '%s' "$_pairs" | awk 'NF{print $2}' | sort -n | head -1)
+  _cnt=$(printf '%s' "$_pairs" \
+    | awk -v m="$_min" 'NF&&$2==m{c++}END{print c+0}')
+  if [ "$_cnt" -gt 1 ]; then
+    echo "hwprofile: bt-older-adapter tie at LMP $_min; no loser" >&2
+    printf '%s%s' '' "$TAB$_fp"; return 0
+  fi
+  _loser=$(printf '%s' "$_pairs" | awk -v m="$_min" 'NF&&$2==m{print $1;exit}')
+  printf '%s%s' "$_loser" "$TAB$_fp"
+}
+
+# --- nvidia-gpu (derived) ------------------------------------------------
+# An NVIDIA display controller present. value 'nvidia'; fingerprint = the sorted
+# 10de:<dev> ids, so a card swap recomputes.
+detect_nvidia_gpu() {
+  _ids=$(lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' \
+    | grep -oiE '10de:[0-9a-f]{4}' | tr 'A-F' 'a-f' | sort -u | paste -sd, -)
+  if [ -n "$_ids" ]; then printf 'nvidia%s' "$TAB$_ids"
+  else printf '%s' "$TAB"; fi
+}
+
+# --- chassis (derived) ---------------------------------------------------
+# The form factor (desktop/laptop/...). value = the type; fingerprint = same,
+# so a type change (rare) recomputes.
+detect_chassis() {
+  _c=$(hostnamectl chassis 2>/dev/null || true)
+  [ -n "$_c" ] || { printf '%s' "$TAB"; return 0; }
+  printf '%s%s' "$_c" "$TAB$_c"
+}
+
+# --- btrfs-root (substrate, derived) -------------------------------------
+# The root filesystem is btrfs -- the substrate the btrfs snapshot/boot tooling
+# (snapper, grub-btrfs) is built on. NOT hardware, but the same detect/sticky/
+# gate mechanism fits: a module deploys the btrfs layer only where the box is
+# ACTUALLY built on it, never by hostname. value 'btrfs' when root is btrfs,
+# else ABSENT; fingerprint = the root FS UUID, so a repave onto a different
+# filesystem recomputes (UUID unreadable -> 'btrfs', still a stable non-empty).
+detect_btrfs_root() {
+  _fst=$(findmnt -fno FSTYPE "$ROOTMNT" 2>/dev/null || true)
+  if [ "$_fst" = btrfs ]; then
+    _uuid=$(findmnt -fno UUID "$ROOTMNT" 2>/dev/null || true)
+    printf 'btrfs%s' "$TAB${_uuid:-btrfs}"
+  else
+    printf '%s' "$TAB"
+  fi
+}
+
+detect() {   # <cap> -> "<value><TAB><fingerprint>"; unknown cap fails loud
+  case $1 in
+    bt-older-adapter) detect_bt_older_adapter ;;
+    nvidia-gpu)       detect_nvidia_gpu ;;
+    chassis)          detect_chassis ;;
+    btrfs-root)       detect_btrfs_root ;;
+    *) echo "hwprofile: unknown capability '$1'" >&2; return 1 ;;
+  esac
+}
+
+# resolve <cap> <value> <fp>: keep the stored value when the fingerprint still
+# matches (honouring a hand edit), else adopt the freshly detected one. Rewrites
+# the cap's line in $PROFILE and prints the resolved value. Mirrors kanshi's.
+resolve() {
+  _cap=$1; _val=$2; _fp=$3
+  if [ -f "$PROFILE" ]; then
+    _line=$(awk -F"$TAB" -v c="$_cap" '$1==c{print;exit}' "$PROFILE")
+    if [ -n "$_line" ] \
+       && [ "$(printf '%s' "$_line" | cut -f3)" = "$_fp" ]; then
+      # Honour the stored value only when it is NON-EMPTY: an empty record is an
+      # absence (a prior partial/abstained detection), not a sticky value, so a
+      # later complete run recomputes over it rather than inheriting the blank.
+      _stored=$(printf '%s' "$_line" | cut -f2)
+      [ -n "$_stored" ] && _val=$_stored
+    fi
+  fi
+  _tmp=$(mktemp)
+  [ -f "$PROFILE" ] && awk -F"$TAB" -v c="$_cap" '$1!=c' "$PROFILE" >"$_tmp"
+  printf '%s\t%s\t%s\n' "$_cap" "$_val" "$_fp" >>"$_tmp"
+  mkdir -p "$(dirname "$PROFILE")"; mv "$_tmp" "$PROFILE"
+  printf '%s' "$_val"
+}
+
+for _cap in $CAPABILITIES; do
+  _out=$(detect "$_cap") || { echo "hwprofile: detector error: $_cap" >&2
+    continue; }
+  _v=$(printf '%s' "$_out" | cut -f1)
+  _f=$(printf '%s' "$_out" | cut -f2)
+  _r=$(resolve "$_cap" "$_v" "$_f")
+  printf '%s = %s\n' "$_cap" "${_r:-<absent>}"
+done

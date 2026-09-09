@@ -1,0 +1,82 @@
+.TH HWDP 1 "2026" "hwdp" "User Commands"
+.SH NAME
+hwdp \- hardware display-profile detection, layout, and autoscale suite
+.SH DESCRIPTION
+.B hwdp
+recognises which monitors are present and lays out / autoscales the workspace
+for them, keyed on the HARDWARE (an EDID-derived display-profile id), never on
+a hostname. It is a suite of five tools installed on
+.BR PATH ;
+there is no eponymous
+.B hwdp
+command. It is environment-agnostic: it works under X11 or a wlroots compositor,
+and hardcodes no downstream tool \(em everything session-specific is a HOOK or a
+pluggable BACKEND an integrator fills.
+.SH TOOLS
+.TP
+.B hwprofile
+Detect hardware/substrate capabilities (a second Bluetooth adapter, an NVIDIA
+GPU, the chassis, a btrfs root) into a sticky, fingerprinted profile so a
+consumer gates on WHAT THE BOX HAS, not its hostname. A record is recomputed
+only when its hardware fingerprint changes, so a hand edit survives. The profile
+file path is the seam
+.BR HWPROFILE ;
+point it and the reader at one path.
+.TP
+.B kanshi-autoscale
+Pick or synthesize the kanshi layout for the connected monitor set and fill each
+output's scale from panel DPI. Subcommands:
+.BR hwdp " (the display-profile id), " shape " (single/triple), " uiprofile
+(per-display UI sizing lines a consumer sources),
+.BR capture .
+.TP
+.B kanshi-mgr
+Own kanshi's lifecycle in a session (supervise-or-nudge via
+.BR flock ),
+regenerate the config through
+.BR kanshi-autoscale ,
+and re-apply on compositor-config changes. It fires display-change HOOKS from
+.IR <root>/<edge>.d/* " (edges: " pre ", " changed )
+so an integrator wires reactions; it knows nothing of any specific compositor
+tool. Hook roots:
+.BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
+(default /etc/hwdp/hooks).
+.TP
+.B display-geometry
+Print one line per enabled output \(em
+.I NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+\(em from
+.B wlr-randr
+(wlroots),
+.B xrandr
+(X11), or a richer backend plugged in via
+.BR HWDP_GEOM_BACKEND .
+Settles by default (samples until the layout holds still);
+.B \-\-now
+prints one snapshot.
+.TP
+.B run-scaled
+Magnify a single application via a nested
+.B gamescope
+window (renders at a size/scale and upscales), windowed or fullscreen.
+.SH FILES
+.TP
+.I ~/.config/hwdp/hooks/<edge>.d/*
+User display-change hooks run by kanshi-mgr.
+.TP
+.I ~/.config/kanshi/{profiles,auto-scale}
+kanshi-autoscale's layout templates and sticky per-panel scale overrides.
+.SH ENVIRONMENT
+.TP
+.B HWPROFILE
+Path to the capability profile file (writer + reader share it).
+.TP
+.B HWDP_HOOK_ROOT ", " HWDP_MACHINE_HOOKS
+Roots for kanshi-mgr's display-change hooks.
+.TP
+.B HWDP_GEOM_BACKEND
+An executable that replaces display-geometry's built-in backends wholesale.
+.SH SEE ALSO
+.BR kanshi (1),
+.BR wlr-randr (1),
+.BR gamescope (1)

@@ -1,0 +1,140 @@
+#!/bin/sh
+# display-geometry - print one line per enabled output; environment-agnostic.
+#
+# A layer of indirection over WHERE the geometry comes from, so it runs under
+# any session:
+#   - an integrator can plug in a richer backend (e.g. one that speaks
+#     wlr-output-management directly and settles on its `done` event) via
+#     HWDP_GEOM_BACKEND -- if set + executable, it owns the whole job;
+#   - otherwise a built-in backend reads live outputs from wlr-randr
+#     (wlroots/Wayland) or xrandr (X11).
+#
+#   default       settle: sample until the layout stops changing, then print
+#   --now         print the first snapshot immediately (no settle)
+#   --quiet-ms N  settle window in ms (default 200)
+#   --timeout S   overall cap in seconds (default 30)
+#
+# Output, one line per ENABLED output, whitespace separated (STABLE CONTRACT):
+#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+#
+# TRANSFORM values are wl_output_transform (COUNTER-CLOCKWISE), the kanshi /
+# wlr-randr convention; a sway config `transform` is CLOCKWISE -- 180 apart, so
+# shift by 180 (90<->270) to reuse a value across the two.
+set -u
+
+# Integrator backend seam: if set + executable, it owns the whole job (args
+# passed through), so a richer implementation replaces the built-ins wholesale.
+BACKEND=${HWDP_GEOM_BACKEND:-}
+if [ -n "$BACKEND" ] && [ -x "$BACKEND" ]; then
+  exec "$BACKEND" "$@"
+fi
+
+NOW=0
+QUIET_MS=200
+TIMEOUT=30
+while [ $# -gt 0 ]; do
+  case $1 in
+    --now)        NOW=1 ;;
+    --quiet-ms)   QUIET_MS=$2; shift ;;
+    --quiet-ms=*) QUIET_MS=${1#*=} ;;
+    --timeout)    TIMEOUT=$2; shift ;;
+    --timeout=*)  TIMEOUT=${1#*=} ;;
+    -h|--help)    sed -n '2,24p' "$0"; exit 0 ;;
+    *) echo "display-geometry: unknown arg: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+# wlroots/Wayland: parse wlr-randr's per-output text into the line contract.
+# One output block starts at a non-indented NAME line; the current mode is the
+# WxH on the "(current)" line; logical size is the mode divided by scale, w/h
+# swapped for a 90/270 (or flipped-90/270) transform.
+_snapshot_wlr() {
+  wlr-randr 2>/dev/null | awk '
+    function emit() {
+      if (name != "" && en && cw > 0) {
+        rot = (tx=="90"||tx=="270"||tx=="flipped-90"||tx=="flipped-270")
+        lw = rot ? ch : cw; lh = rot ? cw : ch
+        s = (sc > 0) ? sc : 1
+        lw = int(lw/s + 0.5); lh = int(lh/s + 0.5)
+        orient = (lh > lw) ? "portrait" : "landscape"
+        printf "%s %d %d %s %g %d %d %d %d %s\n",
+          name, cw, ch, tx, s, px, py, lw, lh, orient
+      }
+    }
+    /^[^ \t]/          { emit(); name=$1; en=0; cw=0; ch=0
+                         tx="normal"; sc=1; px=0; py=0 }
+    /^[ \t]+Enabled:/  { en = ($2 == "yes") }
+    /\(current\)/      { split($1, a, "x"); cw=a[1]; ch=a[2] }
+    /^[ \t]+Position:/ { split($2, p, ","); px=p[1]; py=p[2] }
+    /^[ \t]+Transform:/ { tx=$2 }
+    /^[ \t]+Scale:/    { sc=$2 }
+    END { emit() }
+  '
+}
+
+# X11: parse xrandr. Rotation/scale on X11 is uncommon for these tools, so this
+# reports transform=normal, scale=1 (the geometry token already reflects any
+# active rotation); a rotated X11 head still gets correct logical w/h from it.
+_snapshot_x11() {
+  xrandr 2>/dev/null | awk '
+    $2 == "connected" {
+      name=$1; geom=""
+      for (i=3; i<=NF; i++)
+        if ($i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+$/) { geom=$i; break }
+      if (geom != "") {
+        split(geom, g, /[x+]/)
+        w=g[1]; h=g[2]; x=g[3]; y=g[4]
+        orient = (h > w) ? "portrait" : "landscape"
+        printf "%s %d %d normal 1 %d %d %d %d %s\n", name, w, h, x, y, w, h,
+          orient
+      }
+    }
+  '
+}
+
+_snapshot() {
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wlr-randr >/dev/null 2>&1; then
+    _snapshot_wlr
+  elif [ -n "${DISPLAY:-}" ] && command -v xrandr >/dev/null 2>&1; then
+    _snapshot_x11
+  else
+    echo "display-geometry: no usable backend (need wlr-randr on Wayland or" \
+         "xrandr on X11, or set HWDP_GEOM_BACKEND)" >&2
+    return 3
+  fi
+}
+
+# Generic settle: sample until two consecutive non-empty snapshots match (the
+# layout held still for one quiet window), capped by --timeout. Approximates the
+# event-driven backend's debounce without needing the protocol.
+_settle() {
+  _q=$(awk "BEGIN{print $QUIET_MS/1000}")
+  _max=$(awk "BEGIN{print int($TIMEOUT/($QUIET_MS/1000)) + 1}")
+  _prev=""
+  _i=0
+  while [ "$_i" -lt "$_max" ]; do
+    _cur=$(_snapshot) || return $?
+    if [ -n "$_cur" ] && [ "$_cur" = "$_prev" ]; then
+      printf '%s\n' "$_cur"
+      return 0
+    fi
+    _prev=$_cur
+    sleep "$_q"
+    _i=$((_i + 1))
+  done
+  if [ -n "$_prev" ]; then
+    printf '%s\n' "$_prev"
+    echo "display-geometry: settle timed out; last-known state" >&2
+    return 0
+  fi
+  return 1
+}
+
+if [ "$NOW" -eq 1 ]; then
+  out=$(_snapshot) || exit $?
+else
+  out=$(_settle) || exit $?
+fi
+[ -n "$out" ] || exit 1
+printf '%s\n' "$out"

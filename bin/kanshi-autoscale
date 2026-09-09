@@ -1,0 +1,280 @@
+#!/bin/sh
+# kanshi-autoscale -- pick the kanshi layout for the CONNECTED monitor set and
+# fill each output's SCALE from panel DPI, so the fixed-pixel UI stays
+# physically consistent on any panel. kanshi-mgr runs this at supervisor start
+# and points kanshi at the emitted config.
+#
+# ROTATION GOTCHA: the `transform` values captured/emitted here are
+# wl_output_transform (kanshi/wlr-randr) = COUNTER-CLOCKWISE. The sway greeter's
+# `output transform` is CLOCKWISE -- the two are 180 degrees apart, so to reuse
+# a value across them shift by 180 (swap 90<->270; 0 and 180 are unchanged).
+#
+# Layout selection is by HARDWARE, not hostname:
+# the connected outputs' EDIDs are hashed into the HWDP -- the HARDWARE DISPLAY
+# PROFILE id, a compound id for the connected display set -- which names a
+# profile under $PROFILES (profiles/<hwdp>.conf). A matching profile is the
+# authored layout (transforms/positions); with none, a simple side-by-side
+# profile is synthesized -- so a single-panel laptop needs no profile at all.
+# `capture` snapshots the current arrangement into such a profile. HWDP is
+# deliberately NOT called a "fingerprint" -- that word is kept for the biometric
+# fprint reader, a different domain.
+#
+# The scale is STICKY and hand-editable: it lives in $STICKY keyed by the
+# output's EDID (make/model/serial) with a per-output SIGNATURE, and is only
+# recomputed when that signature changes (a panel swap). A hand edit sticks
+# until then -- detection is smart but never clobbers an override.
+#
+# Scale model: NATIVE, always 1.0. We never downscale -- a scale < 1 enlarges
+# the logical space past the panel and the compositor downsamples to soft, bit-
+# mashed text. So every output renders at scale 1 (crisp), and the fixed-pixel
+# UI's overflow on a small panel is absorbed by templating the bar per panel in
+# wb (height/font/module set), not by shrinking the whole output. The compositor
+# hard-floors output scale at 1 too (wayfire-scale-clamp.patch), so a stale or
+# hand-edited scale < 1 can never actually render. See scale_for. (Older model:
+# scale = min(1, sqrt(area/design_area)) -- retired, it caused the blur.)
+#
+#   kanshi-autoscale           emit the runtime config, print its path
+#   kanshi-autoscale hwdp      print the HWDP id for the connected display set
+#   kanshi-autoscale capture   snapshot the current layout into a profile
+set -eu
+
+_cfg=${XDG_CONFIG_HOME:-$HOME/.config}/kanshi
+PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}
+STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
+OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/kanshi-autoscale.config}
+DRM=${KANSHI_DRM:-/sys/class/drm}
+TAB=$(printf '\t')
+
+# --- sniff: one TAB record per enabled output -----------------------------
+# edid \t name \t res_w \t res_h \t mm_w \t mm_h \t rate \t transform \t pos
+sniff() {
+  wlr-randr 2>/dev/null | awk '
+    function flush() {
+      if (name != "" && mmw+0 > 0 && rw+0 > 0)
+        printf "%s %s %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+          make, model, serial, name, rw, rh, mmw, mmh, rate, tr, pos
+    }
+    /^[^ \t]/    { flush(); name=$1; make=""; model=""; serial="";
+                   mmw=0; mmh=0; rw=0; rh=0; rate=""; tr="normal"; pos="0,0" }
+    /^  Make:/   { s=$0; sub(/^  Make: */,"",s);   make=s }
+    /^  Model:/  { s=$0; sub(/^  Model: */,"",s);  model=s }
+    /^  Serial:/ { s=$0; sub(/^  Serial: */,"",s); serial=s }
+    /^  Physical size:/ { split($3,a,"x"); mmw=a[1]; mmh=a[2] }
+    /px,.*current/ { split($1,b,"x"); rw=b[1]; rh=b[2];
+                     for (i=1;i<=NF;i++) if ($i=="Hz") rate=$(i-1) }
+    /^  Transform:/ { tr=$2 }
+    /^  Position:/  { pos=$2 }
+    END { flush() }'
+}
+
+# hwdp: the HWDP (hardware display profile id), a compound id for the CONNECTED
+# output set, sourced from the kernel's DRM connector EDIDs ($DRM/<conn>/edid),
+# NOT wlr-randr. This is the one probe that resolves HEADLESS: from a TTY, over
+# ssh, at boot -- exactly where the greeter is chosen (a provisioning run from a
+# TTY) and rendered (the greeter at boot, before any session). Each connected
+# connector's raw EDID is hashed, the hashes sorted-unique then hashed again, so
+# the id is the same for a monitor set regardless of order or which connector
+# each sits on (the EDID carries make/model/serial, so identical models still
+# differ and the set still pins WHICH panels). Empty (not the hash of nothing)
+# with nothing connected, so a display-less box yields no bogus id. Shared by
+# provision-time code (the greeter) and session code (kanshi, the drift check):
+# all key on ONE algorithm.
+#
+# GOTCHA: sysfs reports stat size 0 for the `edid` attribute even when a read
+# returns 256 bytes, so emptiness is gated on the connector's `status` file,
+# NEVER on `[ -s edid ]` (always false here); the empty-EDID hash is skipped,
+# so a connected-but-EDID-less connector adds nothing.
+_EMPTY_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+hwdp() {
+  _hs=$(for _c in "$DRM"/*-*/; do
+          [ "$(cat "$_c/status" 2>/dev/null)" = connected ] || continue
+          _h=$(sha256sum < "$_c/edid" 2>/dev/null | cut -d' ' -f1)
+          [ -n "$_h" ] && [ "$_h" != "$_EMPTY_SHA" ] && printf '%s\n' "$_h"
+        done | sort -u)
+  [ -n "$_hs" ] || return 0
+  printf '%s\n' "$_hs" | sha256sum | cut -c1-12
+}
+
+# shape: the workspace SHAPE for the connected set -- a COARSENING of the
+# HWDP to just the panel COUNT, since the grid, names, window rules and
+# wallpaper are a function of HOW MANY panels, not which ones. A wall (>=3) is
+# `triple`, anything less is `single` (the same >=3 threshold mako uses). Empty
+# with no outputs. This is what generalizes a specific rig to a logical layout.
+shape() {
+  _sc=$(sniff | grep -c . || true)
+  [ "${_sc:-0}" -ge 1 ] || return 0
+  if [ "$_sc" -ge 3 ]; then echo triple; else echo single; fi
+}
+
+# uiprofile: the per-display UI FONT profile for apps whose font is a single
+# GLOBAL config (kitty, the pixdecor titlebar) and so cannot self-scale per
+# output the way the bar does. ONE entry point, resolved specific-first:
+#   1. an optional HWDP override file $PROFILES/<hwdp>.ui (same KEY=VALUE lines)
+#      wins per key -- hand-authored for a rig that wants exact sizes;
+#   2. else a DENSITY default: a low-res SINGLE panel (< LODPI_MAX_W wide) is
+#      `lodpi` (shrink); everything else -- a hi-res single (manifold) or the
+#      >=3 wall -- is `hidpi`, which MIRRORS the static configs so a hi-res
+#      display is a strict no-op.
+# Emits shell-sourceable lines a consumer sources to size per-display UI: a
+# terminal font, a titlebar font, the notification box, a lock indicator ring
+# -- whatever a global-config app cannot self-scale per output:
+#   KITTY_FONT    kitty font_size; EMPTY => leave kitty.conf's own (hidpi)
+#   TITLE_FONT    pixdecor title_font (Pango); ALWAYS set, so switching a mode
+#                 back to hi-res RESTORES the full titlebar (IPC state is live).
+#   MAKO_FONT     mako font (Pango); EMPTY => leave mako/config's own (hidpi)
+#   LOCK_RADIUS   swaylock --indicator-radius (px); EMPTY => swaylock's default
+# hidpi TITLE_FONT mirrors wayfire.ini's [pixdecor] title_font -- keep in sync.
+UI_KITTY_LODPI=${UI_KITTY_LODPI:-10}
+UI_TITLE_HIDPI=${UI_TITLE_HIDPI:-Lato Semibold 14}
+UI_TITLE_LODPI=${UI_TITLE_LODPI:-Lato Semibold 10}
+UI_MAKO_LODPI=${UI_MAKO_LODPI:-Inter 11}   # mako/config font is Inter 18
+UI_LOCK_RADIUS_LODPI=${UI_LOCK_RADIUS_LODPI:-32}   # swaylock ring, default ~50
+LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
+uiprofile() {
+  _sh=$(shape)
+  _rw=$(sniff | head -1 | cut -f3)
+  if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
+    _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
+    _lockr=$UI_LOCK_RADIUS_LODPI
+  else
+    _kitty=; _title=$UI_TITLE_HIDPI; _mako=; _lockr=
+  fi
+  # An HWDP override wins per key. Read it LITERALLY (not shell-sourced), so a
+  # value with spaces (TITLE_FONT=Lato Semibold 12) needs no quoting and nothing
+  # in the file is ever executed.
+  _ovr=$PROFILES/$(hwdp).ui
+  if [ -f "$_ovr" ]; then
+    _k=$(sed -n 's/^KITTY_FONT=//p' "$_ovr" | head -1)
+    _t=$(sed -n 's/^TITLE_FONT=//p' "$_ovr" | head -1)
+    _m=$(sed -n 's/^MAKO_FONT=//p' "$_ovr" | head -1)
+    _lr=$(sed -n 's/^LOCK_RADIUS=//p' "$_ovr" | head -1)
+    [ -n "$_k" ] && _kitty=$_k
+    [ -n "$_t" ] && _title=$_t
+    [ -n "$_m" ] && _mako=$_m
+    [ -n "$_lr" ] && _lockr=$_lr
+  fi
+  printf 'KITTY_FONT=%s\n' "$_kitty"
+  printf 'TITLE_FONT=%s\n' "$_title"
+  printf 'MAKO_FONT=%s\n' "$_mako"
+  printf 'LOCK_RADIUS=%s\n' "$_lockr"
+}
+
+# scale_for <res_w> <res_h>: always 1.00. POLICY: never downscale. A scale < 1
+# enlarges the logical space past the panel, so the compositor downsamples to
+# soft, bit-mashed text. Every output stays NATIVE (scale 1, crisp); a small
+# panel is handled by templating the bar per panel in wb (height/font/modules),
+# not by shrinking the whole output. The compositor hard-floors output scale at
+# 1 too (wayfire-scale-clamp.patch); this is the declared half of that policy.
+# Args are unused now, kept for the sticky signature and a future >=1 override.
+scale_for() {
+  printf '1.00'   # native, always (was min(1, sqrt(area / design_area)))
+}
+
+# resolve <edid> <signature> <computed>: the sticky scale for this output.
+# Keep the stored value when the signature matches (honouring a hand edit),
+# else adopt <computed>. Rewrites the output's line in $STICKY, prints scale.
+resolve() {
+  _edid=$1; _sig=$2; _scale=$3
+  if [ -f "$STICKY" ]; then
+    _line=$(awk -F"$TAB" -v e="$_edid" '$1==e{print;exit}' "$STICKY")
+    _cur=$(printf '%s' "$_line" | cut -f3)
+    if [ -n "$_line" ] && [ "$_cur" = "$_sig" ]; then
+      _scale=$(printf '%s' "$_line" | cut -f2)
+    fi
+  fi
+  _tmp=$(mktemp)
+  [ -f "$STICKY" ] && awk -F"$TAB" -v e="$_edid" '$1!=e' "$STICKY" >"$_tmp"
+  printf '%s\t%s\t%s\n' "$_edid" "$_scale" "$_sig" >>"$_tmp"
+  mkdir -p "$(dirname "$STICKY")"; mv "$_tmp" "$STICKY"
+  printf '%s' "$_scale"
+}
+
+# capture: snapshot the CURRENT arrangement (transform/position/mode per output,
+# NO scale -- autoscale fills that at session start) into an HWDP-named profile,
+# so a rig is onboarded by "arrange once, then capture" instead of hand-editing.
+# Writes $PROFILES/<hwdp>.conf and prints its path.
+capture() {
+  _hwdp=$(hwdp)
+  [ -n "$_hwdp" ] || { echo "kanshi-autoscale: no outputs to capture" >&2
+    exit 1; }
+  _dst=$PROFILES/$_hwdp.conf
+  mkdir -p "$PROFILES"
+  {
+    printf '# captured by kanshi-autoscale -- layout for this monitor set.\n'
+    printf '# Outputs/transforms/positions only; the per-output scale is\n'
+    printf '# filled at session start (see kanshi-autoscale / auto-scale).\n'
+    printf '# ROTATION GOTCHA: transform is wl_output_transform (kanshi) =\n'
+    printf '# COUNTER-CLOCKWISE; the sway greeter is CLOCKWISE -- 180 degrees\n'
+    printf '# apart -- shift by 180 (90<->270) to reuse in the greeter.\n'
+    printf '# The file name is the HWDP (compound EDID-set id). Panels:\n'
+    sniff | while IFS="$TAB" read -r edid _ _ _ _ _ _ _ _; do
+      printf '#   %s\n' "$edid"
+    done
+    printf 'profile hwdp-%s {\n' "$_hwdp"
+    sniff | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
+      _t=""; [ "$tr" != normal ] && _t=" transform $tr"
+      printf '    output "%s" mode %sx%s@%.3fHz%s position %s\n' \
+        "$edid" "$rw" "$rh" "$rate" "$_t" "$pos"
+    done
+    printf '}\n'
+  } > "$_dst"
+  printf '%s\n' "$_dst"
+}
+
+# --- generate: inject scale into the selected profile, or synthesize one ---
+gen_template() {
+  while IFS= read -r _l; do
+    case $_l in
+      *'output "'*)
+        _e=$(printf '%s' "$_l" | sed -n 's/.*output "\([^"]*\)".*/\1/p')
+        _v=$(awk -F"$TAB" -v e="$_e" '$1==e{print $2;exit}' "$_map")
+        if [ -n "$_v" ]; then
+          printf '%s scale %s\n' \
+            "$(printf '%s' "$_l" | sed 's/ scale [0-9.]*//')" "$_v"
+        else printf '%s\n' "$_l"; fi ;;
+      *) printf '%s\n' "$_l" ;;
+    esac
+  done <"$TEMPLATE"
+}
+
+gen_fallback() {
+  printf '# generated by kanshi-autoscale (no matching layout profile)\n'
+  printf 'profile autoscale {\n'
+  _x=0
+  while IFS="$TAB" read -r edid scale name rw rh rate tr; do
+    _t=""; [ "$tr" != normal ] && _t=" transform $tr"
+    printf '    output "%s" mode %sx%s@%.3fHz%s position %d,0 scale %s\n' \
+      "$edid" "$rw" "$rh" "$rate" "$_t" "$_x" "$scale"
+    _lw=$(awk -v w="$rw" -v s="$scale" 'BEGIN{printf "%d", w/s + 0.5}')
+    _x=$((_x + _lw))
+  done <"$_map"
+  printf '}\n'
+}
+
+emit() {
+  # Select the layout profile for the connected set (else synthesize below).
+  TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp).conf}
+  _map=$(mktemp)
+  trap 'rm -f "$_map"' EXIT INT TERM
+  sniff | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
+    _sc=$(resolve "$edid" "${rw}x${rh}@${mmw}x${mmh}" \
+      "$(scale_for "$rw" "$rh")")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$edid" "$_sc" "$name" "$rw" "$rh" "$rate" "$tr" >>"$_map"
+  done
+  mkdir -p "$(dirname "$OUT")"
+  if [ -s "$TEMPLATE" ] && grep -q 'output ' "$TEMPLATE"; then
+    gen_template >"$OUT"
+  else
+    gen_fallback >"$OUT"
+  fi
+  printf '%s\n' "$OUT"
+}
+
+case "${1:-}" in
+  capture)   capture ;;
+  hwdp)      hwdp ;;
+  shape)     shape ;;
+  uiprofile) uiprofile ;;
+  *)         emit ;;
+esac

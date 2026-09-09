@@ -1,0 +1,301 @@
+#!/bin/sh
+# kanshi-mgr -- own kanshi's lifecycle for a Wayfire session, run-twice-to-nudge
+#
+# Wayfire live-reloads wayfire.ini on save and resets output transforms to
+# default (landscape) without emitting an event kanshi reacts to, so the
+# portrait profile isn't re-applied. The first invocation becomes the
+# supervisor: it starts kanshi, watches wayfire.ini, and HUPs kanshi on every
+# save. Any later invocation can't take the lock, so it just nudges the running
+# kanshi (HUP) and exits.
+#
+# The re-applied profile's `transform` values are wl_output_transform
+# (COUNTER-CLOCKWISE); the sway greeter's are CLOCKWISE -- 180 degrees apart, so
+# shift by 180 (90<->270) to reuse a value across the two.
+#
+#   kanshi-mgr        # supervise if first, else nudge
+#
+# Lifetime: the supervisor detaches (setsid) so an interactive shell can't
+# signal it, but a watchdog ties it to the Wayland socket -- when the
+# compositor exits and the socket disappears, the supervisor tears down kanshi,
+# releases the lock, and exits. So a fresh `kanshi-mgr` after a Wayfire restart
+# always finds a clean slate (no stale supervisor holding the lock over a dead
+# kanshi).
+#
+# Single supervisor guaranteed by flock on a runtime lockfile (released by the
+# kernel when the supervisor dies) -- no PID matching, no duplicate daemons.
+
+set -u
+
+cfg="${WAYFIRE_CONFIG_FILE:-$HOME/.config/wayfire/wayfire.ini}"
+lock="${XDG_RUNTIME_DIR:-/tmp}/kanshi-mgr.lock"
+
+# FIFO carrying the persistent monitor's event stream back to the supervisor,
+# so inotifywait can run backgrounded (PID tracked for cleanup) while we read
+# its output line by line in this shell (variable updates stay in scope).
+fifo="${XDG_RUNTIME_DIR:-/tmp}/kanshi-mgr.$$.events"
+
+# The compositor's Wayland socket. When this vanishes, Wayfire is gone.
+wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
+
+# --- display-change hooks (the integrator's extension point) ----------------
+# kanshi-mgr hardcodes NO downstream tool. Everything that must react to the
+# display layout coming up or changing -- re-asserting a compositor's runtime
+# state, moving notifications, checking a greeter stamp -- is a HOOK the
+# integrator drops in; a bare kanshi-mgr just supervises kanshi. Two edges:
+#   pre       fired once, backgrounded, BEFORE kanshi starts (so "on created"
+#             window rules can land before autostart apps map their first
+#             window)
+#   changed   fired after kanshi is up AND after every config-change burst
+# Hooks live in <root>/<edge>.d/* (executable), machine root first then user,
+# each sorted by name, fail-soft. The package ships none (the vigilance model).
+HWDP_HOOK_ROOT=${HWDP_HOOK_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/hwdp/hooks}
+HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
+
+run_hooks() {   # <edge>
+  _edge=$1
+  for _root in "$HWDP_MACHINE_HOOKS" "$HWDP_HOOK_ROOT"; do
+    [ -d "$_root/$_edge.d" ] || continue
+    for _h in "$_root/$_edge.d"/*; do
+      [ -f "$_h" ] && [ -x "$_h" ] || continue
+      "$_h" || echo "kanshi-mgr: hook $_edge.d/$(basename "$_h") failed" >&2
+    done
+  done
+}
+
+# A reset can land slightly AFTER the event we reacted to. Wayfire's
+# auto_reload reconfigures outputs a beat after the file's close_write, and an
+# IPC set-config-options settles just after the call returns. A single HUP
+# fired the instant we notice can re-apply portrait BEFORE the reset lands, and
+# then the reset wins, which is exactly the "had to hit the hotkey" case. So
+# fire now AND again after a short settle: the second HUP lands after the reset
+# and makes the re-apply stick. The delayed shot is backgrounded so callers
+# (and the inotify loop) stay snappy; it survives our exit by reparenting.
+nudge() {
+  pkill -HUP -x kanshi 2>/dev/null || true
+  ( sleep 0.4; pkill -HUP -x kanshi 2>/dev/null || true ) &
+}
+
+# Daemonize: re-exec ourselves detached from the terminal/job-control so the
+# caller's prompt returns immediately and an interactive shell can't signal us
+# (which, under `&`, could trip the teardown trap). The nudge path stays
+# foreground -- a nudge is fast and should report inline -- so we only detach
+# when we're about to become the supervisor. Guard with an env flag so the
+# re-exec happens exactly once.
+if [ "${KANSHI_MGR_DAEMONIZED:-}" != 1 ]; then
+  # Only daemonize if we'd be the supervisor; a nudge should stay attached.
+  # Probe the lock non-destructively: if someone holds it, just nudge inline.
+  if exec 9>"$lock" && flock -n 9; then
+    flock -u 9            # release; the re-exec'd child will retake it
+    exec 9>&-
+    KANSHI_MGR_DAEMONIZED=1 setsid -f "$0" "$@" </dev/null >/dev/null 2>&1
+    exit 0
+  else
+    nudge
+    exit 0
+  fi
+fi
+
+# --- nudge-or-supervise: try to take the lock on fd 9 ------------------
+exec 9>"$lock"
+if ! flock -n 9; then
+  # Another kanshi-mgr already supervises -> we are just a nudge.
+  nudge
+  exit 0
+fi
+# We hold the lock for our lifetime == we are the supervisor.
+
+# Teardown: only reachable on the supervisor path, so a manual nudge can never
+# trip it. Kill exactly what we own -- the kanshi, inotifywait, and watchdog WE
+# started. Disarm first to avoid re-entry when exit fires after a signal.
+kanshi_pid=""
+inotify_pid=""
+watchdog_pid=""
+settle_pid=""
+cleanup() {
+  trap - INT TERM HUP EXIT
+  [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null
+  [ -n "${settle_pid:-}" ]   && kill "$settle_pid"   2>/dev/null
+  [ -n "${inotify_pid:-}" ]  && kill "$inotify_pid"  2>/dev/null
+  [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
+  rm -f "$fifo"
+  exit 0
+}
+trap '' HUP
+trap cleanup INT TERM EXIT
+
+# Watchdog: if the Wayland socket disappears (Wayfire exited), TERM ourselves so
+# cleanup runs -- killing kanshi and releasing the lock. Runs as a tracked child
+# in the same process group; we kill it explicitly in cleanup. Check is cheap
+# (a stat) so a 1s cadence is plenty responsive without busy-looping.
+sup_pid=$$
+(
+  while [ -S "$wl_sock" ]; do
+    sleep 1
+  done
+  kill -TERM "$sup_pid" 2>/dev/null
+) &
+watchdog_pid=$!
+
+# A crashed daemon lingers as a <defunct> zombie -- still named, still passing
+# kill -0 -- until reaped, so a dead kanshi looked alive and the watchdog never
+# restarted it (the stuck-outputs bug). Judge life by process STATE.
+pid_alive() {  # 0 if the pid is running and not a zombie
+  case "$(ps -o state= -p "${1:-0}" 2>/dev/null)" in
+    ''|Z*) return 1 ;;
+    *)     return 0 ;;
+  esac
+}
+
+# Echo a live (non-zombie) kanshi's pid if one exists; else fail. Lets us adopt
+# a running kanshi without adopting a corpse.
+kanshi_live_pid() {
+  for p in $(pgrep -x kanshi 2>/dev/null); do
+    pid_alive "$p" && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+# Start kanshi and confirm it actually STAYS up. At autostart the
+# wlr-output-management global may not be advertised yet, so kanshi can exit
+# immediately; a single fire-and-forget would leave the supervisor watching
+# with no daemon underneath. Retry, but at a TIGHT cadence and return the
+# instant kanshi is alive -- the early-exit window is sub-second, so we must
+# not stall startup with long sleeps (this is what made waybar appear late).
+# If a kanshi is already running (e.g. a manual one), adopt it.
+start_kanshi() {
+  # Reap a corpse we spawned before, so it stops answering pgrep/kill-0 and does
+  # not pile up (works only for our own child -- exactly the crash case).
+  if [ -n "${kanshi_pid:-}" ] && ! pid_alive "$kanshi_pid"; then
+    wait "$kanshi_pid" 2>/dev/null || true
+  fi
+
+  if _live=$(kanshi_live_pid); then
+    kanshi_pid=$_live
+    return 0
+  fi
+
+  # Fill per-output scale from panel DPI and generate the config kanshi reads
+  # (sticky, hand-editable; see kanshi-autoscale). If the sniff fails (e.g.
+  # wlr-randr not up yet), fall back to kanshi's default config -- the
+  # scale-stripped host template, which is valid at scale 1.
+  _kcfg=$(kanshi-autoscale 2>/dev/null) || _kcfg=
+  [ -n "$_kcfg" ] && [ -f "$_kcfg" ] || _kcfg=
+
+  i=0
+  while [ "$i" -lt 40 ]; do          # up to ~10s, but exits as soon as it's up
+    if [ -n "$_kcfg" ]; then
+      kanshi --config "$_kcfg" &
+    else
+      kanshi &
+    fi
+    kanshi_pid=$!
+    sleep 0.25
+    if pid_alive "$kanshi_pid"; then
+      return 0                       # came up and stayed up -> done immediately
+    fi
+    wait "$kanshi_pid" 2>/dev/null || true   # reap the crashed attempt, retry
+    i=$((i + 1))
+  done
+
+  echo "kanshi-mgr: kanshi failed to stay up after retries" >&2
+  kanshi_pid=""
+  return 1
+}
+
+# React to the layout coming up via the `pre`/`changed` hooks. The pre pass runs
+# BEFORE kanshi so anything it sets (e.g. "on created" window rules) lands
+# before the autostart apps map their first window; backgrounded so it never
+# delays bringing kanshi up. The changed pass, after kanshi is up, is the same
+# edge every later config burst fires -- hooks are expected idempotent, so the
+# startup pass and a burst pass are the same call.
+run_hooks pre &
+runtime_pid=$!
+
+start_kanshi
+
+wait "$runtime_pid" 2>/dev/null || true
+run_hooks changed
+
+# Degrade gracefully without inotifywait: kanshi runs, auto-reapply is lost,
+# manual `kanshi-mgr` (nudge) still works. Still respawn kanshi if it dies, and
+# the watchdog still exits us when Wayfire goes.
+if ! command -v inotifywait >/dev/null 2>&1; then
+  echo "kanshi-mgr: inotifywait not found; running without auto-reapply" >&2
+  while true; do
+    if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
+      echo "kanshi-mgr: kanshi gone, restarting" >&2
+      start_kanshi
+    fi
+    sleep 5
+  done
+fi
+
+# Re-assert the profile whenever the active config under this dir may have
+# changed. inotify watches are INODE-based, not path-based, so watching the
+# file alone is not enough. There are three rewrite shapes to cover:
+#   in-place save     close_write on the file
+#   atomic replace    moved_to on the dir (write temp, rename over; vim, and
+#                     any write-then-rename mirror)
+#   symlink re-point  create on the dir (unlink + symlink, i.e. ln -sfn; this
+#                     is what a symlink-mirror provisioner does, confirmed:
+#                     each mirrored file lands as a DELETE then CREATE pair)
+# The symlink case is the one that was slipping through: re-pointing the home
+# symlink lands as a bare create, which is neither close_write nor moved_to, so
+# the old event set never fired. The file watch is useless for it too:
+# inotifywait followed the symlink at add time and is pinned to the OLD target
+# inode, which the re-point never touches. So watch the dir (and the file) and
+# include create alongside moved_to / close_write; delete_self / move_self cover
+# the watched items themselves leaving.
+#
+# Use PERSISTENT monitor mode (-m), not arm-once-per-event. A provisioning run
+# rewrites a whole set of files in one burst (wallpaper.map, runtime.conf,
+# wayfire.ini, ... back to back), and an arm-once loop drops every event that
+# lands in the gap between catching one and re-arming, which is most of the
+# burst, sometimes including the wayfire.ini swap that triggers the reset. A
+# single long-lived inotifywait has no gap, so we see every event, including the
+# ones AFTER wayfire.ini, which is what guarantees a re-apply that lands after
+# the reset. Stream it through a FIFO so it stays a tracked child (cleanup kills
+# it) while we read in this shell.
+#
+# Coalesce the burst: each event cancels the pending nudge and reschedules it,
+# so the HUP fires ONCE, ~0.3s after the burst goes quiet, comfortably after
+# Wayfire has processed the reload and reset the outputs (the reset happens
+# mid-burst; firing after the last event guarantees we re-apply last). One
+# clean re-apply per provisioning run instead of a HUP per file. The coalesced
+# action also fires the `changed` hooks, so an integrator's hook can re-assert
+# runtime state live (idempotent: a no-op when nothing changed). A spurious
+# nudge from unrelated churn just re-applies the same profile.
+cfgdir=$(dirname "$cfg")
+events="close_write,move_self,delete_self,moved_to,create"
+while true; do
+  if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
+    echo "kanshi-mgr: kanshi gone, restarting" >&2
+    start_kanshi
+  fi
+
+  rm -f "$fifo"
+  mkfifo "$fifo" 2>/dev/null || { sleep 1; continue; }
+
+  inotifywait -qm -e "$events" "$cfg" "$cfgdir" >"$fifo" 2>/dev/null &
+  inotify_pid=$!
+
+  # Reading the FIFO blocks until the writer opens it, so this rendezvous needs
+  # no sleep. The loop ends only when inotifywait (the writer) is gone.
+  while IFS= read -r _ <"$fifo"; do
+    if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
+      echo "kanshi-mgr: kanshi gone, restarting" >&2
+      start_kanshi
+    fi
+    [ -n "$settle_pid" ] && kill "$settle_pid" 2>/dev/null
+    ( sleep 0.3
+      run_hooks changed
+      pkill -HUP -x kanshi 2>/dev/null || true ) &
+    settle_pid=$!
+  done
+
+  # Writer gone: drop any pending nudge, back off, let the loop re-arm fresh.
+  [ -n "$settle_pid" ] && kill "$settle_pid" 2>/dev/null
+  settle_pid=""
+  inotify_pid=""
+  sleep 1
+done
