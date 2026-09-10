@@ -123,21 +123,27 @@ shape() {
 #                 back to hi-res RESTORES the full titlebar (IPC state is live).
 #   MAKO_FONT     mako font (Pango); EMPTY => leave mako/config's own (hidpi)
 #   LOCK_RADIUS   swaylock --indicator-radius (px); EMPTY => swaylock's default
-# hidpi TITLE_FONT mirrors wayfire.ini's [pixdecor] title_font -- keep in sync.
+#   CURSOR_SIZE   the pointer cursor size (px); ALWAYS set (like TITLE_FONT), so
+#                 a switch back to hi-res RESTORES it rather than leaving it
+#                 shrunk (the consumer sets it live).
+# hidpi TITLE_FONT + CURSOR_SIZE mirror the static configs (wayfire.ini's
+# [pixdecor] title_font and [input] cursor_size) -- keep in sync.
 UI_KITTY_LODPI=${UI_KITTY_LODPI:-10}
 UI_TITLE_HIDPI=${UI_TITLE_HIDPI:-Lato Semibold 14}
 UI_TITLE_LODPI=${UI_TITLE_LODPI:-Lato Semibold 10}
 UI_MAKO_LODPI=${UI_MAKO_LODPI:-Inter 11}   # mako/config font is Inter 18
 UI_LOCK_RADIUS_LODPI=${UI_LOCK_RADIUS_LODPI:-32}   # swaylock ring, default ~50
+UI_CURSOR_HIDPI=${UI_CURSOR_HIDPI:-48}   # mirrors wayfire.ini cursor_size
+UI_CURSOR_LODPI=${UI_CURSOR_LODPI:-32}   # shrink on a small panel
 LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
 uiprofile() {
   _sh=$(shape)
   _rw=$(sniff | head -1 | cut -f3)
   if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
     _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
-    _lockr=$UI_LOCK_RADIUS_LODPI
+    _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI
   else
-    _kitty=; _title=$UI_TITLE_HIDPI; _mako=; _lockr=
+    _kitty=; _title=$UI_TITLE_HIDPI; _mako=; _lockr=; _cursor=$UI_CURSOR_HIDPI
   fi
   # An HWDP override wins per key. Read it LITERALLY (not shell-sourced), so a
   # value with spaces (TITLE_FONT=Lato Semibold 12) needs no quoting and nothing
@@ -148,15 +154,18 @@ uiprofile() {
     _t=$(sed -n 's/^TITLE_FONT=//p' "$_ovr" | head -1)
     _m=$(sed -n 's/^MAKO_FONT=//p' "$_ovr" | head -1)
     _lr=$(sed -n 's/^LOCK_RADIUS=//p' "$_ovr" | head -1)
+    _cs=$(sed -n 's/^CURSOR_SIZE=//p' "$_ovr" | head -1)
     [ -n "$_k" ] && _kitty=$_k
     [ -n "$_t" ] && _title=$_t
     [ -n "$_m" ] && _mako=$_m
     [ -n "$_lr" ] && _lockr=$_lr
+    [ -n "$_cs" ] && _cursor=$_cs
   fi
   printf 'KITTY_FONT=%s\n' "$_kitty"
   printf 'TITLE_FONT=%s\n' "$_title"
   printf 'MAKO_FONT=%s\n' "$_mako"
   printf 'LOCK_RADIUS=%s\n' "$_lockr"
+  printf 'CURSOR_SIZE=%s\n' "$_cursor"
 }
 
 # scale_for <res_w> <res_h>: always 1.00. POLICY: never downscale. A scale < 1

@@ -179,12 +179,16 @@ uphas '^KITTY_FONT=$'  || fail "uiprofile hidpi: KITTY_FONT should be empty"
 uphas '^MAKO_FONT=$'   || fail "uiprofile hidpi: MAKO_FONT should be empty"
 uphas '^LOCK_RADIUS=$' || fail "uiprofile hidpi: LOCK_RADIUS should be empty"
 uphas '^TITLE_FONT=.*Semibold' || fail "uiprofile hidpi: TITLE_FONT missing"
+# CURSOR_SIZE is ALWAYS set (like TITLE_FONT): the wall default on hidpi, so a
+# mode switch back to hi-res restores it.
+uphas '^CURSOR_SIZE=48$' || fail "uiprofile hidpi: CURSOR_SIZE should be 48"
 
 # lodpi (same panel, threshold above its width): every shrink key is non-empty.
 up=$(LODPI_MAX_W=5000 run uiprofile)
 uphas '^KITTY_FONT=[0-9]'  || fail "uiprofile lodpi: KITTY_FONT unset"
 uphas '^MAKO_FONT=..*'     || fail "uiprofile lodpi: MAKO_FONT unset"
 uphas '^LOCK_RADIUS=[0-9]' || fail "uiprofile lodpi: LOCK_RADIUS unset"
+uphas '^CURSOR_SIZE=32$'   || fail "uiprofile lodpi: CURSOR_SIZE should be 32"
 
 # a >=3 wall is hidpi even below the width threshold (the shape gate wins).
 up=$(STUB3=1 LODPI_MAX_W=5000 run uiprofile)
