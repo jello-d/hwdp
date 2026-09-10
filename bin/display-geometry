@@ -47,8 +47,10 @@ done
 
 # wlroots/Wayland: parse wlr-randr's per-output text into the line contract.
 # One output block starts at a non-indented NAME line; the current mode is the
-# WxH on the "(current)" line; logical size is the mode divided by scale, w/h
-# swapped for a 90/270 (or flipped-90/270) transform.
+# WxH on the mode line flagged `current` -- wlr-randr may COMBINE flags (e.g.
+# "(preferred, current)" when the current mode is also preferred), so match the
+# word `current` on a mode line, not a bare "(current)". Logical size is the
+# mode divided by scale, w/h swapped for a 90/270 (or flipped-90/270) transform.
 _snapshot_wlr() {
   wlr-randr 2>/dev/null | awk '
     function emit() {
@@ -65,7 +67,8 @@ _snapshot_wlr() {
     /^[^ \t]/          { emit(); name=$1; en=0; cw=0; ch=0
                          tx="normal"; sc=1; px=0; py=0 }
     /^[ \t]+Enabled:/  { en = ($2 == "yes") }
-    /\(current\)/      { split($1, a, "x"); cw=a[1]; ch=a[2] }
+    /^[ \t]+[0-9]+x[0-9]+ px.*current/ { split($1, a, "x")
+                         cw=a[1]; ch=a[2] }
     /^[ \t]+Position:/ { split($2, p, ","); px=p[1]; py=p[2] }
     /^[ \t]+Transform:/ { tx=$2 }
     /^[ \t]+Scale:/    { sc=$2 }
