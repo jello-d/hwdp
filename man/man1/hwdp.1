@@ -14,15 +14,6 @@ and hardcodes no downstream tool \(em everything session-specific is a HOOK or a
 pluggable BACKEND an integrator fills.
 .SH TOOLS
 .TP
-.B hwprofile
-Detect hardware/substrate capabilities (a second Bluetooth adapter, an NVIDIA
-GPU, the chassis, a btrfs root) into a sticky, fingerprinted profile so a
-consumer gates on WHAT THE BOX HAS, not its hostname. A record is recomputed
-only when its hardware fingerprint changes, so a hand edit survives. The profile
-file path is the seam
-.BR HWPROFILE ;
-point it and the reader at one path.
-.TP
 .B kanshi-autoscale
 Pick or synthesize the kanshi layout for the connected monitor set and fill each
 output's scale from panel DPI. Subcommands:
@@ -70,9 +61,6 @@ kanshi-autoscale's layout templates and sticky per-panel scale overrides.
 .I ~/.config/hwdp/providers/{layout,panels}/*
 User display probe providers, tried before the machine and shipped ones.
 .SH ENVIRONMENT
-.TP
-.B HWPROFILE
-Path to the capability profile file (writer + reader share it).
 .TP
 .B HWDP_HOOK_ROOT ", " HWDP_MACHINE_HOOKS
 Roots for kanshi-mgr's display-change hooks.

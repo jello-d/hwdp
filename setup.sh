@@ -4,8 +4,6 @@
 # point a consumer or provisioning layer uses.
 #
 # The tools, in bin/:
-#   hwprofile        detect hardware/substrate capabilities into a sticky,
-#                    fingerprinted profile (a reader gates on it, not hostname)
 #   kanshi-autoscale pick/synthesize the kanshi layout for the connected set +
 #                    fill each output's scale from panel DPI; hwdp/shape/ui
 #   kanshi-mgr       own kanshi's lifecycle in a session; fire display-change

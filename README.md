@@ -7,16 +7,11 @@ hostname. It is environment-agnostic: it runs under X11 or a wlroots compositor,
 and hardcodes no downstream tool. Everything session-specific is a **hook** or a
 pluggable **backend** an integrator fills.
 
-It is a suite of five tools installed on `PATH`; there is no eponymous `hwdp`
+It is a suite of four tools installed on `PATH`; there is no eponymous `hwdp`
 command.
 
 ## Tools
 
-- **hwprofile** — detect hardware/substrate capabilities (a second Bluetooth
-  adapter, an NVIDIA GPU, the chassis, a btrfs root) into a sticky,
-  fingerprinted profile so a consumer gates on what the box HAS, not its
-  hostname. A record is recomputed only when its fingerprint changes, so a hand
-  edit survives.
 - **kanshi-autoscale** — pick or synthesize the kanshi layout for the connected
   monitor set and fill each output's scale from panel DPI. Subcommands: `hwdp`,
   `shape`, `uiprofile`, `capture`.
@@ -62,8 +57,6 @@ hwdp ships mechanisms, not policy. An integrator wires the specifics:
   by dropping in **one file** — same shape as the hooks above.
 - **Geometry backend.** `HWDP_GEOM_BACKEND`, if set and executable, is simply
   the layout provider tried before all the others.
-- **Capability profile path.** `hwprofile` writes to `$HWPROFILE` (default a
-  tool-owned path); point it and the reader at one path to share the contract.
 
 This makes hwdp dual-use: it installs and runs standalone, and it slots under a
 provisioning layer (e.g. tackup) that fills the seams.
