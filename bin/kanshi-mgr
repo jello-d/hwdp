@@ -34,6 +34,13 @@ lock="${XDG_RUNTIME_DIR:-/tmp}/kanshi-mgr.lock"
 # its output line by line in this shell (variable updates stay in scope).
 fifo="${XDG_RUNTIME_DIR:-/tmp}/kanshi-mgr.$$.events"
 
+# Generation token for the coalesced settle (see schedule_settle): holds the
+# newest pending settle's number. A settle that reads a different -- or missing
+# -- number after its sleep stands down, which is how a burst coalesces and how
+# teardown cancels without owning the process.
+settle_token="${XDG_RUNTIME_DIR:-/tmp}/kanshi-mgr.$$.settle"
+settle_gen=0
+
 # The compositor's Wayland socket. When this vanishes, Wayfire is gone.
 wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 
@@ -110,14 +117,14 @@ fi
 kanshi_pid=""
 inotify_pid=""
 watchdog_pid=""
-settle_pid=""
 cleanup() {
   trap - INT TERM HUP EXIT
   [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null
-  [ -n "${settle_pid:-}" ]   && kill "$settle_pid"   2>/dev/null
   [ -n "${inotify_pid:-}" ]  && kill "$inotify_pid"  2>/dev/null
   [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
-  rm -f "$fifo"
+  # Dropping the token stands down any settle still sleeping; it is detached,
+  # so there is nothing of ours left to kill.
+  rm -f "$fifo" "$settle_token"
   exit 0
 }
 trap '' HUP
@@ -265,6 +272,37 @@ fi
 # action also fires the `changed` hooks, so an integrator's hook can re-assert
 # runtime state live (idempotent: a no-op when nothing changed). A spurious
 # nudge from unrelated churn just re-applies the same profile.
+
+# schedule_settle: arm the coalesced re-apply, DETACHED and cancellable.
+#
+# Detached (double-forked) because a tracked child here is a zombie farm: POSIX
+# sh reaps a background child only on `wait`, and this loop spends its life
+# blocked in `read` with no portable way to reap without blocking (no `wait -n`,
+# no `read -t` in POSIX sh). The old `kill`-on-next-event left one
+# `[kanshi-mgr] <defunct>` per burst, and the LAST settle of a session was never
+# reaped at all -- seen live: a 23h supervisor still holding a 15h-old corpse.
+# The inner subshell is orphaned the instant the outer exits, so init reaps it
+# and we own nothing; the outer runs in the FOREGROUND and returns in the time
+# it takes to fork, so the event loop stays snappy.
+#
+# Cancellation is a GENERATION TOKEN rather than a kill, which is also a truer
+# cancel: killing the subshell mid-flight left the HOOKS it had already spawned
+# running, so a cancelled settle was not fully cancelled. The token is re-read
+# AFTER the sleep and BEFORE any hook runs, so a superseded settle stands down
+# having done nothing. A missing token (teardown removed it) reads as cancelled.
+schedule_settle() {
+  settle_gen=$((settle_gen + 1))
+  printf '%s' "$settle_gen" >"$settle_token"
+  _g=$settle_gen
+  ( ( sleep 0.3
+      [ "$(cat "$settle_token" 2>/dev/null)" = "$_g" ] || exit 0
+      run_hooks changed
+      pkill -HUP -x kanshi 2>/dev/null || true ) & )
+}
+
+# cancel_settle: stand down whatever is pending, owning no process to kill.
+cancel_settle() { rm -f "$settle_token"; }
+
 cfgdir=$(dirname "$cfg")
 events="close_write,move_self,delete_self,moved_to,create"
 while true; do
@@ -286,16 +324,11 @@ while true; do
       echo "kanshi-mgr: kanshi gone, restarting" >&2
       start_kanshi
     fi
-    [ -n "$settle_pid" ] && kill "$settle_pid" 2>/dev/null
-    ( sleep 0.3
-      run_hooks changed
-      pkill -HUP -x kanshi 2>/dev/null || true ) &
-    settle_pid=$!
+    schedule_settle
   done
 
   # Writer gone: drop any pending nudge, back off, let the loop re-arm fresh.
-  [ -n "$settle_pid" ] && kill "$settle_pid" 2>/dev/null
-  settle_pid=""
+  cancel_settle
   inotify_pid=""
   sleep 1
 done
