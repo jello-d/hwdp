@@ -7,8 +7,8 @@ hostname. It is environment-agnostic: it runs under X11 or a wlroots compositor,
 and hardcodes no downstream tool. Everything session-specific is a **hook** or a
 pluggable **backend** an integrator fills.
 
-It installs **one command**, `hwdp`, whose subcommands are executables under
-`libexec/hwdp/cmd/` — adding one is adding a file.
+It installs `hwdp`, the display-state command, whose subcommands are
+executables under `libexec/hwdp/cmd/` — adding one is adding a file.
 
 ## Commands
 
@@ -20,8 +20,13 @@ hwdp geometry   one line per enabled output (a stable contract)
 hwdp layout     emit the runtime kanshi config, print its path
 hwdp capture    snapshot the current arrangement into a profile
 hwdp watch      supervise the layout; fire display-change hooks
-hwdp magnify    magnify one application via a nested gamescope window
 ```
+
+**`run-scaled`** is the one other command, and deliberately not a subcommand:
+everything above reads or manages display state and returns, where `run-scaled`
+takes someone else's command line and *becomes* that process. It magnifies a
+single application via a nested gamescope window, and consumes `hwdp geometry`
+as a client, exactly like any other integrator tool would.
 
 `id`, `shape` and `ui` answer **headless** — from a TTY, over ssh, at boot, at
 a greeter — because they ask the kernel about panels when no compositor is

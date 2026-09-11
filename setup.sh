@@ -3,12 +3,14 @@
 # display-profile detection + monitor-set layout/autoscale. The SINGLE entry
 # point a consumer or provisioning layer uses.
 #
-# ONE command, bin/hwdp, dispatching to the impls in libexec/hwdp/cmd/:
+# bin/hwdp is the display-state command, dispatching to libexec/hwdp/cmd/:
 #   id shape ui        display-profile queries (these answer HEADLESS)
 #   geometry           one line per enabled output (stable contract)
 #   layout capture     the kanshi adapter: emit the runtime config / snapshot
 #   watch              supervise the layout, fire display-change HOOKS
-#   magnify            magnify one app via a nested gamescope window
+# bin/run-scaled is the one other command: it wraps an APPLICATION in a nested
+# gamescope window rather than reading display state, so it is its own tool and
+# consumes `hwdp geometry` as a client.
 #
 #   ./setup.sh install     symlink the tools (+ man) into ~/.local
 #   ./setup.sh uninstall   remove the symlinks
@@ -105,11 +107,12 @@ do_uninstall() {
 
 do_check() {
   echo "== $PKG (display detect / layout / autoscale) =="
-  if command -v hwdp >/dev/null 2>&1; then ok "hwdp present"
-  else bad "hwdp not on PATH"; fi
+  for _t in hwdp run-scaled; do
+    if command -v "$_t" >/dev/null 2>&1; then ok "$_t present"
+    else bad "$_t not on PATH"; fi; done
   # Every subcommand the dispatcher advertises must actually be installed --
   # a missing impl is a command that exists until someone runs it.
-  for _c in id shape ui geometry layout capture watch magnify; do
+  for _c in id shape ui geometry layout capture watch; do
     [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
       || bad "cmd $_c missing"; done
   # Drift, not tidiness: a dangling link is a command that exists until it is
@@ -142,7 +145,7 @@ do_check() {
   for _d in $DEPS_SOFT; do
     command -v "$_d" >/dev/null 2>&1 && ok "dep $_d present" \
       || warn "dep $_d absent (a feature degrades: inotify=auto-reapply," \
-              "gamescope+bc=magnify, xrandr=X11 geometry)"; done
+              "gamescope+bc=run-scaled, xrandr=X11 geometry)"; done
 }
 
 _U="usage: setup.sh [install|uninstall|check|test|version]"

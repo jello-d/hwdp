@@ -8,7 +8,9 @@ for them, keyed on the HARDWARE (an EDID-derived display-profile id), never on
 a hostname. It installs ONE command,
 .BR hwdp ,
 whose subcommands are executables under libexec/hwdp/cmd/, so adding one is
-adding a file. It is environment-agnostic: it works under X11 or a wlroots
+adding a file, plus the standalone
+.B run-scaled
+described below. It is environment-agnostic: it works under X11 or a wlroots
 compositor, and hardcodes no downstream tool \(em everything session-specific
 is a HOOK or a PROVIDER an integrator fills.
 .SH COMMANDS
@@ -62,11 +64,18 @@ so an integrator wires the reactions; it knows nothing of any specific
 compositor tool. Hook roots:
 .BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
 (default /etc/hwdp/hooks).
-.TP
-.B hwdp magnify
-Magnify a single application via a nested
+.SH RUN-SCALED
+.B run-scaled
+is the package's other command, deliberately NOT a subcommand of
+.BR hwdp :
+every subcommand above reads or manages display state and returns, where this
+takes someone else's command line and BECOMES that process. It magnifies a
+single application via a nested
 .B gamescope
-window (renders at a size/scale and upscales), windowed or fullscreen.
+window (renders at a size/scale and upscales), windowed or fullscreen, and
+consumes
+.B "hwdp geometry"
+as a client like any other tool would.
 .SH FILES
 .TP
 .I ~/.config/hwdp/hooks/<edge>.d/*

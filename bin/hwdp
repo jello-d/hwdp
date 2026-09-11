@@ -14,11 +14,15 @@
 #   hwdp layout     emit the runtime kanshi config, print its path
 #   hwdp capture    snapshot the current arrangement into a profile
 #   hwdp watch      supervise the layout; fire display-change hooks
-#   hwdp magnify    magnify one application via a nested gamescope window
 #
 # `id`, `shape` and `ui` answer HEADLESS -- from a TTY, over ssh, at boot, at
 # the greeter -- because they ask the kernel about panels when no compositor is
 # there to ask. The rest need a session, and say so when they do not have one.
+#
+# run-scaled is the package's OTHER command and deliberately not a subcommand
+# here: everything above reads or manages display state and returns, where it
+# takes someone else's command line and BECOMES that process. It consumes
+# `hwdp geometry` like any other client.
 set -eu
 
 # Resolve our own real path so the tools work both from a checkout and through
@@ -49,7 +53,7 @@ esac
 # doing nothing, which for a tool other scripts call is the difference between
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
-  id|shape|ui|geometry|layout|capture|watch|magnify) ;;
+  id|shape|ui|geometry|layout|capture|watch) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;

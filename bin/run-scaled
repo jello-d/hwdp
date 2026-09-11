@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# hwdp magnify: magnify a single application via a nested gamescope window. The
+# run-scaled: magnify a single application via a nested gamescope window. The
 # app renders at window/scale and is upscaled to fill the window, so `scale`
 # controls how large the UI appears. Works under X11 and Wayland sessions; X
 # apps run in gamescope's Xwayland by default (--wayland-app for Wayland ones).
@@ -17,7 +17,7 @@ FULLSCREEN=0             # 0 = windowed (default), 1 = fill the output
 WAYLAND_APP=0
 
 print_help() {
-    echo "Usage: hwdp magnify [--scale=N] [--size=WxH] [--fullscreen] \
+    echo "Usage: run-scaled [--scale=N] [--size=WxH] [--fullscreen] \
 [--filter=F] [--wayland-app] application [args...]"
     echo ""
     echo "--scale       UI magnification. App renders at size/scale and is"
@@ -48,27 +48,29 @@ done
 
 if [ $# -eq 0 ]; then echo "No application given!" >&2; exit 2; fi
 command -v gamescope >/dev/null || {
-    echo "hwdp magnify: gamescope not found in PATH" >&2; exit 4; }
+    echo "run-scaled: gamescope not found in PATH" >&2; exit 4; }
 
 # --- box (gamescope window/output) size -------------------------------------
 # Windowed: the box is --size. Fullscreen: detect the output mode so the
 # render/upscale ratio matches the panel (-f fills the real display anyway).
 if [ "$FULLSCREEN" -eq 1 ]; then
-    # Ask the shared probe, via `hwdp geometry` (fields 2 and 3 are the current
-    # MODE, which is what gamescope's -W/-H want). This used to be a third
-    # display parser living here -- wlr-randr --json piped through python3 on
-    # Wayland, xrandr scraped with sed on X11 -- which is how the package ended
-    # up with three ways to ask one question, and python3 as an undeclared
-    # dependency. One probe now covers both, and any provider an integrator
-    # drops in works here for free.
+    # Ask `hwdp geometry` -- the PUBLIC interface, the same one wb and term
+    # use -- rather than reaching into the package's libexec. Fields 2 and 3
+    # are the current MODE, which is what gamescope's -W/-H want.
     #
-    # The X11 path changes meaning slightly and deliberately: the old sed read
-    # `Screen 0: current WxH`, the union of every output, so a multi-head box
-    # got a box spanning all of them. The first output is the right answer for
-    # a window that is about to go fullscreen on one screen.
-    read -r BOX_W BOX_H <<<"$("$HWDP_LIBEXEC/cmd/geometry" --now \
+    # This used to be a third display parser living right here: wlr-randr
+    # --json piped through python3 on Wayland, xrandr scraped with sed on X11,
+    # which is how one repo ended up with three ways to ask one question (and
+    # python3 as an undeclared dependency). One probe covers both now, and any
+    # provider an integrator drops in works here for free.
+    #
+    # The X11 path changed meaning deliberately: the old sed read `Screen 0:
+    # current WxH`, the union of every output, so a multi-head box got a box
+    # spanning all of them. The first output is the right answer for a window
+    # about to go fullscreen on one screen.
+    read -r BOX_W BOX_H <<<"$(hwdp geometry --now \
         | awk 'NR == 1 { print $2, $3 }')"
-    [ -z "$BOX_W" ] && { echo "hwdp magnify: could not detect output; use" \
+    [ -z "$BOX_W" ] && { echo "run-scaled: could not detect output; use" \
         "--size=WxH without --fullscreen" >&2; exit 3; }
 else
     BOX_W="${SIZE%x*}"; BOX_H="${SIZE#*x}"
@@ -87,7 +89,7 @@ case $FILTER in
     integer) GS+=(-S integer) ;;
     fsr)     GS+=(-F fsr) ;;
     nis)     GS+=(-F nis) ;;
-    *) echo "hwdp magnify: unknown --filter=$FILTER" >&2; exit 1 ;;
+    *) echo "run-scaled: unknown --filter=$FILTER" >&2; exit 1 ;;
 esac
 [ "$WAYLAND_APP" -eq 1 ] && GS+=(--expose-wayland)
 
