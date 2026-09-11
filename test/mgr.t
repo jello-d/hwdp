@@ -4,7 +4,7 @@
 # Two properties, both regressions we have actually been bitten by:
 #   1. NO ZOMBIES. The settle used to be a tracked background child cancelled
 #      with `kill`, and POSIX sh reaps a background child only on `wait` -- so
-#      each burst left a `[kanshi-mgr] <defunct>` and the last settle of a
+#      each burst left a `<defunct>` child and the last settle of a
 #      session was never reaped at all. The settle is now detached, so the
 #      supervisor must own no children in state Z.
 #   2. The burst still COALESCES: many events in, exactly one `changed` pass.
@@ -15,10 +15,10 @@ command -v python3 >/dev/null 2>&1 || skip "needs python3 to make a unix socket"
 command -v flock >/dev/null 2>&1   || skip "needs flock"
 
 MGR="$HERE/bin/hwdp"
-mkdir -p "$T/bin" "$T/hooks/changed.d" "$T/run"
+mkdir -p "$T/bin" "$T/hooks/changed.d" "$T/run" "$T/home"
 : > "$T/wayfire.ini"
 
-# kanshi-mgr's watchdog TERMs the supervisor the moment the compositor socket
+# the watchdog TERMs the supervisor the moment the compositor socket
 # goes away, so the test needs a REAL unix socket for it to stat.
 python3 -c 'import socket,sys
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$T/run/wayland-test"
@@ -28,10 +28,6 @@ s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$T/run/wayland-test"
 cat > "$T/bin/kanshi" <<'EOF'
 #!/bin/sh
 exec sleep 300
-EOF
-cat > "$T/bin/kanshi-autoscale" <<'EOF'
-#!/bin/sh
-exit 1
 EOF
 cat > "$T/bin/pgrep" <<'EOF'
 #!/bin/sh
@@ -47,8 +43,8 @@ cat > "$T/bin/inotifywait" <<'EOF'
 printf 'a\nb\nc\n'
 exec sleep 300
 EOF
-chmod +x "$T/bin"/kanshi "$T/bin"/kanshi-autoscale "$T/bin"/pgrep \
-  "$T/bin"/pkill "$T/bin"/inotifywait
+chmod +x "$T/bin"/kanshi "$T/bin"/pgrep "$T/bin"/pkill \
+  "$T/bin"/inotifywait
 
 cat > "$T/hooks/changed.d/10-record" <<EOF
 #!/bin/sh
@@ -56,7 +52,17 @@ echo run >> "$T/changed.log"
 EOF
 chmod +x "$T/hooks/changed.d/10-record"
 
-XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test \
+# HOME and the profile paths are pinned into $T because `watch` brings the
+# layout up through cmd/layout IN PROCESS, not through a PATH lookup a stub
+# could intercept -- so without these the run would write a real sticky scale
+# into the DEVELOPER's ~/.config/kanshi. DISPLAY is cleared and the provider
+# roots emptied so no probe can answer and the layout is deterministic.
+XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test DISPLAY= \
+  HOME="$T/home" XDG_CONFIG_HOME="$T/config" \
+  KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
+  KANSHI_OUT="$T/kanshi.conf" \
+  HWDP_PROVIDER_ROOT="$T/no-providers" \
+  HWDP_MACHINE_PROVIDERS="$T/no-providers" \
   HWDP_HOOK_ROOT="$T/hooks" HWDP_MACHINE_HOOKS="$T/no-machine-hooks" \
   WAYFIRE_CONFIG_FILE="$T/wayfire.ini" HWDP_WATCH_DAEMONIZED=1 \
   PATH="$T/bin:$PATH" "$MGR" watch >"$T/mgr.log" 2>&1 &

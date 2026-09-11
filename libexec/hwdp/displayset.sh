@@ -17,7 +17,7 @@
 _cfg=${XDG_CONFIG_HOME:-$HOME/.config}/kanshi
 PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}
 STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
-OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/kanshi-autoscale.config}
+OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-layout.config}
 TAB=$(printf '\t')
 
 # outputs: one TAB record per output we can actually act on --

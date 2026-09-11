@@ -1,5 +1,5 @@
 #!/bin/sh
-# modules/tests/kanshi-autoscale - stub-driven. A fake DRM tree ($DRM/<conn>/
+# layout.t - the kanshi adapter, stub-driven. A fake DRM tree ($DRM/<conn>/
 # {status,edid}) drives the HWDP (hardware display profile id; headless, SSOT
 # the greeter + kanshi + drift-check all key on); a fake wlr-randr drives the
 # session-side geometry (capture/emit/shape). Asserts HWDP is a stable 12-hex

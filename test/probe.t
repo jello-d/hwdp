@@ -23,7 +23,7 @@ mk_conn() {   # <connector> <status> <edid> [modes]
 mk_conn card1-DP-2 connected    EDID-PANEL-A 1920x1080
 mk_conn card1-DP-3 disconnected ''
 
-run() {   # kanshi-autoscale with NO compositor: no WAYLAND_DISPLAY, no DISPLAY
+run() {   # hwdp with NO compositor: no WAYLAND_DISPLAY, no DISPLAY
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
     HWDP_DRM="$T/drm" HWDP_PROVIDER_ROOT="$T/user" \
     HWDP_MACHINE_PROVIDERS="$T/machine" \

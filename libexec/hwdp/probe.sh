@@ -29,14 +29,14 @@
 #
 # So an integrator adds a compositor -- hyprland, a pywayland `done`-event
 # settle, a KDE backend -- by dropping ONE executable in, exactly as it adds a
-# display-change hook to kanshi-mgr. hwdp hardcodes no environment tool.
+# display-change hook to `hwdp watch`. hwdp hardcodes no environment tool.
 #
 # RECORD FORMATS, TAB separated, one line per output. Providers emit EVERY
 # output they can see and never filter; each CONSUMER filters for what it needs
-# (display-geometry wants enabled ones, kanshi wants ones with an EDID name and
-# a physical size). The two used to filter by accident -- one checked `Enabled:`
-# and the other only happened to agree because a disabled output has no current
-# mode -- and that coincidence is exactly what this split removes.
+# (`hwdp geometry` wants enabled ones, the kanshi adapter wants ones with an
+# EDID name and a physical size). The two used to filter by accident -- one
+# checked `Enabled:` and the other only happened to agree because a disabled
+# output has no current mode -- and that coincidence is what this split removes.
 #
 #   layout  name conn mode_w mode_h mm_w mm_h rate transform scale x y enabled
 #           `name` is the EDID "Make Model Serial" kanshi keys outputs on, EMPTY

@@ -14,7 +14,7 @@ export HWDP_PROVIDER_ROOT="$T/no-user-providers"
 export HWDP_MACHINE_PROVIDERS="$T/no-machine-providers"
 
 # 1) the integrator backend seam is tried first and speaks the shared LAYOUT
-# record, which display-geometry projects onto its own line contract: scale 2
+# record, which `hwdp geometry` projects onto its line contract: scale 2
 # halves a 3840x2160 mode to a 1920x1080 logical size.
 mkdir -p "$T/bin"
 cat > "$T/bin/mybackend" <<'EOF'

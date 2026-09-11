@@ -8,9 +8,9 @@
 # mode is also the preferred one it prints a single "(preferred, current)" line
 # and NO separate "(current)" line, so a bare /\(current\)/ match sees nothing,
 # the output is dropped, and a caller gets an empty layout. Match the WORD
-# `current` on a mode line. This is the one parser now; the old duplicate in
-# display-geometry is what made the bug fixable in one place and still live in
-# the other.
+# `current` on a mode line. This is the ONE parser now; the duplicate that used
+# to live in display-geometry is what let the bug be fixed in one place and stay
+# live in the other.
 set -u
 [ -n "${WAYLAND_DISPLAY:-}" ] || exit 1
 command -v wlr-randr >/dev/null 2>&1 || exit 1
