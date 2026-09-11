@@ -1,0 +1,63 @@
+#!/bin/sh
+# hwdp -- hardware display profile: recognise which monitors are present, lay
+# out and size the workspace for them, keyed on the HARDWARE (an EDID-derived
+# id) and never on a hostname.
+#
+# The only command this package installs. Every subcommand is one executable in
+# libexec/hwdp/cmd/, so adding one is adding a file and this dispatcher never
+# grows a special case.
+#
+#   hwdp id         the display-profile id for the connected monitor set
+#   hwdp shape      the workspace shape: single | triple
+#   hwdp ui         per-display UI sizing, as shell-sourceable KEY=VALUE
+#   hwdp geometry   one line per enabled output (stable contract; see --help)
+#   hwdp layout     emit the runtime kanshi config, print its path
+#   hwdp capture    snapshot the current arrangement into a profile
+#   hwdp watch      supervise the layout; fire display-change hooks
+#   hwdp magnify    magnify one application via a nested gamescope window
+#
+# `id`, `shape` and `ui` answer HEADLESS -- from a TTY, over ssh, at boot, at
+# the greeter -- because they ask the kernel about panels when no compositor is
+# there to ask. The rest need a session, and say so when they do not have one.
+set -eu
+
+# Resolve our own real path so the tools work both from a checkout and through
+# the ~/.local/bin symlink the installer makes. This bootstrap is the one thing
+# that cannot itself live in the library it is looking for.
+_self=$(readlink -f "$0" 2>/dev/null) || _self=$0
+HWDP_LIBEXEC=${HWDP_LIBEXEC:-$(dirname "$(dirname "$_self")")/libexec/hwdp}
+export HWDP_LIBEXEC
+
+# The subcommand list is the block of `#   hwdp <cmd>` lines in the header, so
+# the help and the documentation cannot drift apart.
+_usage() { sed -n 's/^#   \(hwdp .*\)/  \1/p' "$0"; }
+
+_cmd=${1:-}
+[ $# -gt 0 ] && shift || :
+
+case $_cmd in
+  ''|-h|--help|help)
+    echo "usage: hwdp <command> [args]"
+    echo
+    _usage
+    [ -z "$_cmd" ] && exit 2 || exit 0 ;;
+  --version) echo "hwdp ${HWDP_VERSION:-0.1.0}"; exit 0 ;;
+esac
+
+# A closed vocabulary: the argument selects a shipped executable, it never
+# names an arbitrary path. Anything unknown fails loud rather than silently
+# doing nothing, which for a tool other scripts call is the difference between
+# a visible error and a UI that quietly keeps its old size.
+case $_cmd in
+  id|shape|ui|geometry|layout|capture|watch|magnify) ;;
+  *) echo "hwdp: unknown command '$_cmd'" >&2
+     echo "try: hwdp help" >&2
+     exit 2 ;;
+esac
+
+_impl=$HWDP_LIBEXEC/cmd/$_cmd
+[ -x "$_impl" ] || {
+  echo "hwdp: $_cmd is not installed at $_impl" >&2
+  exit 3
+}
+exec "$_impl" "$@"

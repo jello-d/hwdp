@@ -30,7 +30,7 @@ done
 # may be absent here, so do not gate on RC -- only that it reports the tools.
 PATH="$XDG_BIN_HOME:$PATH" sh "$HERE/setup.sh" check >"$T/check.out" 2>&1 \
   || true
-grep -q '\[OK\].*kanshi-autoscale present' "$T/check.out" \
+grep -q '\[OK\].*hwdp present' "$T/check.out" \
   || fail "check did not report the linked tools"
 
 sh "$HERE/setup.sh" uninstall >/dev/null || fail "uninstall errored"

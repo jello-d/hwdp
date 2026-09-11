@@ -1,0 +1,81 @@
+#!/bin/sh
+# hwdp ui -- the per-display UI sizing profile, as shell-sourceable KEY=VALUE.
+#
+# For apps whose font or size is a single GLOBAL config (kitty, the pixdecor
+# titlebar, mako, the lock ring) and so cannot self-scale per output the way a
+# bar can. ONE resolver, so every consumer gets the same answer; resolved
+# specific-first:
+#   1. an optional HWDP override file $PROFILES/<id>.ui (the same KEY=VALUE
+#      lines) wins PER KEY -- hand-authored for a rig that wants exact sizes;
+#   2. else a DENSITY default: a low-res SINGLE panel (< LODPI_MAX_W wide) is
+#      `lodpi` (shrink); everything else -- a hi-res single or a >=3 wall -- is
+#      `hidpi`, which MIRRORS the static configs, so a hi-res display is a
+#      strict no-op.
+#
+# The keys:
+#   KITTY_FONT    kitty font_size; EMPTY => leave kitty.conf's own (hidpi)
+#   TITLE_FONT    pixdecor title_font (Pango); ALWAYS set, so switching a mode
+#                 back to hi-res RESTORES the full titlebar (IPC state is live).
+#   MAKO_FONT     mako font (Pango); EMPTY => leave mako/config's own (hidpi)
+#   LOCK_RADIUS   swaylock --indicator-radius (px); EMPTY => swaylock's default
+#   CURSOR_SIZE   the pointer cursor size (px); ALWAYS set (like TITLE_FONT), so
+#                 a switch back to hi-res RESTORES it rather than leaving it
+#                 shrunk (the consumer sets it live).
+# The hidpi TITLE_FONT and CURSOR_SIZE mirror wayfire.ini's [pixdecor]
+# title_font and [input] cursor_size -- keep them in sync.
+set -eu
+. "$HWDP_LIBEXEC/displayset.sh"
+
+UI_KITTY_LODPI=${UI_KITTY_LODPI:-10}
+UI_TITLE_HIDPI=${UI_TITLE_HIDPI:-Lato Semibold 14}
+UI_TITLE_LODPI=${UI_TITLE_LODPI:-Lato Semibold 10}
+UI_MAKO_LODPI=${UI_MAKO_LODPI:-Inter 11}   # mako/config font is Inter 18
+UI_LOCK_RADIUS_LODPI=${UI_LOCK_RADIUS_LODPI:-32}   # swaylock ring, default ~50
+UI_CURSOR_HIDPI=${UI_CURSOR_HIDPI:-48}   # mirrors wayfire.ini cursor_size
+UI_CURSOR_LODPI=${UI_CURSOR_LODPI:-32}   # shrink on a small panel
+LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
+
+# With NO display at all, say so and emit nothing. Every consumer reads these
+# keys with its own default behind them, so silence leaves them correct -- where
+# a confident wrong answer did not. This is the bug that started the split: the
+# density test used to ask a LAYOUT probe a PANEL question, get nothing at a
+# greeter, and fall through to hidpi, handing a 1920x1080 panel a 48px cursor.
+_sh=$(shape)
+if [ -z "$_sh" ]; then
+  echo "hwdp ui: no displays; refusing to guess a UI size" >&2
+  exit 3
+fi
+
+# An unknown width (a connector the kernel listed no modes for) falls to hidpi,
+# which mirrors the static configs and is the harmless answer when we cannot
+# tell.
+_rw=$(panel_width)
+if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
+  _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
+  _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI
+else
+  _kitty=; _title=$UI_TITLE_HIDPI; _mako=; _lockr=; _cursor=$UI_CURSOR_HIDPI
+fi
+
+# The override wins per key. Read it LITERALLY (never shell-sourced), so a value
+# with spaces (TITLE_FONT=Lato Semibold 12) needs no quoting and nothing in the
+# file is ever executed.
+_ovr=$PROFILES/$(hwdp_id).ui
+if [ -f "$_ovr" ]; then
+  _k=$(sed -n 's/^KITTY_FONT=//p' "$_ovr" | head -1)
+  _t=$(sed -n 's/^TITLE_FONT=//p' "$_ovr" | head -1)
+  _m=$(sed -n 's/^MAKO_FONT=//p' "$_ovr" | head -1)
+  _lr=$(sed -n 's/^LOCK_RADIUS=//p' "$_ovr" | head -1)
+  _cs=$(sed -n 's/^CURSOR_SIZE=//p' "$_ovr" | head -1)
+  [ -n "$_k" ]  && _kitty=$_k
+  [ -n "$_t" ]  && _title=$_t
+  [ -n "$_m" ]  && _mako=$_m
+  [ -n "$_lr" ] && _lockr=$_lr
+  [ -n "$_cs" ] && _cursor=$_cs
+fi
+
+printf 'KITTY_FONT=%s\n'  "$_kitty"
+printf 'TITLE_FONT=%s\n'  "$_title"
+printf 'MAKO_FONT=%s\n'   "$_mako"
+printf 'LOCK_RADIUS=%s\n' "$_lockr"
+printf 'CURSOR_SIZE=%s\n' "$_cursor"

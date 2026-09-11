@@ -7,36 +7,34 @@ hostname. It is environment-agnostic: it runs under X11 or a wlroots compositor,
 and hardcodes no downstream tool. Everything session-specific is a **hook** or a
 pluggable **backend** an integrator fills.
 
-It is a suite of four tools installed on `PATH`; there is no eponymous `hwdp`
-command.
+It installs **one command**, `hwdp`, whose subcommands are executables under
+`libexec/hwdp/cmd/` — adding one is adding a file.
 
-## Tools
+## Commands
 
-- **kanshi-autoscale** — pick or synthesize the kanshi layout for the connected
-  monitor set and fill each output's scale from panel DPI. Subcommands: `hwdp`,
-  `shape`, `uiprofile`, `capture`.
-- **kanshi-mgr** — own kanshi's lifecycle in a session and fire display-change
-  hooks. It knows nothing of any specific compositor tool.
-- **display-geometry** — one line per enabled output, from `wlr-randr`,
-  `xrandr`, or a plugged-in backend.
-- **run-scaled** — magnify one application via a nested gamescope window.
+```
+hwdp id         the display-profile id for the connected monitor set
+hwdp shape      the workspace shape: single | triple
+hwdp ui         per-display UI sizing, as shell-sourceable KEY=VALUE
+hwdp geometry   one line per enabled output (a stable contract)
+hwdp layout     emit the runtime kanshi config, print its path
+hwdp capture    snapshot the current arrangement into a profile
+hwdp watch      supervise the layout; fire display-change hooks
+hwdp magnify    magnify one application via a nested gamescope window
+```
 
-## Install
+`id`, `shape` and `ui` answer **headless** — from a TTY, over ssh, at boot, at
+a greeter — because they ask the kernel about panels when no compositor is
+there to ask. The rest need a session and say so when they do not have one.
 
-    ./setup.sh install      # symlink the tools (+ man) into ~/.local
-    ./setup.sh check        # tools + deps present; [OK]/[FAIL] markers
-    ./setup.sh uninstall
-    ./setup.sh test         # the in-repo suite (also: sh test/run)
-
-Honors `PREFIX` (default `~/.local`) and the `XDG_*` vars. Runtime deps:
-`kanshi` and `wlr-randr` (core), `awk`/`sha256sum`; and, degrading softly,
-`inotify-tools` (auto-reapply), `gamescope` (run-scaled), `xrandr` (X11).
+`layout`, `capture` and `watch` are the kanshi adapter and make no apology for
+naming it; everything below them is compositor-agnostic.
 
 ## Integration seams (the extension points)
 
 hwdp ships mechanisms, not policy. An integrator wires the specifics:
 
-- **Display-change hooks.** `kanshi-mgr` runs every executable in
+- **Display-change hooks.** `hwdp watch` runs every executable in
   `$HWDP_HOOK_ROOT/<edge>.d/*` (default `~/.config/hwdp/hooks`) and a machine
   root `$HWDP_MACHINE_HOOKS/<edge>.d/*` (default `/etc/hwdp/hooks`), machine
   first then user, fail-soft. Edges: `pre` (before kanshi starts, backgrounded)

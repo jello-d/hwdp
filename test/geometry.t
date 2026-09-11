@@ -1,11 +1,11 @@
 #!/bin/sh
-# geometry.t - display-geometry as a projection of the shared layout probe: the
+# geometry.t - `hwdp geometry` as a projection of the shared layout probe: the
 # HWDP_GEOM_BACKEND seam is tried first, and the shipped wlr-randr provider
 # parses the text into the stable line contract. Stubs only, no compositor.
 . "$(dirname "$0")/lib.sh"
 harness_init geometry
 
-DG="$HERE/bin/display-geometry"
+DG="$HERE/bin/hwdp"
 
 # Hermetic: point the user and machine provider roots at empty dirs, so a
 # provider the DEVELOPER has dropped into ~/.config/hwdp can never quietly take
@@ -22,7 +22,7 @@ cat > "$T/bin/mybackend" <<'EOF'
 printf 'Acme X1 S1\tDP-9\t3840\t2160\t600\t340\t60\tnormal\t2\t10\t20\t1\n'
 EOF
 chmod +x "$T/bin/mybackend"
-_out=$(HWDP_GEOM_BACKEND="$T/bin/mybackend" "$DG" --now 2>&1)
+_out=$(HWDP_GEOM_BACKEND="$T/bin/mybackend" "$DG" geometry --now 2>&1)
 [ "$_out" = "DP-9 3840 2160 normal 2 10 20 1920 1080 landscape" ] \
   || fail "HWDP_GEOM_BACKEND seam not honoured (got: $_out)"
 
@@ -60,7 +60,7 @@ chmod +x "$T/bin/wlr-randr"
 _want="DP-1 2560 1440 90 1 0 0 1440 2560 portrait
 DP-2 1920 1080 normal 1 2560 0 1920 1080 landscape"
 _got=$(PATH="$T/bin:$PATH" WAYLAND_DISPLAY=wayland-test DISPLAY= \
-  "$DG" --now 2>&1)
+  "$DG" geometry --now 2>&1)
 [ "$_got" = "$_want" ] || fail "wlr-randr parse wrong: got [$_got]"
 
 pass "backend seam + wlr-randr parse"

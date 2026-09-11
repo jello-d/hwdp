@@ -1,5 +1,5 @@
 #!/bin/sh
-# mgr.t - kanshi-mgr's coalesced settle, against stubs (no compositor needed).
+# mgr.t - `hwdp watch`'s coalesced settle, against stubs (no compositor).
 #
 # Two properties, both regressions we have actually been bitten by:
 #   1. NO ZOMBIES. The settle used to be a tracked background child cancelled
@@ -14,7 +14,7 @@ harness_init mgr
 command -v python3 >/dev/null 2>&1 || skip "needs python3 to make a unix socket"
 command -v flock >/dev/null 2>&1   || skip "needs flock"
 
-MGR="$HERE/bin/kanshi-mgr"
+MGR="$HERE/bin/hwdp"
 mkdir -p "$T/bin" "$T/hooks/changed.d" "$T/run"
 : > "$T/wayfire.ini"
 
@@ -58,8 +58,8 @@ chmod +x "$T/hooks/changed.d/10-record"
 
 XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test \
   HWDP_HOOK_ROOT="$T/hooks" HWDP_MACHINE_HOOKS="$T/no-machine-hooks" \
-  WAYFIRE_CONFIG_FILE="$T/wayfire.ini" KANSHI_MGR_DAEMONIZED=1 \
-  PATH="$T/bin:$PATH" "$MGR" >"$T/mgr.log" 2>&1 &
+  WAYFIRE_CONFIG_FILE="$T/wayfire.ini" HWDP_WATCH_DAEMONIZED=1 \
+  PATH="$T/bin:$PATH" "$MGR" watch >"$T/mgr.log" 2>&1 &
 _mgr=$!
 trap 'kill "$_mgr" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 

@@ -5,65 +5,82 @@ hwdp \- hardware display-profile detection, layout, and autoscale suite
 .B hwdp
 recognises which monitors are present and lays out / autoscales the workspace
 for them, keyed on the HARDWARE (an EDID-derived display-profile id), never on
-a hostname. It is a suite of five tools installed on
-.BR PATH ;
-there is no eponymous
-.B hwdp
-command. It is environment-agnostic: it works under X11 or a wlroots compositor,
-and hardcodes no downstream tool \(em everything session-specific is a HOOK or a
-pluggable BACKEND an integrator fills.
-.SH TOOLS
+a hostname. It installs ONE command,
+.BR hwdp ,
+whose subcommands are executables under libexec/hwdp/cmd/, so adding one is
+adding a file. It is environment-agnostic: it works under X11 or a wlroots
+compositor, and hardcodes no downstream tool \(em everything session-specific
+is a HOOK or a PROVIDER an integrator fills.
+.SH COMMANDS
 .TP
-.B kanshi-autoscale
-Pick or synthesize the kanshi layout for the connected monitor set and fill each
-output's scale from panel DPI. Subcommands:
-.BR hwdp " (the display-profile id), " shape " (single/triple), " uiprofile
-(per-display UI sizing lines a consumer sources),
-.BR capture .
+.B hwdp id
+The display-profile id for the connected monitor set: a compound hash over the
+connected connectors' EDIDs, so it names the SET regardless of order or which
+connector each panel sits on. Empty with nothing connected. Resolves HEADLESS.
 .TP
-.B kanshi-mgr
-Own kanshi's lifecycle in a session (supervise-or-nudge via
-.BR flock ),
-regenerate the config through
-.BR kanshi-autoscale ,
-and re-apply on compositor-config changes. It fires display-change HOOKS from
-.IR <root>/<edge>.d/* " (edges: " pre ", " changed )
-so an integrator wires reactions; it knows nothing of any specific compositor
-tool. Hook roots:
-.BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
-(default /etc/hwdp/hooks).
+.B hwdp shape
+The workspace shape \(em
+.BR single " or " triple
+\(em the panel COUNT coarsened, since the grid, window rules and wallpaper key
+on how many panels there are, not which. Resolves HEADLESS.
 .TP
-.B display-geometry
+.B hwdp ui
+Per-display UI sizing as shell-sourceable KEY=VALUE
+.RB ( KITTY_FONT ", " TITLE_FONT ", " MAKO_FONT ", " LOCK_RADIUS ", "
+.BR CURSOR_SIZE ),
+for apps whose size is a single global config and so cannot self-scale per
+output. An optional
+.I <id>.ui
+override wins per key; else a density default. Resolves HEADLESS, and REFUSES
+(exit 3, no output) rather than guess when no display answers at all.
+.TP
+.B hwdp geometry
 Print one line per enabled output \(em
 .I NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
-\(em projected from the shared layout probe, whose providers cover
-.B wlr-randr
-(wlroots) and
-.B xrandr
-(X11), plus anything dropped in or named by
-.BR HWDP_GEOM_BACKEND .
-Settles by default (samples until the layout holds still);
+\(em projected from the shared layout probe. Settles by default (samples until
+the layout holds still);
 .B \-\-now
 prints one snapshot.
 .TP
-.B run-scaled
+.B hwdp layout
+Emit the runtime kanshi config for the connected set and print its path: inject
+each output's sticky scale into the profile named by the id, or synthesize a
+side-by-side one when there is none.
+.TP
+.B hwdp capture
+Snapshot the current arrangement (transforms, positions, modes \(em no scale)
+into a profile named by the id, so a rig is onboarded by arranging it once.
+.TP
+.B hwdp watch
+Supervise the layout for a session (supervise-or-nudge via
+.BR flock ),
+regenerate the config through
+.BR "hwdp layout" ,
+and re-apply on compositor-config changes. It fires display-change HOOKS from
+.IR <root>/<edge>.d/* " (edges: " pre ", " changed )
+so an integrator wires the reactions; it knows nothing of any specific
+compositor tool. Hook roots:
+.BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
+(default /etc/hwdp/hooks).
+.TP
+.B hwdp magnify
 Magnify a single application via a nested
 .B gamescope
 window (renders at a size/scale and upscales), windowed or fullscreen.
 .SH FILES
 .TP
 .I ~/.config/hwdp/hooks/<edge>.d/*
-User display-change hooks run by kanshi-mgr.
+User display-change hooks run by `hwdp watch'.
 .TP
 .I ~/.config/kanshi/{profiles,auto-scale}
-kanshi-autoscale's layout templates and sticky per-panel scale overrides.
+Layout templates and the sticky per-panel scale overrides.
 .TP
 .I ~/.config/hwdp/providers/{layout,panels}/*
 User display probe providers, tried before the machine and shipped ones.
 .SH ENVIRONMENT
 .TP
 .B HWDP_HOOK_ROOT ", " HWDP_MACHINE_HOOKS
-Roots for kanshi-mgr's display-change hooks.
+Roots for `hwdp watch's display-change hooks.
 .TP
 .B HWDP_PROVIDER_ROOT ", " HWDP_MACHINE_PROVIDERS
 Roots for display probe providers. Each holds a

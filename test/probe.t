@@ -9,7 +9,7 @@
 . "$(dirname "$0")/lib.sh"
 harness_init probe
 
-KA="$HERE/bin/kanshi-autoscale"
+KA="$HERE/bin/hwdp"
 mkdir -p "$T/bin" "$T/home" "$T/user/layout" "$T/machine/layout" "$T/drm"
 
 # A fake DRM tree: one connected 1920x1080 panel, one disconnected connector.
@@ -36,14 +36,14 @@ run() {   # kanshi-autoscale with NO compositor: no WAYLAND_DISPLAY, no DISPLAY
 # must come from DRM sysfs rather than falling through to hidpi.
 [ "$(run shape)" = single ] || fail "shape did not fall back to panels headless"
 
-_ui=$(run uiprofile) || fail "uiprofile failed headless: $_ui"
+_ui=$(run ui) || fail "uiprofile failed headless: $_ui"
 _cs=$(printf '%s\n' "$_ui" | sed -n 's/^CURSOR_SIZE=//p')
 [ "$_cs" = 32 ] \
   || fail "headless uiprofile sized for hidpi (CURSOR_SIZE=$_cs, want 32)"
 
 # The HWDP id resolves headless too -- this is the probe the greeter is chosen
 # by, at provision time from a TTY, so it must never need a session.
-case "$(run hwdp)" in
+case "$(run id)" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
   *) fail "hwdp id did not resolve headless" ;;
 esac
@@ -52,7 +52,7 @@ esac
 mkdir -p "$T/drm-empty"
 _out=$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
   HWDP_DRM="$T/drm-empty" HWDP_PROVIDER_ROOT="$T/user" \
-  HWDP_MACHINE_PROVIDERS="$T/machine" sh "$KA" uiprofile 2>/dev/null) \
+  HWDP_MACHINE_PROVIDERS="$T/machine" sh "$KA" ui 2>/dev/null) \
   && fail "uiprofile invented a UI size with no displays at all"
 [ -z "$_out" ] || fail "uiprofile emitted keys with no displays: $_out"
 
@@ -69,7 +69,7 @@ chmod +x "$T/machine/layout/10-src" "$T/user/layout/10-src"
 
 _dg() { env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
   HWDP_PROVIDER_ROOT="$T/user" HWDP_MACHINE_PROVIDERS="$T/machine" \
-  sh "$HERE/bin/display-geometry" --now 2>&1; }
+  sh "$HERE/bin/hwdp" geometry --now 2>&1; }
 
 [ "$(_dg | cut -d' ' -f1)" = DP-U ] \
   || fail "user provider did not win over machine ($(_dg))"

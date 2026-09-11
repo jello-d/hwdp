@@ -9,9 +9,9 @@
 set -eu
 
 . "$(dirname "$0")/lib.sh"
-harness_init kanshi-autoscale
+harness_init layout
 
-KA=$HERE/bin/kanshi-autoscale
+KA=$HERE/bin/hwdp
 mkdir -p "$T/bin" "$T/profiles" "$T/home"
 
 # fake wlr-randr: two Dell portrait panels (session-side geometry for capture/
@@ -91,21 +91,21 @@ run() {
 }
 
 # --- HWDP: 12 hex, stable, excludes disconnected, tracks the set -------------
-hwdp=$(run hwdp)
+hwdp=$(run id)
 case "$hwdp" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
   *) fail "hwdp not hex: '$hwdp'" ;;
 esac
 [ "${#hwdp}" = 12 ] || fail "hwdp not 12 chars: '$hwdp'"
-[ "$(run hwdp)" = "$hwdp" ] || fail "hwdp not stable across runs"
+[ "$(run id)" = "$hwdp" ] || fail "hwdp not stable across runs"
 # a disconnected connector must not contribute: plugging it (status->connected,
 # real edid) changes the id; unplugging restores it.
 printf connected > "$T/drm/card1-DP-2/status"
 printf 'EDID-PANEL-C' > "$T/drm/card1-DP-2/edid"
-[ "$(run hwdp)" != "$hwdp" ] \
+[ "$(run id)" != "$hwdp" ] \
   || fail "hwdp ignored a newly-connected panel"
 printf disconnected > "$T/drm/card1-DP-2/status"
-[ "$(run hwdp)" = "$hwdp" ] \
+[ "$(run id)" = "$hwdp" ] \
   || fail "hwdp did not exclude the disconnected panel"
 
 # --- capture: writes profiles/<hwdp>.conf, scale-free, both panels -----------
@@ -119,7 +119,7 @@ grep -q '^ *output .* scale ' "$out" \
   && fail "captured output line must NOT carry a scale"
 
 # --- emit: selects the matching profile and injects scale --------------------
-gen=$(run)                                   # emit prints the OUT path
+gen=$(run layout)                            # emit prints the OUT path
 grep -q "profile hwdp-$hwdp" "$gen" || fail "emit did not pick the hwdp profile"
 grep -q '^ *output .* scale ' "$gen" || fail "emit did not inject a scale"
 
@@ -135,7 +135,7 @@ emit_ds() {   # large design area: the old sqrt path would have downscaled here
     WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
     KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky-ds" \
     KANSHI_OUT="$T/out-ds" HWDP_DRM="$T/drm" \
-    KANSHI_DESIGN_W=5760 KANSHI_DESIGN_H=3600 sh "$KA"
+    KANSHI_DESIGN_W=5760 KANSHI_DESIGN_H=3600 sh "$KA" layout
 }
 dsgen=$(emit_ds)
 [ "$(scale_of "$dsgen" AAA111)" = 1.00 ] \
@@ -151,17 +151,17 @@ dsgen=$(emit_ds)
 tab=$(printf '\t')
 edid='Dell Inc. AW2725Q AAA111'
 printf '%s%s2.00%s3840x2160@590x330\n' "$edid" "$tab" "$tab" > "$T/sticky"
-gen=$(run)
+gen=$(run layout)
 [ "$(scale_of "$gen" AAA111)" = 2.00 ] \
   || fail "sticky override not honoured on a matching signature"
 printf '%s%s2.00%s9999x9999@1x1\n' "$edid" "$tab" "$tab" > "$T/sticky"
-gen=$(run)
+gen=$(run layout)
 [ "$(scale_of "$gen" AAA111)" = 1.00 ] \
   || fail "changed signature did not recompute (kept the stale override)"
 
 # --- emit: no matching profile -> synthesize ---------------------------------
 rm -f "$T/profiles/$hwdp.conf"
-gen=$(run)
+gen=$(run layout)
 grep -qi 'no matching layout profile' "$gen" || fail "emit did not synthesize"
 
 # --- shape: <3 panels -> single, >=3 -> triple (the panel-count coarsening) ---
@@ -176,7 +176,7 @@ uphas() { printf '%s\n' "$up" | grep -q "$1"; }
 
 # hidpi: the shrink keys are EMPTY (each app's own config value stands) and
 # TITLE_FONT is the hidpi default -- a strict no-op on a hi-res display.
-up=$(run uiprofile)
+up=$(run ui)
 uphas '^KITTY_FONT=$'  || fail "uiprofile hidpi: KITTY_FONT should be empty"
 uphas '^MAKO_FONT=$'   || fail "uiprofile hidpi: MAKO_FONT should be empty"
 uphas '^LOCK_RADIUS=$' || fail "uiprofile hidpi: LOCK_RADIUS should be empty"
@@ -186,20 +186,20 @@ uphas '^TITLE_FONT=.*Semibold' || fail "uiprofile hidpi: TITLE_FONT missing"
 uphas '^CURSOR_SIZE=48$' || fail "uiprofile hidpi: CURSOR_SIZE should be 48"
 
 # lodpi (same panel, threshold above its width): every shrink key is non-empty.
-up=$(LODPI_MAX_W=5000 run uiprofile)
+up=$(LODPI_MAX_W=5000 run ui)
 uphas '^KITTY_FONT=[0-9]'  || fail "uiprofile lodpi: KITTY_FONT unset"
 uphas '^MAKO_FONT=..*'     || fail "uiprofile lodpi: MAKO_FONT unset"
 uphas '^LOCK_RADIUS=[0-9]' || fail "uiprofile lodpi: LOCK_RADIUS unset"
 uphas '^CURSOR_SIZE=32$'   || fail "uiprofile lodpi: CURSOR_SIZE should be 32"
 
 # a >=3 wall is hidpi even below the width threshold (the shape gate wins).
-up=$(STUB3=1 LODPI_MAX_W=5000 run uiprofile)
+up=$(STUB3=1 LODPI_MAX_W=5000 run ui)
 uphas '^KITTY_FONT=$' || fail "uiprofile: a 3-panel wall must resolve hidpi"
 
 # HWDP override wins PER KEY, read LITERALLY (a value with spaces, no quoting);
 # an absent key falls through to the density default.
 printf 'KITTY_FONT=13\nTITLE_FONT=Custom Face 12\n' > "$T/profiles/$hwdp.ui"
-up=$(LODPI_MAX_W=5000 run uiprofile)
+up=$(LODPI_MAX_W=5000 run ui)
 uphas '^KITTY_FONT=13$' || fail "uiprofile: HWDP override KITTY_FONT ignored"
 uphas '^TITLE_FONT=Custom Face 12$' \
   || fail "uiprofile: HWDP override TITLE_FONT (spaces) not read literally"

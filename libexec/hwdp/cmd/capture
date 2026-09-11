@@ -1,0 +1,35 @@
+#!/bin/sh
+# hwdp capture -- snapshot the CURRENT arrangement into a profile named by the
+# connected set's id, so a rig is onboarded by "arrange it once, then capture"
+# instead of hand-editing a config. Writes $PROFILES/<id>.conf, prints its path.
+#
+# Transforms, positions and modes only; NO scale -- `hwdp layout` fills that at
+# session start from the sticky per-panel value, and baking one in here would
+# freeze a number that is meant to track the hardware.
+set -eu
+. "$HWDP_LIBEXEC/displayset.sh"
+
+_id=$(hwdp_id)
+[ -n "$_id" ] || { echo "hwdp capture: no outputs to capture" >&2; exit 1; }
+_dst=$PROFILES/$_id.conf
+mkdir -p "$PROFILES"
+{
+  printf '# captured by hwdp capture -- layout for this monitor set.\n'
+  printf '# Outputs/transforms/positions only; the per-output scale is\n'
+  printf '# filled at session start (see hwdp layout / auto-scale).\n'
+  printf '# ROTATION GOTCHA: transform is wl_output_transform (kanshi) =\n'
+  printf '# COUNTER-CLOCKWISE; the sway greeter is CLOCKWISE -- 180 degrees\n'
+  printf '# apart -- shift by 180 (90<->270) to reuse in the greeter.\n'
+  printf '# The file name is the HWDP (compound EDID-set id). Panels:\n'
+  outputs | while IFS="$TAB" read -r edid _ _ _ _ _ _ _ _; do
+    printf '#   %s\n' "$edid"
+  done
+  printf 'profile hwdp-%s {\n' "$_id"
+  outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
+    _t=""; [ "$tr" != normal ] && _t=" transform $tr"
+    printf '    output "%s" mode %sx%s@%.3fHz%s position %s\n' \
+      "$edid" "$rw" "$rh" "$rate" "$_t" "$pos"
+  done
+  printf '}\n'
+} > "$_dst"
+printf '%s\n' "$_dst"

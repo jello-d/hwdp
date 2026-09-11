@@ -1,30 +1,19 @@
 #!/bin/sh
-# display-geometry - print one line per enabled output; environment-agnostic.
+# hwdp geometry -- one line per ENABLED output, whitespace separated:
 #
-# A thin PROJECTION over the shared layout probe (libexec/hwdp/probe.sh), which
-# is where the indirection lives now: wlroots, X11 and anything an integrator
-# writes are all PROVIDERS, so this tool knows the name of no compositor tool.
-# HWDP_GEOM_BACKEND is unchanged as the integrator seam -- it is simply tried
-# first, and emits the shared layout record like every other provider.
+#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+#
+# A STABLE CONTRACT: a consumer sorts by POS_X for left-to-right order and sizes
+# itself from the LOGICAL w/h (the space it actually gets after scale and
+# rotation). TRANSFORM values are wl_output_transform (COUNTER-CLOCKWISE), the
+# kanshi/wlr-randr convention; a sway config `transform` is CLOCKWISE -- 180
+# apart, so shift by 180 (90<->270) to reuse a value across the two.
 #
 #   default       settle: sample until the layout stops changing, then print
 #   --now         print the first snapshot immediately (no settle)
 #   --quiet-ms N  settle window in ms (default 200)
 #   --timeout S   overall cap in seconds (default 30)
-#
-# Output, one line per ENABLED output, whitespace separated (STABLE CONTRACT):
-#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
-#
-# TRANSFORM values are wl_output_transform (COUNTER-CLOCKWISE), the kanshi /
-# wlr-randr convention; a sway config `transform` is CLOCKWISE -- 180 apart, so
-# shift by 180 (90<->270) to reuse a value across the two.
 set -u
-
-# Find the package's libexec from our own real path, so the tool works both run
-# from the checkout and run through the ~/.local/bin symlink the installer
-# makes. This bootstrap is the one thing that cannot itself live in the library.
-_self=$(readlink -f "$0" 2>/dev/null) || _self=$0
-HWDP_LIBEXEC=${HWDP_LIBEXEC:-$(dirname "$(dirname "$_self")")/libexec/hwdp}
 . "$HWDP_LIBEXEC/probe.sh"
 
 NOW=0
@@ -37,8 +26,8 @@ while [ $# -gt 0 ]; do
     --quiet-ms=*) QUIET_MS=${1#*=} ;;
     --timeout)    TIMEOUT=$2; shift ;;
     --timeout=*)  TIMEOUT=${1#*=} ;;
-    -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
-    *) echo "display-geometry: unknown arg: $1" >&2; exit 2 ;;
+    -h|--help)    sed -n '2,18p' "$0"; exit 0 ;;
+    *) echo "hwdp geometry: unknown arg: $1" >&2; exit 2 ;;
   esac
   shift
 done
@@ -50,7 +39,7 @@ done
 # swapped for a 90/270 (or flipped-90/270) transform.
 _snapshot() {
   if ! _rec=$(probe_layout); then
-    echo "display-geometry: no layout provider could answer (need wlr-randr on"\
+    echo "hwdp geometry: no layout provider could answer (need wlr-randr on" \
          "Wayland or xrandr on X11; drop your own in" \
          "$HWDP_PROVIDER_ROOT/layout, or set HWDP_GEOM_BACKEND)" >&2
     return 3
@@ -71,8 +60,8 @@ _snapshot() {
 }
 
 # Generic settle: sample until two consecutive non-empty snapshots match (the
-# layout held still for one quiet window), capped by --timeout. Approximates the
-# event-driven backend's debounce without needing the protocol.
+# layout held still for one quiet window), capped by --timeout. Approximates an
+# event-driven provider's debounce without needing the protocol.
 _settle() {
   _q=$(awk "BEGIN{print $QUIET_MS/1000}")
   _max=$(awk "BEGIN{print int($TIMEOUT/($QUIET_MS/1000)) + 1}")
@@ -90,7 +79,7 @@ _settle() {
   done
   if [ -n "$_prev" ]; then
     printf '%s\n' "$_prev"
-    echo "display-geometry: settle timed out; last-known state" >&2
+    echo "hwdp geometry: settle timed out; last-known state" >&2
     return 0
   fi
   return 1

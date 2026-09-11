@@ -1,0 +1,7 @@
+#!/bin/sh
+# hwdp shape -- the workspace shape for the connected set: `single` or `triple`,
+# empty with no displays. A coarsening of the id to just the panel COUNT, which
+# is what the grid, window rules and wallpaper actually key on.
+set -eu
+. "$HWDP_LIBEXEC/displayset.sh"
+shape

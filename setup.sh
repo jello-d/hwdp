@@ -3,14 +3,12 @@
 # display-profile detection + monitor-set layout/autoscale. The SINGLE entry
 # point a consumer or provisioning layer uses.
 #
-# The tools, in bin/:
-#   kanshi-autoscale pick/synthesize the kanshi layout for the connected set +
-#                    fill each output's scale from panel DPI; hwdp/shape/ui
-#   kanshi-mgr       own kanshi's lifecycle in a session; fire display-change
-#                    HOOKS an integrator drops in (it hardcodes no downstream)
-#   display-geometry one line per enabled output; wlr-randr / xrandr / a plugged
-#                    backend (HWDP_GEOM_BACKEND)
-#   run-scaled       magnify one app via a nested gamescope window
+# ONE command, bin/hwdp, dispatching to the impls in libexec/hwdp/cmd/:
+#   id shape ui        display-profile queries (these answer HEADLESS)
+#   geometry           one line per enabled output (stable contract)
+#   layout capture     the kanshi adapter: emit the runtime config / snapshot
+#   watch              supervise the layout, fire display-change HOOKS
+#   magnify            magnify one app via a nested gamescope window
 #
 #   ./setup.sh install     symlink the tools (+ man) into ~/.local
 #   ./setup.sh uninstall   remove the symlinks
@@ -19,8 +17,8 @@
 #   ./setup.sh version     the packaged version
 #
 # POSIX sh, non-privileged. Honors PREFIX (default ~/.local) + XDG_* so a test
-# sandboxes it. kanshi-mgr is autostarted by the compositor, not a systemd unit,
-# so there is no `service` verb.
+# sandboxes it. `hwdp watch` is autostarted by the compositor, not a systemd
+# unit, so there is no `service` verb.
 set -eu
 
 PKG=hwdp
@@ -50,7 +48,7 @@ _lib=$PREFIX/libexec
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
-DEPS_SOFT="inotifywait gamescope xrandr"
+DEPS_SOFT="inotifywait gamescope xrandr bc"
 RC=0
 
 # marker contract: plain [OK]/[FAIL]/[WARN] an integrator styles in its palette;
@@ -89,9 +87,13 @@ do_uninstall() {
 
 do_check() {
   echo "== $PKG (display detect / layout / autoscale) =="
-  for _t in "$_root"/bin/*; do _n=$(basename "$_t")
-    if command -v "$_n" >/dev/null 2>&1; then ok "$_n present"
-    else bad "$_n not on PATH"; fi; done
+  if command -v hwdp >/dev/null 2>&1; then ok "hwdp present"
+  else bad "hwdp not on PATH"; fi
+  # Every subcommand the dispatcher advertises must actually be installed --
+  # a missing impl is a command that exists until someone runs it.
+  for _c in id shape ui geometry layout capture watch magnify; do
+    [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
+      || bad "cmd $_c missing"; done
   # The shared probe and its providers: the tools resolve libexec from their own
   # real path, so a missing library is a broken install, while a missing PREFIX
   # symlink is only an inconvenience -- hence bad vs warn.
@@ -112,7 +114,7 @@ do_check() {
   for _d in $DEPS_SOFT; do
     command -v "$_d" >/dev/null 2>&1 && ok "dep $_d present" \
       || warn "dep $_d absent (a feature degrades: inotify=auto-reapply," \
-              "gamescope=run-scaled, xrandr=X11 geometry)"; done
+              "gamescope+bc=magnify, xrandr=X11 geometry)"; done
 }
 
 _U="usage: setup.sh [install|uninstall|check|test|version]"
