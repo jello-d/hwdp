@@ -45,11 +45,11 @@ tool. Hook roots:
 .B display-geometry
 Print one line per enabled output \(em
 .I NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
-\(em from
+\(em projected from the shared layout probe, whose providers cover
 .B wlr-randr
-(wlroots),
+(wlroots) and
 .B xrandr
-(X11), or a richer backend plugged in via
+(X11), plus anything dropped in or named by
 .BR HWDP_GEOM_BACKEND .
 Settles by default (samples until the layout holds still);
 .B \-\-now
@@ -66,6 +66,9 @@ User display-change hooks run by kanshi-mgr.
 .TP
 .I ~/.config/kanshi/{profiles,auto-scale}
 kanshi-autoscale's layout templates and sticky per-panel scale overrides.
+.TP
+.I ~/.config/hwdp/providers/{layout,panels}/*
+User display probe providers, tried before the machine and shipped ones.
 .SH ENVIRONMENT
 .TP
 .B HWPROFILE
@@ -74,8 +77,21 @@ Path to the capability profile file (writer + reader share it).
 .B HWDP_HOOK_ROOT ", " HWDP_MACHINE_HOOKS
 Roots for kanshi-mgr's display-change hooks.
 .TP
+.B HWDP_PROVIDER_ROOT ", " HWDP_MACHINE_PROVIDERS
+Roots for display probe providers. Each holds a
+.I layout
+and/or
+.I panels
+directory whose executables are tried in filename order; the first to exit 0
+with output wins, and one that cannot answer in this environment exits
+non-zero and is skipped.
+.TP
 .B HWDP_GEOM_BACKEND
-An executable that replaces display-geometry's built-in backends wholesale.
+An executable tried as the first layout provider, ahead of every directory.
+.TP
+.B HWDP_DRM
+The DRM sysfs root the shipped panels provider reads (default
+.IR /sys/class/drm ).
 .SH SEE ALSO
 .BR kanshi (1),
 .BR wlr-randr (1),

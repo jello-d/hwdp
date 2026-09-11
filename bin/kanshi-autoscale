@@ -42,66 +42,45 @@ _cfg=${XDG_CONFIG_HOME:-$HOME/.config}/kanshi
 PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}
 STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
 OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/kanshi-autoscale.config}
-DRM=${KANSHI_DRM:-/sys/class/drm}
 TAB=$(printf '\t')
 
-# --- sniff: one TAB record per enabled output -----------------------------
-# edid \t name \t res_w \t res_h \t mm_w \t mm_h \t rate \t transform \t pos
-sniff() {
-  wlr-randr 2>/dev/null | awk '
-    function flush() {
-      if (name != "" && mmw+0 > 0 && rw+0 > 0)
-        printf "%s %s %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-          make, model, serial, name, rw, rh, mmw, mmh, rate, tr, pos
-    }
-    /^[^ \t]/    { flush(); name=$1; make=""; model=""; serial="";
-                   mmw=0; mmh=0; rw=0; rh=0; rate=""; tr="normal"; pos="0,0" }
-    /^  Make:/   { s=$0; sub(/^  Make: */,"",s);   make=s }
-    /^  Model:/  { s=$0; sub(/^  Model: */,"",s);  model=s }
-    /^  Serial:/ { s=$0; sub(/^  Serial: */,"",s); serial=s }
-    /^  Physical size:/ { split($3,a,"x"); mmw=a[1]; mmh=a[2] }
-    /px,.*current/ { split($1,b,"x"); rw=b[1]; rh=b[2];
-                     for (i=1;i<=NF;i++) if ($i=="Hz") rate=$(i-1) }
-    /^  Transform:/ { tr=$2 }
-    /^  Position:/  { pos=$2 }
-    END { flush() }'
-}
+# Find the package's libexec from our own real path, so the tool works both run
+# from the checkout and run through the ~/.local/bin symlink the installer
+# makes. This bootstrap is the one thing that cannot itself live in the library.
+_self=$(readlink -f "$0" 2>/dev/null) || _self=$0
+HWDP_LIBEXEC=${HWDP_LIBEXEC:-$(dirname "$(dirname "$_self")")/libexec/hwdp}
+. "$HWDP_LIBEXEC/probe.sh"
 
-# hwdp: the HWDP (hardware display profile id), a compound id for the CONNECTED
-# output set, sourced from the kernel's DRM connector EDIDs ($DRM/<conn>/edid),
-# NOT wlr-randr. This is the one probe that resolves HEADLESS: from a TTY, over
-# ssh, at boot -- exactly where the greeter is chosen (a provisioning run from a
-# TTY) and rendered (the greeter at boot, before any session). Each connected
-# connector's raw EDID is hashed, the hashes sorted-unique then hashed again, so
-# the id is the same for a monitor set regardless of order or which connector
-# each sits on (the EDID carries make/model/serial, so identical models still
-# differ and the set still pins WHICH panels). Empty (not the hash of nothing)
-# with nothing connected, so a display-less box yields no bogus id. Shared by
-# provision-time code (the greeter) and session code (kanshi, the drift check):
-# all key on ONE algorithm.
+# --- sniff: the LAYOUT records this tool wants, in this tool's shape -------
+# edid \t name \t res_w \t res_h \t mm_w \t mm_h \t rate \t transform \t pos
 #
-# GOTCHA: sysfs reports stat size 0 for the `edid` attribute even when a read
-# returns 256 bytes, so emptiness is gated on the connector's `status` file,
-# NEVER on `[ -s edid ]` (always false here); the empty-EDID hash is skipped,
-# so a connected-but-EDID-less connector adds nothing.
-_EMPTY_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-hwdp() {
-  _hs=$(for _c in "$DRM"/*-*/; do
-          [ "$(cat "$_c/status" 2>/dev/null)" = connected ] || continue
-          _h=$(sha256sum < "$_c/edid" 2>/dev/null | cut -d' ' -f1)
-          [ -n "$_h" ] && [ "$_h" != "$_EMPTY_SHA" ] && printf '%s\n' "$_h"
-        done | sort -u)
-  [ -n "$_hs" ] || return 0
-  printf '%s\n' "$_hs" | sha256sum | cut -c1-12
+# A projection of the shared layout probe (libexec/hwdp/probe.sh), which owns
+# the one wlr-randr parser now. The filter is OUR policy, not the provider's:
+# kanshi keys an output by its EDID "Make Model Serial" and needs a physical
+# size to sign the sticky scale, so an output missing either is not one we can
+# act on. The `enabled` test used to be implicit here -- a disabled output has
+# no current mode, so it fell out by accident -- and is now explicit.
+sniff() {
+  probe_layout | awk -F"$TAB" -v OFS="$TAB" '
+    $1 != "" && $12 == 1 && $3 + 0 > 0 && $5 + 0 > 0 {
+      print $1, $2, $3, $4, $5, $6, $7, $8, $10 "," $11
+    }'
 }
 
 # shape: the workspace SHAPE for the connected set -- a COARSENING of the
 # HWDP to just the panel COUNT, since the grid, names, window rules and
 # wallpaper are a function of HOW MANY panels, not which ones. A wall (>=3) is
 # `triple`, anything less is `single` (the same >=3 threshold mako uses). Empty
-# with no outputs. This is what generalizes a specific rig to a logical layout.
+# with no displays at all.
+#
+# LAYOUT first, PANELS as the fallback: in a session the compositor's view is
+# the one to act on (an output you disabled should not count toward the wall),
+# but at the greeter or from a TTY there is no compositor and the kernel's view
+# is the only truthful answer available. Each context gets the answer it can
+# actually act on, rather than the empty string that used to come back headless.
 shape() {
   _sc=$(sniff | grep -c . || true)
+  [ "${_sc:-0}" -ge 1 ] || _sc=$(probe_panels | grep -c . || true)
   [ "${_sc:-0}" -ge 1 ] || return 0
   if [ "$_sc" -ge 3 ]; then echo triple; else echo single; fi
 }
@@ -138,7 +117,22 @@ UI_CURSOR_LODPI=${UI_CURSOR_LODPI:-32}   # shrink on a small panel
 LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
 uiprofile() {
   _sh=$(shape)
+  # Same layout-then-panels order as shape, for the same reason. Headless this
+  # used to come back EMPTY and the density test fell silently through to its
+  # else, so a 1920x1080 panel with no session was told it was hidpi and got a
+  # 48px cursor. With no display at all we now say so and emit NOTHING: every
+  # consumer reads these keys with its own default behind them, so silence
+  # leaves them correct, where a confident wrong answer did not.
   _rw=$(sniff | head -1 | cut -f3)
+  [ -n "$_rw" ] || _rw=$(probe_panels | head -1 | cut -f3)
+  # A connector the kernel has listed no modes for reports 0: unknown, not
+  # tiny. Fall through to hidpi, which MIRRORS the static configs and is
+  # therefore the harmless answer when we cannot tell.
+  [ "${_rw:-0}" -gt 0 ] 2>/dev/null || _rw=""
+  if [ -z "$_sh" ]; then
+    echo "kanshi-autoscale: no displays; refusing to guess a UI size" >&2
+    return 3
+  fi
   if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
     _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
     _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI
@@ -148,7 +142,7 @@ uiprofile() {
   # An HWDP override wins per key. Read it LITERALLY (not shell-sourced), so a
   # value with spaces (TITLE_FONT=Lato Semibold 12) needs no quoting and nothing
   # in the file is ever executed.
-  _ovr=$PROFILES/$(hwdp).ui
+  _ovr=$PROFILES/$(hwdp_id).ui
   if [ -f "$_ovr" ]; then
     _k=$(sed -n 's/^KITTY_FONT=//p' "$_ovr" | head -1)
     _t=$(sed -n 's/^TITLE_FONT=//p' "$_ovr" | head -1)
@@ -203,7 +197,7 @@ resolve() {
 # so a rig is onboarded by "arrange once, then capture" instead of hand-editing.
 # Writes $PROFILES/<hwdp>.conf and prints its path.
 capture() {
-  _hwdp=$(hwdp)
+  _hwdp=$(hwdp_id)
   [ -n "$_hwdp" ] || { echo "kanshi-autoscale: no outputs to capture" >&2
     exit 1; }
   _dst=$PROFILES/$_hwdp.conf
@@ -262,7 +256,7 @@ gen_fallback() {
 
 emit() {
   # Select the layout profile for the connected set (else synthesize below).
-  TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp).conf}
+  TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp_id).conf}
   _map=$(mktemp)
   trap 'rm -f "$_map"' EXIT INT TERM
   sniff | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
@@ -282,7 +276,7 @@ emit() {
 
 case "${1:-}" in
   capture)   capture ;;
-  hwdp)      hwdp ;;
+  hwdp)      hwdp_id ;;
   shape)     shape ;;
   uiprofile) uiprofile ;;
   *)         emit ;;

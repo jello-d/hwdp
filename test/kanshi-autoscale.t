@@ -83,8 +83,9 @@ mk_conn card1-DP-2  disconnected ''
 
 run() {
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+    WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
     KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
-    KANSHI_OUT="$T/out" KANSHI_DRM="$T/drm" \
+    KANSHI_OUT="$T/out" HWDP_DRM="$T/drm" \
     ${STUB3:+STUB3="$STUB3"} ${LODPI_MAX_W:+LODPI_MAX_W="$LODPI_MAX_W"} \
     sh "$KA" "$@"
 }
@@ -131,8 +132,9 @@ scale_of() {   # <file> <serial> -> the scale on that panel's output line
 }
 emit_ds() {   # large design area: the old sqrt path would have downscaled here
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+    WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
     KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky-ds" \
-    KANSHI_OUT="$T/out-ds" KANSHI_DRM="$T/drm" \
+    KANSHI_OUT="$T/out-ds" HWDP_DRM="$T/drm" \
     KANSHI_DESIGN_W=5760 KANSHI_DESIGN_H=3600 sh "$KA"
 }
 dsgen=$(emit_ds)

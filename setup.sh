@@ -44,6 +44,11 @@ PREFIX=${PREFIX:-$HOME/.local}
 _bin=${XDG_BIN_HOME:-$PREFIX/bin}
 _shr=${XDG_DATA_HOME:-$PREFIX/share}
 _man=$_shr/man
+# The shared probe library and its providers. Linked as ONE directory symlink
+# (not file by file) so a provider added upstream appears without a re-install,
+# which is what `head`-tracked packaging expects. The tools find it from their
+# own real path anyway; this is for anyone who wants it at a predictable place.
+_lib=$PREFIX/libexec
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
@@ -64,17 +69,20 @@ _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
   [ -e "$_m" ] && printf '%s\n' "$_m"; done; }
 
 do_install() {
-  mkdir -p "$_bin"
+  mkdir -p "$_bin" "$_lib"
   for _t in "$_root"/bin/*; do ln -sfn "$_t" "$_bin/$(basename "$_t")"; done
+  ln -sfn "$_root/libexec/$PKG" "$_lib/$PKG"
   _man_pages | while IFS= read -r _m; do
     _d=$_man/$(basename "$(dirname "$_m")")
     mkdir -p "$_d"; ln -sfn "$_m" "$_d/$(basename "$_m")"; done
-  echo "$PKG: linked the tools (+ man) into $PREFIX"
+  echo "$PKG: linked the tools (+ libexec, man) into $PREFIX"
 }
 
 do_uninstall() {
   for _t in "$_root"/bin/*; do _l=$_bin/$(basename "$_t")
     [ "$(readlink "$_l" 2>/dev/null)" = "$_t" ] && rm -f "$_l" || :; done
+  [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
+    && rm -f "$_lib/$PKG" || :
   _man_pages | while IFS= read -r _m; do
     _l=$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")
     [ "$(readlink "$_l" 2>/dev/null)" = "$_m" ] && rm -f "$_l" || :; done
@@ -86,6 +94,20 @@ do_check() {
   for _t in "$_root"/bin/*; do _n=$(basename "$_t")
     if command -v "$_n" >/dev/null 2>&1; then ok "$_n present"
     else bad "$_n not on PATH"; fi; done
+  # The shared probe and its providers: the tools resolve libexec from their own
+  # real path, so a missing library is a broken install, while a missing PREFIX
+  # symlink is only an inconvenience -- hence bad vs warn.
+  [ -f "$_root/libexec/$PKG/probe.sh" ] && ok "libexec/probe.sh present" \
+    || bad "libexec/probe.sh missing"
+  [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
+    && ok "libexec linked into $PREFIX" \
+    || warn "libexec not linked at $_lib/$PKG (tools still resolve it)"
+  for _c in layout panels; do
+    _n=0
+    for _p in "$_root/libexec/$PKG/providers/$_c"/*; do
+      [ -x "$_p" ] && _n=$((_n + 1)); done
+    [ "$_n" -ge 1 ] && ok "$_c providers ($_n)" \
+      || bad "no $_c providers installed"; done
   for _d in $DEPS_HARD; do
     command -v "$_d" >/dev/null 2>&1 && ok "dep $_d present" \
       || warn "dep $_d absent (core feature will not work)"; done

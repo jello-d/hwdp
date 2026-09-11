@@ -48,10 +48,20 @@ hwdp ships mechanisms, not policy. An integrator wires the specifics:
   and `changed` (after kanshi is up and on every config-change burst). The
   package ships **no** hooks — drop in a `changed.d/10-...` to re-assert
   compositor runtime state, move notifications, check a greeter stamp, etc.
-- **Geometry backend.** Set `HWDP_GEOM_BACKEND` to an executable and
-  `display-geometry` execs it wholesale (args passed through) — e.g. a backend
-  that speaks `wlr-output-management` directly and settles on its `done` event.
-  Absent, the built-in `wlr-randr`/`xrandr` backends run.
+- **Display probes are providers.** Every tool asks one shared probe layer what
+  displays exist, and each platform is a drop-in executable rather than a
+  branch in the code. Two classes, because they answer different questions:
+  `panels` (what is attached — DRM sysfs, resolves *headless*, at a TTY or a
+  greeter) and `layout` (how it is arranged — enabled, position, transform,
+  scale, which only a compositor knows). Providers are tried in filename order
+  from `$HWDP_PROVIDER_ROOT/<class>/*` (default `~/.config/hwdp/providers`),
+  then `$HWDP_MACHINE_PROVIDERS/<class>/*` (default `/etc/hwdp/providers`),
+  then the shipped ones; the first to exit 0 with output wins, and one that
+  cannot answer here exits non-zero and is skipped. Add hyprland, a KDE
+  backend, or a `wlr-output-management` probe that settles on its `done` event
+  by dropping in **one file** — same shape as the hooks above.
+- **Geometry backend.** `HWDP_GEOM_BACKEND`, if set and executable, is simply
+  the layout provider tried before all the others.
 - **Capability profile path.** `hwprofile` writes to `$HWPROFILE` (default a
   tool-owned path); point it and the reader at one path to share the contract.
 

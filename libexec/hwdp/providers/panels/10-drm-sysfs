@@ -1,0 +1,33 @@
+#!/bin/sh
+# hwdp PANELS provider: the kernel's DRM view, $HWDP_DRM/<connector>/.
+#
+# HEADLESS by design and by requirement -- this is the probe that has to answer
+# from a TTY, over ssh, at boot and at the greeter, before any compositor
+# exists. It is why the greeter can be chosen by hardware at provision time.
+#
+# GOTCHA: sysfs reports stat size 0 for the `edid` attribute even when a read
+# returns 256 bytes, so emptiness is gated on the connector's `status` file,
+# NEVER on `[ -s edid ]` (always false here). The empty-EDID hash is skipped, so
+# a connected-but-EDID-less connector contributes nothing rather than poisoning
+# the id with the hash of nothing.
+set -u
+DRM=${HWDP_DRM:-/sys/class/drm}
+_EMPTY_SHA=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+for _c in "$DRM"/*-*/; do
+  [ -d "$_c" ] || continue
+  [ "$(cat "$_c/status" 2>/dev/null)" = connected ] || continue
+  _h=$(sha256sum < "$_c/edid" 2>/dev/null | cut -d' ' -f1)
+  [ -n "$_h" ] && [ "$_h" != "$_EMPTY_SHA" ] || continue
+  # The connector's first listed mode is its preferred (native) one. Absent --
+  # a connector the kernel has not probed a mode list for -- report 0 rather
+  # than guess; a consumer sizing UI from it can then tell it does not know.
+  _m=$(head -1 "$_c/modes" 2>/dev/null)
+  case $_m in
+    [0-9]*x[0-9]*) _w=${_m%%x*}; _hh=${_m##*x} ;;
+    *)             _w=0; _hh=0 ;;
+  esac
+  # /sys/class/drm/card1-DP-2 -> DP-2, the same connector name wlr-randr uses.
+  _n=$(basename "$_c")
+  printf '%s\t%s\t%s\t%s\n' "$_h" "${_n#card*-}" "$_w" "$_hh"
+done

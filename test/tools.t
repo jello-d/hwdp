@@ -13,8 +13,12 @@ _checker() {   # <file> -> the -n syntax check for its shebang
   esac
 }
 
+# The shared library and every provider count too: a provider is shipped code
+# that runs on a display change, and a parse error in one is a silently empty
+# probe rather than a loud failure.
 _n=0
-for _f in "$HERE"/bin/* "$HERE"/setup.sh "$HERE"/test/run; do
+for _f in "$HERE"/bin/* "$HERE"/setup.sh "$HERE"/test/run \
+          "$HERE"/libexec/hwdp/probe.sh "$HERE"/libexec/hwdp/providers/*/*; do
   [ -f "$_f" ] || continue
   _checker "$_f" || fail "parse error in $(basename "$_f")"
   _n=$((_n + 1))

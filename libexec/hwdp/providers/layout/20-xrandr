@@ -1,0 +1,24 @@
+#!/bin/sh
+# hwdp LAYOUT provider: X11, via xrandr.
+#
+# Deliberately basic: transform=normal, scale=1, no EDID name, no physical size
+# and no refresh rate. The reported geometry already reflects any active
+# rotation, so logical w/h come out right; what is missing is what these tools
+# do not need on X11. A rotated or fractionally scaled X11 head that ever DOES
+# need exact values is a reason to write a richer provider and drop it in -- not
+# a reason to complicate this one.
+set -u
+[ -n "${DISPLAY:-}" ] || exit 1
+command -v xrandr >/dev/null 2>&1 || exit 1
+
+xrandr 2>/dev/null | awk '
+  BEGIN { OFS = "\t" }
+  $2 == "connected" {
+    geom = ""
+    for (i = 3; i <= NF; i++)
+      if ($i ~ /^[0-9]+x[0-9]+\+[0-9]+\+[0-9]+$/) { geom = $i; break }
+    if (geom == "") next
+    split(geom, g, /[x+]/)
+    print "", $1, g[1], g[2], 0, 0, "", "normal", 1, g[3], g[4], 1
+  }
+'

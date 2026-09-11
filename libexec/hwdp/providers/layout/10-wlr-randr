@@ -1,0 +1,45 @@
+#!/bin/sh
+# hwdp LAYOUT provider: wlroots/Wayland, via wlr-randr.
+#
+# Emits every output wlr-randr reports, enabled or not, and filters nothing --
+# see libexec/hwdp/probe.sh for why that is the consumer's job.
+#
+# GOTCHA, paid for once already: wlr-randr COMBINES mode flags. When the current
+# mode is also the preferred one it prints a single "(preferred, current)" line
+# and NO separate "(current)" line, so a bare /\(current\)/ match sees nothing,
+# the output is dropped, and a caller gets an empty layout. Match the WORD
+# `current` on a mode line. This is the one parser now; the old duplicate in
+# display-geometry is what made the bug fixable in one place and still live in
+# the other.
+set -u
+[ -n "${WAYLAND_DISPLAY:-}" ] || exit 1
+command -v wlr-randr >/dev/null 2>&1 || exit 1
+
+wlr-randr 2>/dev/null | awk '
+  BEGIN { OFS = "\t" }
+  function flush(   nm) {
+    if (conn == "") return
+    nm = ""
+    if (make != "" || model != "" || serial != "")
+      nm = make " " model " " serial
+    print nm, conn, rw, rh, mmw, mmh, rate, tr, sc, px, py, en
+  }
+  /^[^ \t]/           { flush(); conn = $1
+                        make = ""; model = ""; serial = ""
+                        mmw = 0; mmh = 0; rw = 0; rh = 0
+                        rate = ""; tr = "normal"; sc = 1; px = 0; py = 0
+                        en = 0 }
+  /^[ \t]+Make:/      { s = $0; sub(/^[ \t]+Make:[ \t]*/, "", s);   make = s }
+  /^[ \t]+Model:/     { s = $0; sub(/^[ \t]+Model:[ \t]*/, "", s);  model = s }
+  /^[ \t]+Serial:/    { s = $0; sub(/^[ \t]+Serial:[ \t]*/, "", s); serial = s }
+  /^[ \t]+Physical size:/ { split($3, b, "x"); mmw = b[1]; mmh = b[2] }
+  /^[ \t]+Enabled:/   { en = ($2 == "yes") ? 1 : 0 }
+  /^[ \t]+[0-9]+x[0-9]+ px.*current/ {
+                        split($1, a, "x"); rw = a[1]; rh = a[2]
+                        for (i = 1; i <= NF; i++)
+                          if ($i == "Hz") rate = $(i - 1) }
+  /^[ \t]+Position:/  { split($2, p, ","); px = p[1]; py = p[2] }
+  /^[ \t]+Transform:/ { tr = $2 }
+  /^[ \t]+Scale:/     { sc = $2 }
+  END                 { flush() }
+'
