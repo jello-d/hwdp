@@ -64,9 +64,26 @@ warn() { printf '  %s[WARN]%s %s\n' "$_Y" "$_O" "$1"; }
 _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
   [ -e "$_m" ] && printf '%s\n' "$_m"; done; }
 
+# Reclaim links THIS package left behind. `install` only ever created links for
+# the tools that exist now, so a tool that departed in a later version left its
+# link on PATH forever, dangling -- five of them survived the collapse to a
+# single `hwdp` command, and a stale `hwprofile` link would have SHADOWED the
+# real one had ~/.local/bin sorted before ~/bin. Scoped to symlinks that point
+# into our own bin/, so another package's binary can never be touched.
+_prune_stale() {
+  for _l in "$_bin"/*; do
+    [ -L "$_l" ] || continue
+    _lt=$(readlink "$_l") || continue
+    case $_lt in "$_root/bin/"*) ;; *) continue ;; esac
+    [ -e "$_lt" ] && continue
+    rm -f "$_l" && echo "$PKG: pruned stale link $(basename "$_l")"
+  done
+}
+
 do_install() {
   mkdir -p "$_bin" "$_lib"
   for _t in "$_root"/bin/*; do ln -sfn "$_t" "$_bin/$(basename "$_t")"; done
+  _prune_stale
   ln -sfn "$_root/libexec/$PKG" "$_lib/$PKG"
   _man_pages | while IFS= read -r _m; do
     _d=$_man/$(basename "$(dirname "$_m")")
@@ -77,6 +94,7 @@ do_install() {
 do_uninstall() {
   for _t in "$_root"/bin/*; do _l=$_bin/$(basename "$_t")
     [ "$(readlink "$_l" 2>/dev/null)" = "$_t" ] && rm -f "$_l" || :; done
+  _prune_stale
   [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
     && rm -f "$_lib/$PKG" || :
   _man_pages | while IFS= read -r _m; do
@@ -94,6 +112,16 @@ do_check() {
   for _c in id shape ui geometry layout capture watch magnify; do
     [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
       || bad "cmd $_c missing"; done
+  # Drift, not tidiness: a dangling link is a command that exists until it is
+  # run, and it can shadow the real tool elsewhere on PATH. `install` prunes.
+  _stale=""
+  for _l in "$_bin"/*; do
+    [ -L "$_l" ] || continue
+    _lt=$(readlink "$_l") || continue
+    case $_lt in "$_root/bin/"*) ;; *) continue ;; esac
+    [ -e "$_lt" ] || _stale="$_stale $(basename "$_l")"; done
+  [ -z "$_stale" ] && ok "no stale links in $_bin" \
+    || bad "stale links from an older version:$_stale (re-run install)"
   # The shared probe and its providers: the tools resolve libexec from their own
   # real path, so a missing library is a broken install, while a missing PREFIX
   # symlink is only an inconvenience -- hence bad vs warn.

@@ -33,6 +33,20 @@ PATH="$XDG_BIN_HOME:$PATH" sh "$HERE/setup.sh" check >"$T/check.out" 2>&1 \
 grep -q '\[OK\].*hwdp present' "$T/check.out" \
   || fail "check did not report the linked tools"
 
+# A tool that DEPARTS in a later version must not leave its link on PATH: the
+# collapse to a single `hwdp` command orphaned five of them, dangling, and a
+# stale `hwprofile` link could have shadowed the real one elsewhere on PATH.
+# install prunes our own debris -- and ONLY ours: a link to somebody else's
+# binary, dangling or not, is none of our business.
+ln -sfn "$HERE/bin/departed-tool" "$XDG_BIN_HOME/departed-tool"
+ln -sfn /nonexistent/other-pkg/bin/theirs "$XDG_BIN_HOME/theirs"
+sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
+[ -L "$XDG_BIN_HOME/departed-tool" ] \
+  && fail "install left a dangling link to a departed tool"
+[ -L "$XDG_BIN_HOME/theirs" ] \
+  || fail "install pruned a link that belongs to another package"
+rm -f "$XDG_BIN_HOME/theirs"
+
 sh "$HERE/setup.sh" uninstall >/dev/null || fail "uninstall errored"
 for _t in "$HERE"/bin/*; do
   _n=$(basename "$_t")
