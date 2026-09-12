@@ -1,0 +1,219 @@
+#!/bin/sh
+# test/vm/run -- hwdp against REAL DRM, in a throwaway KVM guest.
+#
+# The stub suite (test/run) drives the panels provider against a hand-built
+# fake sysfs tree: directories named like connectors, with bytes standing in
+# for an EDID. That answers "does the logic do what we mean". It cannot answer
+# "does this work against a kernel", and every assumption the fake encodes --
+# that `status` says exactly `connected`, that `edid` reads back despite a
+# stat size of 0, that `modes` line 1 is the native mode -- is unverified.
+#
+# QEMU's virtio-vga SYNTHESIZES AN EDID (edid=on,xres=,yres=), so a guest gets
+# a real DRM connector carrying a real EDID at a resolution we choose. That is
+# the whole reason this harness is worth having for hwdp specifically: the id
+# is a hash OF THAT EDID and the UI sizing is a function of that panel's width,
+# so booting the same code against two different panels tests the actual
+# contract -- a different panel is a different id, and a narrow one is lodpi.
+#
+# Heavy and manual, like bootique's render harness: it needs KVM and downloads
+# a cloud image once. `test/run` stays the fast tier and this is not part of it.
+#
+#   sh test/vm/run              # both panels (1920x1080 lodpi, 2880x1800 hidpi)
+#   sh test/vm/run --keep       # keep the overlay for poking at
+#
+# Prereqs: qemu-system-x86_64, xorriso, curl, /dev/kvm writable (an ACL grant
+# is enough). NO sudo on the host -- the guest is root.
+set -eu
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+VM=${HWDP_VM_DIR:-/var/tmp/hwdpvm}
+IMG=$VM/noble-server-cloudimg-amd64.img
+URL=https://cloud-images.ubuntu.com/noble/current/${IMG##*/}
+KEEP=${1:-}
+
+_die() { echo "vm: $*" >&2; exit 1; }
+
+for _c in qemu-system-x86_64 xorriso curl; do
+  command -v "$_c" >/dev/null 2>&1 || _die "missing prereq: $_c"
+done
+[ -w /dev/kvm ] || _die "/dev/kvm not writable (an ACL grant is enough)"
+mkdir -p "$VM"
+
+if [ ! -f "$IMG" ]; then
+  echo "vm: fetching base cloud image (once, ~600M)"
+  curl -fSL -o "$IMG.part" "$URL" || _die "image download failed"
+  mv "$IMG.part" "$IMG"
+fi
+
+# The repo as a read-only ISO: simpler than 9p (no kernel module) and it
+# guarantees the guest tests the tree as SHIPPED, not a working copy it could
+# mutate.
+echo "vm: packing the repo"
+xorriso -as mkisofs -R -J -V HWDP -quiet -o "$VM/repo.iso" "$HERE" 2>/dev/null \
+  || _die "repo.iso failed"
+
+# --- the guest script -------------------------------------------------------
+# QUOTED heredoc: nothing here is expanded by the host, so the guest script can
+# use $ freely without a layer of backslashes to get wrong.
+#
+# Tools come from `packages:`, never an apt-get in runcmd -- that races
+# cloud-init's own package lock and deadlocks. All output goes to a FILE and is
+# dumped to the serial at the very end; writing to /dev/ttyS0 live interleaves
+# with boot spam and gets lost.
+_seed=$VM/seed
+rm -rf "$_seed"; mkdir -p "$_seed"
+cat > "$_seed/user-data" <<'EOF'
+#cloud-config
+packages:
+  - dash
+runcmd:
+  - |
+    {
+      # cloud-init's runcmd has NO HOME, and a PATH built from "$HOME/.local/
+      # bin" silently becomes "/.local/bin" without one -- a harness bug that
+      # reads exactly like the product being uninstalled.
+      HOME=/root; export HOME
+      mkdir -p /mnt/repo /root/hwdp
+      mount -o ro /dev/disk/by-label/HWDP /mnt/repo
+      cp -a /mnt/repo/. /root/hwdp/
+      cd /root/hwdp
+      chmod +x bin/* setup.sh test/run libexec/hwdp/cmd/* \
+        libexec/hwdp/providers/*/* || true
+
+      echo "=== the DRM the kernel actually gives us ==="
+      for c in /sys/class/drm/*-*/; do
+        [ -d "$c" ] || continue
+        # `edidread` vs `edidstat` is the point, not noise: the provider gates
+        # emptiness on `status` and NEVER on `[ -s edid ]`, because sysfs
+        # reports a stat size of 0 for that attribute even when a read returns
+        # 256 bytes. That claim is load-bearing and was never verified against
+        # a real kernel -- only against a fake tree where we chose both.
+        printf '  %s status=%s modes1=%s edidread=%s edidstat=%s\n' \
+          "$(basename "$c")" "$(cat "$c/status" 2>/dev/null)" \
+          "$(head -1 "$c/modes" 2>/dev/null)" \
+          "$(wc -c < "$c/edid" 2>/dev/null)" \
+          "$([ -s "$c/edid" ] && echo nonzero || echo zero)"
+      done
+
+      echo "=== from-scratch install ==="
+      sh setup.sh install
+      PATH="$HOME/.local/bin:$PATH"; export PATH
+      sh setup.sh check || echo "SETUP_CHECK_DRIFT=$?"
+
+      echo "=== hwdp, headless, against real DRM ==="
+      # No compositor here on purpose: this is the panels class, the one that
+      # has to answer at a TTY and at a greeter.
+      echo "HWDP_VM_CONNECTORS=$(hwdp id >/dev/null 2>&1; \
+        grep -lx connected /sys/class/drm/*-*/status 2>/dev/null | wc -l)"
+      echo "HWDP_VM_ID=$(hwdp id 2>&1)"
+      echo "HWDP_VM_ID2=$(hwdp id 2>&1)"
+      echo "HWDP_VM_SHAPE=$(hwdp shape 2>&1)"
+      hwdp ui 2>&1 | sed 's/^/HWDP_VM_UI_/'
+      echo "HWDP_VM_PANELS=$(hwdp id >/dev/null 2>&1; \
+        sh -c '. /root/hwdp/libexec/hwdp/probe.sh
+               HWDP_LIBEXEC=/root/hwdp/libexec/hwdp probe_panels' \
+        2>/dev/null | head -1 | tr '\t' ' ')"
+
+      echo "=== the stub suite, on a real kernel ==="
+      sh test/run
+      echo "HWDP_VM_EXIT=$?"
+    } > /root/log 2>&1
+    cat /root/log > /dev/ttyS0
+    poweroff -f
+EOF
+
+# --- boot one guest at one panel size --------------------------------------
+# The verdict comes from the SERIAL LOG, never qemu's exit status, and qemu is
+# bounded by a timeout: a guest that wedges must not hang the harness or leak a
+# VM. cloud-init runs once per instance-id, so both the overlay and the id are
+# fresh per boot -- a reused overlay would skip the whole test and look green.
+boot_panel() {   # <xres> <yres> <console>
+  _x=$1; _y=$2; _console=$3
+  cat > "$_seed/meta-data" <<META
+instance-id: hwdp-$$-$_x
+local-hostname: hwdp-vm
+META
+  xorriso -as mkisofs -R -J -V CIDATA -quiet -o "$VM/seed.iso" "$_seed" \
+    2>/dev/null || _die "seed.iso failed"
+  rm -f "$VM/boot.qcow2"
+  qemu-img create -q -f qcow2 -F qcow2 -b "$IMG" "$VM/boot.qcow2" 8G \
+    || _die "overlay failed"
+  : > "$_console"
+  echo "vm: booting ${_x}x${_y} (console: $_console)"
+  qemu-system-x86_64 -enable-kvm -machine q35 -m 2048 -smp 2 \
+    -device virtio-vga,edid=on,xres="$_x",yres="$_y" \
+    -drive file="$VM/boot.qcow2",if=virtio \
+    -drive file="$VM/seed.iso",if=virtio,media=cdrom \
+    -drive file="$VM/repo.iso",if=virtio,media=cdrom \
+    -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+    -display none -serial "file:$_console" -monitor none -no-reboot \
+    >/dev/null 2>&1 &
+  _qpid=$!
+  _waited=0
+  while [ "$_waited" -lt "${VM_TIMEOUT:-600}" ]; do
+    grep -q 'HWDP_VM_EXIT=' "$_console" 2>/dev/null && break
+    kill -0 "$_qpid" 2>/dev/null || break
+    sleep 2; _waited=$((_waited + 2))
+  done
+  kill "$_qpid" 2>/dev/null || true
+  wait "$_qpid" 2>/dev/null || true
+  [ "$KEEP" = --keep ] || rm -f "$VM/boot.qcow2"
+}
+
+_val() { sed -n "s/^$2=//p" "$1" | tail -1 | tr -d '\r'; }
+
+RC=0
+_fail() { echo "vm: FAIL: $*" >&2; RC=1; }
+
+LO=$VM/console-lodpi.log
+HI=$VM/console-hidpi.log
+boot_panel 1920 1080 "$LO"
+boot_panel 2880 1800 "$HI"
+
+for _c in "$LO" "$HI"; do
+  grep -q 'HWDP_VM_EXIT=' "$_c" 2>/dev/null \
+    || _die "guest never reported (boot or cloud-init failure); see $_c"
+done
+
+echo "vm: ---- lodpi guest ----"
+sed -n '/=== the DRM the kernel/,$p' "$LO"
+echo "vm: ---- hidpi guest ----"
+sed -n '/=== hwdp, headless/,$p' "$HI"
+echo "vm: ---- end ----"
+
+# The stub suite must also pass on a real kernel, not just on this developer's.
+for _c in "$LO" "$HI"; do
+  [ "$(_val "$_c" HWDP_VM_EXIT)" = 0 ] || _fail "stub suite failed in $_c"
+done
+
+# An id must be 12 hex and STABLE across reads in one boot.
+for _c in "$LO" "$HI"; do
+  _id=$(_val "$_c" HWDP_VM_ID)
+  case $_id in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+    *) _fail "id is not 12 hex against real DRM: '$_id' ($_c)" ;;
+  esac
+  [ "$_id" = "$(_val "$_c" HWDP_VM_ID2)" ] \
+    || _fail "id not stable across two reads ($_c)"
+done
+
+# A DIFFERENT PANEL IS A DIFFERENT ID. This is the whole contract, and the fake
+# sysfs tree can only ever assert it against bytes we chose ourselves.
+[ "$(_val "$LO" HWDP_VM_ID)" != "$(_val "$HI" HWDP_VM_ID)" ] \
+  || _fail "two different panels produced the SAME id"
+
+# And the density policy, end to end: 1920 wide is lodpi, 2880 is hidpi.
+[ "$(_val "$LO" HWDP_VM_UI_CURSOR_SIZE)" = 32 ] \
+  || _fail "1920-wide panel not sized lodpi (CURSOR_SIZE=$(_val "$LO" \
+HWDP_VM_UI_CURSOR_SIZE))"
+[ "$(_val "$HI" HWDP_VM_UI_CURSOR_SIZE)" = 48 ] \
+  || _fail "2880-wide panel not sized hidpi (CURSOR_SIZE=$(_val "$HI" \
+HWDP_VM_UI_CURSOR_SIZE))"
+
+for _c in "$LO" "$HI"; do
+  [ "$(_val "$_c" HWDP_VM_SHAPE)" = single ] \
+    || _fail "one panel should be shape 'single' ($_c)"
+done
+
+[ "$RC" = 0 ] && echo "vm: PASS" || echo "vm: FAILED"
+exit "$RC"

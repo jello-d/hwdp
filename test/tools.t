@@ -18,6 +18,7 @@ _checker() {   # <file> -> the -n syntax check for its shebang
 # probe rather than a loud failure.
 _n=0
 for _f in "$HERE"/bin/* "$HERE"/setup.sh "$HERE"/test/run \
+          "$HERE"/test/vm/run \
           "$HERE"/libexec/hwdp/*.sh "$HERE"/libexec/hwdp/cmd/* \
           "$HERE"/libexec/hwdp/providers/*/*; do
   [ -f "$_f" ] || continue
