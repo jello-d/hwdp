@@ -47,6 +47,35 @@ sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
   || fail "install pruned a link that belongs to another package"
 rm -f "$XDG_BIN_HOME/theirs"
 
+# COPY mode: what a SHARED/SYSTEM prefix needs, because the clone lives under a
+# 0750 home and a symlink from /usr/local into it is unreadable by the greeter
+# account that has to follow it. The copy must be a REAL FILE, must resolve its
+# own libexec from its new home, and must still prune a departed tool -- which
+# a copy cannot advertise the way a dangling symlink does, hence the manifest.
+# XDG_BIN_HOME/XDG_DATA_HOME are set above and OVERRIDE PREFIX for those dirs,
+# so relocating an install means overriding all three. Worth knowing before
+# pointing a system install at /usr/local from an environment that exports them.
+C=$T/sys
+sys() { env HWDP_INSTALL_COPY=1 PREFIX="$C" XDG_BIN_HOME="$C/bin" \
+  XDG_DATA_HOME="$C/share" sh "$HERE/setup.sh" "$@"; }
+sys install >/dev/null || fail "copy-mode install errored"
+[ -f "$C/bin/hwdp" ] && [ ! -L "$C/bin/hwdp" ] \
+  || fail "copy mode left a symlink, not a real file"
+[ -f "$C/libexec/hwdp/probe.sh" ] && [ ! -L "$C/libexec/hwdp" ] \
+  || fail "copy mode did not copy the libexec tree"
+[ "$("$C/bin/hwdp" help | grep -c '^  hwdp ')" -eq 7 ] \
+  || fail "the copied hwdp cannot resolve its own libexec"
+
+printf 'hwdp\nrun-scaled\ndeparted\n' > "$C/libexec/.hwdp-installed"
+: > "$C/bin/departed"
+sys install >/dev/null || fail "copy-mode re-install errored"
+[ -e "$C/bin/departed" ] && fail "copy mode kept a departed tool"
+[ -f "$C/bin/hwdp" ] || fail "copy-mode re-install lost hwdp"
+
+sys uninstall >/dev/null || fail "copy-mode uninstall errored"
+[ -e "$C/bin/hwdp" ] && fail "copy-mode uninstall left the binary"
+[ -e "$C/libexec/hwdp" ] && fail "copy-mode uninstall left the libexec tree"
+
 sh "$HERE/setup.sh" uninstall >/dev/null || fail "uninstall errored"
 for _t in "$HERE"/bin/*; do
   _n=$(basename "$_t")

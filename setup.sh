@@ -47,6 +47,12 @@ _man=$_shr/man
 # which is what `head`-tracked packaging expects. The tools find it from their
 # own real path anyway; this is for anyone who wants it at a predictable place.
 _lib=$PREFIX/libexec
+# What we last placed in $_bin. In COPY mode an installed file carries no
+# marker pointing home, so a departed tool cannot be recognised from its target
+# the way a dangling symlink can -- and at a ROOT prefix that would strand a
+# root-owned binary nobody can account for. Kept BESIDE the libexec tree, since
+# a copying install rm -rf's the tree itself.
+_manifest=$_lib/.$PKG-installed
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
@@ -66,6 +72,43 @@ warn() { printf '  %s[WARN]%s %s\n' "$_Y" "$_O" "$1"; }
 _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
   [ -e "$_m" ] && printf '%s\n' "$_m"; done; }
 
+# _place <src> <dst>: symlink, or COPY when HWDP_INSTALL_COPY=1.
+#
+# Copy mode is what a SHARED/SYSTEM prefix needs. The clone this installs from
+# lives under a user's home (0750, and ~/.cache is 0700), so a symlink from
+# /usr/local into it is unreadable by any other account -- a greeter following
+# one gets nothing. A copy can drift from the clone, so a copying install
+# RE-COPIES every run; the install sweep runs on every provision.
+#
+# --remove-destination so replacing a RUNNING binary cannot fail with ETXTBSY:
+# the old inode is unlinked and any live process keeps it.
+#
+# THE CHOWN IS NOT OPTIONAL, and this is vigilance's hard-won lesson rather than
+# ours: `cp -a` implies --preserve=all, which carries the SOURCE's ownership
+# across even when the copy runs as root. Installing from a clone in a user's
+# home therefore produced a system binary owned by the LOGIN USER -- one the
+# greeter executes and the unprivileged account can rewrite at will. When root
+# is installing, root owns the result.
+_place() {
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    cp -a --remove-destination "$1" "$2"
+    if [ "$(id -u)" = 0 ]; then chown -R root:root "$2"; fi
+  else
+    ln -sfn "$1" "$2"
+  fi
+}
+
+# _unplace <installed-path> <clone-source>: remove what _place put there. A
+# symlink is only ours if it still points at our clone; a copy carries no such
+# marker, so copy mode removes by path.
+_unplace() {
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    rm -f "$1"
+  else
+    [ "$(readlink "$1" 2>/dev/null)" = "$2" ] && rm -f "$1" || :
+  fi
+}
+
 # Reclaim links THIS package left behind. `install` only ever created links for
 # the tools that exist now, so a tool that departed in a later version left its
 # link on PATH forever, dangling -- five of them survived the collapse to a
@@ -73,6 +116,7 @@ _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
 # real one had ~/.local/bin sorted before ~/bin. Scoped to symlinks that point
 # into our own bin/, so another package's binary can never be touched.
 _prune_stale() {
+  # Symlink mode: ours if it points into our own bin/ and no longer resolves.
   for _l in "$_bin"/*; do
     [ -L "$_l" ] || continue
     _lt=$(readlink "$_l") || continue
@@ -80,29 +124,59 @@ _prune_stale() {
     [ -e "$_lt" ] && continue
     rm -f "$_l" && echo "$PKG: pruned stale link $(basename "$_l")"
   done
+  # Either mode: anything we recorded placing that we no longer ship.
+  [ -f "$_manifest" ] || return 0
+  while IFS= read -r _n; do
+    [ -n "$_n" ] && [ ! -e "$_root/bin/$_n" ] || continue
+    [ -e "$_bin/$_n" ] || continue
+    rm -f "$_bin/$_n" && echo "$PKG: pruned departed $_n"
+  done < "$_manifest"
+}
+
+# Record what we placed, so the next install can prune a tool that departs.
+_write_manifest() {
+  for _t in "$_root"/bin/*; do basename "$_t"; done > "$_manifest"
+  [ "$(id -u)" = 0 ] && chown root:root "$_manifest" || :
 }
 
 do_install() {
   mkdir -p "$_bin" "$_lib"
-  for _t in "$_root"/bin/*; do ln -sfn "$_t" "$_bin/$(basename "$_t")"; done
+  for _t in "$_root"/bin/*; do _place "$_t" "$_bin/$(basename "$_t")"; done
   _prune_stale
-  ln -sfn "$_root/libexec/$PKG" "$_lib/$PKG"
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    # rm first: `cp -a` of a directory ONTO an existing one NESTS it rather
+    # than replacing it, which would leave a stale tree one level down.
+    rm -rf "$_lib/$PKG"
+    cp -a "$_root/libexec/$PKG" "$_lib/$PKG"
+    [ "$(id -u)" = 0 ] && chown -R root:root "$_lib/$PKG" || :
+  else
+    ln -sfn "$_root/libexec/$PKG" "$_lib/$PKG"
+  fi
   _man_pages | while IFS= read -r _m; do
     _d=$_man/$(basename "$(dirname "$_m")")
-    mkdir -p "$_d"; ln -sfn "$_m" "$_d/$(basename "$_m")"; done
-  echo "$PKG: linked the tools (+ libexec, man) into $PREFIX"
+    mkdir -p "$_d"; _place "$_m" "$_d/$(basename "$_m")"; done
+  _write_manifest
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    echo "$PKG: COPIED the tools (+ libexec, man) into $PREFIX"
+  else
+    echo "$PKG: linked the tools (+ libexec, man) into $PREFIX"
+  fi
 }
 
 do_uninstall() {
-  for _t in "$_root"/bin/*; do _l=$_bin/$(basename "$_t")
-    [ "$(readlink "$_l" 2>/dev/null)" = "$_t" ] && rm -f "$_l" || :; done
+  for _t in "$_root"/bin/*; do _unplace "$_bin/$(basename "$_t")" "$_t"; done
   _prune_stale
-  [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
-    && rm -f "$_lib/$PKG" || :
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    rm -rf "$_lib/$PKG"
+  else
+    [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
+      && rm -f "$_lib/$PKG" || :
+  fi
   _man_pages | while IFS= read -r _m; do
-    _l=$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")
-    [ "$(readlink "$_l" 2>/dev/null)" = "$_m" ] && rm -f "$_l" || :; done
-  echo "$PKG: removed the ~/.local symlinks"
+    _unplace "$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")" "$_m"
+  done
+  rm -f "$_manifest"
+  echo "$PKG: removed the install from $PREFIX"
 }
 
 do_check() {
