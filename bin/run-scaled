@@ -58,7 +58,15 @@ while [ $# -gt 0 ]; do
         --fullscreen)   FULLSCREEN=1; shift ;;
         --wayland-app)  WAYLAND_APP=1; shift ;;
         --)             shift; break ;;
-        --*)            print_help; exit 1 ;;
+        # NAME the offending flag before the wall of help. An unknown option
+        # printed usage and exited 1, so a launcher that redirects output
+        # showed the user NOTHING happening and buried the reason in a log.
+        # That is exactly how a stale run-scaled meeting a newer caller
+        # presents: silence.
+        --*)            echo "run-scaled: unknown option: $1" >&2
+                        echo "run-scaled: (an older run-scaled does not know" \
+                            "a newer caller's flags)" >&2
+                        print_help >&2; exit 1 ;;
         *)              break ;;
     esac
 done
