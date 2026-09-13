@@ -47,6 +47,34 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -eq 0 ]; then echo "No application given!" >&2; exit 2; fi
+
+# VALIDATE BEFORE COMPUTING. Neither of these was checked, and neither failed
+# usefully: --scale=0 (or a typo like --scale=abc, which bc reads as 0) died
+# with a bare "Runtime error ... Divide by zero" from bc, and --size=bogus went
+# all the way through to `gamescope -W bogus -H bogus -w 0 -h 0`. A magnifier
+# handed a bad number should say so, not hand the mess to gamescope.
+case $SCALE in
+    ''|*[!0-9.]*|.|*.*.*) echo "run-scaled: --scale must be a number, got" \
+        "'$SCALE'" >&2; exit 1 ;;
+esac
+# Guard the divide itself, not just the shape: "0", "0.0" and "." all parse as
+# numeric above and all divide by zero below.
+case $(echo "$SCALE > 0" | bc 2>/dev/null) in
+    1) ;;
+    *) echo "run-scaled: --scale must be greater than 0, got '$SCALE'" >&2
+       exit 1 ;;
+esac
+if [ "$FULLSCREEN" -ne 1 ]; then
+    case $SIZE in
+        [0-9]*x[0-9]*)
+            case ${SIZE%x*}${SIZE#*x} in
+                *[!0-9]*) echo "run-scaled: --size must be WxH in pixels," \
+                    "got '$SIZE'" >&2; exit 1 ;;
+            esac ;;
+        *) echo "run-scaled: --size must be WxH in pixels, got '$SIZE'" >&2
+           exit 1 ;;
+    esac
+fi
 command -v gamescope >/dev/null || {
     echo "run-scaled: gamescope not found in PATH" >&2; exit 4; }
 
