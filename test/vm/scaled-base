@@ -1,0 +1,162 @@
+#!/bin/sh
+# test/vm/scaled-base -- the base image run-scaled is exercised against, and a
+# FEASIBILITY PROBE for the thing that decides whether any of it is possible.
+#
+# run-scaled wraps an app in a nested gamescope, and gamescope composites with
+# VULKAN. A guest has no GPU, so this stands or falls on lavapipe (Mesa's
+# software Vulkan) being enough for gamescope to initialise at all.
+#
+# IT IS NOT, and that is the settled answer rather than a thing to retry.
+# lavapipe advertises Vulkan 1.4 and DRM format modifiers, and gamescope still
+# refuses:
+#
+#   vulkan: selecting physical device 'llvmpipe (LLVM 21.1.8, 128 bits)'
+#   vulkan: physical device doesn't support VK_EXT_physical_device_drm
+#   Failed to create backend.
+#
+# That check happens at DEVICE SELECTION, before any backend exists, so it is
+# not something a backend choice escapes: --backend headless and --backend
+# wayland (nested in a headless sway) fail identically, the latter by aborting.
+# Exercising run-scaled in a guest therefore needs a real GPU passed through
+# (virtio-gpu venus), not a better software stack.
+#
+# What this base IS still good for: running those apps DIRECTLY at a hostile
+# resolution, which answers "how bad is this app on a 2880x1800 panel" -- the
+# question that motivates magnifying it in the first place. The gamescope
+# probe stays because a Mesa or gamescope release could change the answer, and
+# a one-line report beats re-deriving this.
+#
+# The apps are the ones a launcher here actually magnifies: tuxtype, tipp10 and
+# nlkt are packaged, fixed-layout X11 programs -- which is exactly why they are
+# hostile on a hi-res panel and why they get wrapped in the first place.
+#
+#   sh test/vm/scaled-base          # ~10-20 min, once per suite
+#
+# Leaves $VM/base-scaled-<suite>.qcow2. Prereqs: qemu-system-x86_64, xorriso,
+# curl, qemu-img, /dev/kvm writable. NO host sudo -- the guest is root.
+set -eu
+
+SUITE=${SCALED_SUITE:-resolute}
+VM=${SCALED_VM_DIR:-/var/tmp/scaledvm}
+IMG=$VM/$SUITE-server-cloudimg-amd64.img
+URL=https://cloud-images.ubuntu.com/$SUITE/current/${IMG##*/}
+BASE=$VM/base-scaled-$SUITE.qcow2
+
+_die() { echo "base: $*" >&2; exit 1; }
+for _c in qemu-system-x86_64 xorriso curl qemu-img; do
+  command -v "$_c" >/dev/null 2>&1 || _die "missing prereq: $_c"
+done
+[ -w /dev/kvm ] || _die "/dev/kvm not writable (an ACL grant is enough)"
+mkdir -p "$VM"
+
+if [ ! -f "$IMG" ]; then
+  echo "base: fetching $SUITE cloud image (once, ~600M)"
+  curl -fSL -o "$IMG.part" "$URL" || _die "image download failed"
+  mv "$IMG.part" "$IMG"
+fi
+
+echo "base: preparing $BASE"
+rm -f "$BASE"
+qemu-img convert -O qcow2 "$IMG" "$BASE" || _die "convert failed"
+qemu-img resize -q "$BASE" +6G || _die "resize failed"
+
+_seed=$VM/seed-base
+rm -rf "$_seed"; mkdir -p "$_seed"
+cat > "$_seed/meta-data" <<META
+instance-id: scaled-base-$$
+local-hostname: scaled-base
+META
+cat > "$_seed/user-data" <<'EOF'
+#cloud-config
+package_update: true
+packages:
+  - sway
+  - gamescope
+  # lavapipe: Mesa's software Vulkan. Without it gamescope has no device at
+  # all in a guest, and the whole harness is impossible rather than merely
+  # slow.
+  - mesa-vulkan-drivers
+  - vulkan-tools
+  - xwayland
+  - bc
+  # The apps a launcher magnifies here: fixed-layout X11 programs, which is
+  # precisely why they are hostile on a hi-res panel.
+  - tuxtype
+  - tipp10
+  - nlkt
+  - x11-apps
+runcmd:
+  - |
+    {
+      HOME=/root; export HOME
+      export XDG_RUNTIME_DIR=/run/user/0
+      mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+
+      echo "=== vulkan, which is what gamescope composites with ==="
+      vulkaninfo --summary 2>&1 | head -20 || echo "VULKANINFO_FAILED"
+
+      echo "=== does gamescope initialise with no GPU? ==="
+      # /usr/games is where Debian puts gamescope and is NOT on a non-login
+      # PATH -- the same gap that made run-scaled fail from a launcher.
+      export PATH="/usr/games:$PATH"
+      # Headless on purpose: this asks whether gamescope can come up at all,
+      # not whether it can drive a display yet.
+      timeout 60 gamescope --backend headless -- /bin/true \
+        > /root/gs.log 2>&1 && echo "SCALED_BASE_GAMESCOPE=ok" \
+        || echo "SCALED_BASE_GAMESCOPE=failed"
+      sed 's/^/  gs: /' /root/gs.log | head -25
+
+      echo "=== the apps are installed ==="
+      for _a in /usr/games/tuxtype /usr/bin/tipp10 /usr/games/nlkt \
+                /usr/bin/nlkt /usr/bin/xclock; do
+        [ -x "$_a" ] && echo "  have $_a"
+      done
+
+      echo "SCALED_BASE_OK=1"
+    } > /root/base.log 2>&1
+    cat /root/base.log > /dev/ttyS0
+    sync
+    poweroff
+EOF
+xorriso -as mkisofs -R -J -V CIDATA -quiet -o "$VM/seed-base.iso" "$_seed" \
+  2>/dev/null || _die "seed.iso failed"
+
+CONSOLE=$VM/console-base.log
+: > "$CONSOLE"
+echo "base: building (console: $CONSOLE)"
+qemu-system-x86_64 -enable-kvm -machine q35 -m 4096 -smp 4 \
+  -drive file="$BASE",if=virtio \
+  -drive file="$VM/seed-base.iso",if=virtio,media=cdrom \
+  -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+  -display none -serial "file:$CONSOLE" -monitor none -no-reboot \
+  >/dev/null 2>&1 &
+_qpid=$!
+# Wait for QEMU to EXIT, not for the marker: the guest still has a filesystem
+# to unmount and killing it there corrupts the artifact.
+_waited=0; _grace=0
+while [ "$_waited" -lt "${BASE_TIMEOUT:-2400}" ]; do
+  kill -0 "$_qpid" 2>/dev/null || break
+  if grep -q 'SCALED_BASE_OK=' "$CONSOLE" 2>/dev/null; then
+    _grace=$((_grace + 5))
+    [ "$_grace" -gt 120 ] && { echo "base: shutdown grace expired" >&2; break; }
+  fi
+  sleep 5; _waited=$((_waited + 5))
+done
+kill "$_qpid" 2>/dev/null || true
+wait "$_qpid" 2>/dev/null || true
+
+echo "base: ---- guest ----"
+sed -n '/=== vulkan/,$p' "$CONSOLE" | tail -45
+echo "base: ---- end ----"
+
+grep -q 'SCALED_BASE_OK=1' "$CONSOLE" 2>/dev/null \
+  || _die "base build never reported; see $CONSOLE"
+echo "base: PASS -- $BASE"
+if grep -q 'SCALED_BASE_GAMESCOPE=ok' "$CONSOLE" 2>/dev/null; then
+  echo "base: gamescope initialises on lavapipe -- that CHANGED, and a nested"
+  echo "base: run-scaled is now testable in a guest. Worth acting on."
+else
+  echo "base: gamescope does not initialise (expected: lavapipe has no"
+  echo "base: VK_EXT_physical_device_drm). The apps can be rendered DIRECTLY;"
+  echo "base: run-scaled itself needs a real GPU. See $CONSOLE."
+fi
