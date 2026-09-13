@@ -14,7 +14,9 @@
 : "${HWDP_LIBEXEC:?displayset.sh: HWDP_LIBEXEC must be set}"
 . "$HWDP_LIBEXEC/probe.sh"
 
-_cfg=${XDG_CONFIG_HOME:-$HOME/.config}/kanshi
+# ${HOME:-}: see probe.sh. A daemon-invoked probe with no HOME must degrade to
+# "no user-scope profiles", not abort under set -u.
+_cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}/kanshi
 PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}
 STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
 OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-layout.config}

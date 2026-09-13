@@ -45,8 +45,14 @@
 #           `edid_sha` is the sha256 of the connector's raw EDID -- the atom the
 #           HWDP id is built from.
 
+# ${HOME:-} and not $HOME: these tools are system-installed now and invoked by
+# a DAEMON (the greeter runs them as _greetd), where HOME may simply not be set
+# -- and under `set -eu` a bare $HOME aborts the whole command. No HOME means
+# no user scope, which should fall through to the machine and shipped roots,
+# not kill the probe. The resulting /.config path cannot exist, so it is
+# skipped exactly as an absent root would be.
 HWDP_PROVIDER_ROOT=${HWDP_PROVIDER_ROOT:-\
-${XDG_CONFIG_HOME:-$HOME/.config}/hwdp/providers}
+${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwdp/providers}
 HWDP_MACHINE_PROVIDERS=${HWDP_MACHINE_PROVIDERS:-/etc/hwdp/providers}
 
 # probe_run <class>: print the first answering provider's records. Returns 1

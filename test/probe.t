@@ -98,4 +98,16 @@ chmod +x "$T/user/layout/05-abstains" "$T/user/layout/10-silent" \
 [ "$(_dg | cut -d' ' -f1)" = DP-A ] \
   || fail "cascade did not skip the abstaining providers ($(_dg))"
 
-pass "provider precedence + cascade + headless panel fallback"
+# --- a DAEMON has no HOME, and a bare $HOME under set -u aborts -------------
+# hwdp is system-installed for the greeter now, which runs it as its own
+# service account. No HOME must mean "no user scope", not a dead probe.
+_out=$(env -u HOME PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+  HWDP_PROVIDER_ROOT="$T/user" HWDP_MACHINE_PROVIDERS="$T/machine" \
+  sh "$KA" ui 2>&1) || fail "ui aborted with no HOME: $_out"
+printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=' \
+  || fail "ui emitted nothing with no HOME: $_out"
+env -u HOME PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+  HWDP_PROVIDER_ROOT="$T/user" HWDP_MACHINE_PROVIDERS="$T/machine" \
+  sh "$KA" id >/dev/null 2>&1 || fail "id aborted with no HOME"
+
+pass "provider precedence + cascade + headless panel fallback + no HOME"
