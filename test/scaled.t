@@ -158,6 +158,33 @@ esac
 _o=$(run --fullscreen --size=bogus /usr/bin/true) \
   || fail "--fullscreen rejected an unused --size: $_o"
 
+# --- gamescope is found OUTSIDE PATH ----------------------------------------
+# Debian ships gamescope in /usr/games, which a login shell has and a launcher
+# does not: a compositor keybind or a .desktop entry runs with
+# /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin. Trusting PATH
+# alone made "works when I type it, fails from the menu" the same install.
+mkdir -p "$T/games"
+mv "$T/bin/gamescope" "$T/games/gamescope"
+# A LAUNCHER's PATH, not this shell's -- the developer's interactive PATH has
+# /usr/games in it and would quietly find the REAL gamescope, which is both a
+# false pass and a window on someone's screen.
+_lp=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+_o=$(PATH="$_lp" GAMESCOPE_DIRS="$T/games" "$RS" /usr/bin/true 2>&1) \
+  || fail "gamescope in a games dir was not found: $_o"
+case $_o in
+  *"-W 1280 -H 800"*) ;;
+  *) fail "the out-of-PATH gamescope was not the one run: $_o" ;;
+esac
+
+# Nowhere at all is a clear refusal, not a confusing failure from gamescope.
+_o=$(PATH="$_lp" GAMESCOPE_DIRS="$T/nowhere" "$RS" /usr/bin/true 2>&1) \
+  && fail "ran with no gamescope anywhere: $_o"
+case $_o in
+  *"gamescope not found"*) ;;
+  *) fail "missing gamescope should say so: $_o" ;;
+esac
+mv "$T/games/gamescope" "$T/bin/gamescope"
+
 # --- usage errors -----------------------------------------------------------
 run > /dev/null 2>&1 && fail "no arguments should exit non-zero"
 _o=$(run --scale=2) && fail "no application should exit non-zero"

@@ -75,8 +75,24 @@ if [ "$FULLSCREEN" -ne 1 ]; then
            exit 1 ;;
     esac
 fi
-command -v gamescope >/dev/null || {
-    echo "run-scaled: gamescope not found in PATH" >&2; exit 4; }
+# RESOLVE gamescope, do not just trust PATH. Debian ships it in /usr/games,
+# which a LOGIN shell has and a launcher generally does not: a compositor
+# keybind, a .desktop entry or a systemd unit runs with
+# /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin and nothing
+# else. So "installed and works when I type it" and "fails when launched from
+# the menu" are the same box, which is a miserable thing to debug.
+#
+# Same shape as the kbd-rgb PATH bug: a `command -v` against an inherited PATH
+# decided a feature was absent when it was merely elsewhere.
+GAMESCOPE_DIRS=${GAMESCOPE_DIRS:-/usr/games /usr/local/bin}
+GAMESCOPE=$(command -v gamescope || true)
+if [ -z "$GAMESCOPE" ]; then
+    for _d in $GAMESCOPE_DIRS; do
+        [ -x "$_d/gamescope" ] && { GAMESCOPE=$_d/gamescope; break; }
+    done
+fi
+[ -n "$GAMESCOPE" ] || {
+    echo "run-scaled: gamescope not found (PATH, /usr/games)" >&2; exit 4; }
 
 # --- box (gamescope window/output) size -------------------------------------
 # Windowed: the box is --size. Fullscreen: detect the output mode so the
@@ -109,7 +125,7 @@ INT_W=$(bc <<<"$BOX_W / $SCALE")
 INT_H=$(bc <<<"$BOX_H / $SCALE")
 
 # --- assemble gamescope invocation ------------------------------------------
-GS=(gamescope -w "$INT_W" -h "$INT_H" -W "$BOX_W" -H "$BOX_H")
+GS=("$GAMESCOPE" -w "$INT_W" -h "$INT_H" -W "$BOX_W" -H "$BOX_H")
 [ "$FULLSCREEN" -eq 1 ] && GS+=(-f) || GS+=(-b)   # -b: borderless window
 case $FILTER in
     linear)  ;;
