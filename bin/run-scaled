@@ -10,7 +10,8 @@
 # small fixed window will sit small inside the gamescope window. Tune --size
 # toward the app's natural size if that happens.
 
-SCALE=2
+SCALE=                   # empty means ASK THE DISPLAY (see below)
+SCALE_SET=0              # was --scale given, or are we deciding?
 SIZE="1280x800"          # gamescope window (output) size; --fullscreen ignores
 SIZE_SET=0               # was --size given, or is that just the default?
 NATIVE=                  # the app's OWN canvas; the window becomes native*scale
@@ -29,7 +30,10 @@ print_help() {
 [--filter=F] [--wayland-app] application [args...]"
     echo ""
     echo "--scale       UI magnification. App renders at size/scale and is"
-    echo "              upscaled to fill the window. e.g. 1, 1.5, 2, 2x. Def 2."
+    echo "              upscaled to fill the window. e.g. 1, 1.5, 2, 2x."
+    echo "              DEFAULTS TO THE DISPLAY: hwdp ui's MAGNIFY, so a"
+    echo "              hi-res panel magnifies more than a small one without"
+    echo "              the caller knowing which it is on."
     echo "--size        gamescope window size WxH. Default 1280x800. The window"
     echo "              is resizable; resizing rescales live."
     echo "--native      the app's OWN canvas WxH; the window becomes"
@@ -51,7 +55,8 @@ if [ $# = 0 ]; then print_help; exit 1; fi
 
 while [ $# -gt 0 ]; do
     case $1 in
-        --scale=*)      SCALE="${1#*=}"; SCALE="${SCALE%x}"; shift ;;
+        --scale=*)      SCALE="${1#*=}"; SCALE="${SCALE%x}"; SCALE_SET=1
+                        shift ;;
         --size=*)       SIZE="${1#*=}"; SIZE_SET=1; shift ;;
         --native=*)     NATIVE="${1#*=}"; shift ;;
         --filter=*)     FILTER="${1#*=}"; shift ;;
@@ -72,6 +77,21 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -eq 0 ]; then echo "No application given!" >&2; exit 2; fi
+
+# HOW MUCH to magnify is a property of the DISPLAY, not of the caller. A
+# 640x480 program is unusable on a 2880x1800 panel and merely small on
+# 1920x1080, so a launcher that hardcodes a factor is tuned for whichever
+# machine its author was sitting at -- and 3x a 640x480 app is a 1920x1440
+# window, which fits one of this pair of boxes and overflows the other.
+#
+# `hwdp ui` already resolves per-display sizing for fonts, the cursor and the
+# lock ring; MAGNIFY is the same question for an app that cannot scale itself.
+# Falls back to 2 when hwdp cannot answer (no display, not installed), which is
+# what this default always was.
+if [ "$SCALE_SET" -eq 0 ]; then
+    SCALE=$(hwdp ui 2>/dev/null | sed -n 's/^MAGNIFY=//p' | head -1)
+    [ -n "$SCALE" ] || SCALE=2
+fi
 
 # VALIDATE BEFORE COMPUTING. Neither of these was checked, and neither failed
 # usefully: --scale=0 (or a typo like --scale=abc, which bc reads as 0) died

@@ -21,6 +21,14 @@
 #   CURSOR_SIZE   the pointer cursor size (px); ALWAYS set (like TITLE_FONT), so
 #                 a switch back to hi-res RESTORES it rather than leaving it
 #                 shrunk (the consumer sets it live).
+#   MAGNIFY       how much to enlarge a FIXED-LAYOUT app that cannot scale
+#                 itself (run-scaled's default). A 640x480 program is unusable
+#                 on a 2880x1800 panel and merely small on 1920x1080, so the
+#                 factor is a property of the DISPLAY, not of the launcher --
+#                 which is the whole reason it belongs here rather than being
+#                 hardcoded by every caller. Bounded by what still FITS: 3x a
+#                 640x480 app is 1920x1440, which fits a 1800-tall panel and
+#                 does not fit a 1080-tall one.
 # The hidpi TITLE_FONT and CURSOR_SIZE mirror wayfire.ini's [pixdecor]
 # title_font and [input] cursor_size -- keep them in sync.
 set -eu
@@ -33,6 +41,8 @@ UI_MAKO_LODPI=${UI_MAKO_LODPI:-Inter 11}   # mako/config font is Inter 18
 UI_LOCK_RADIUS_LODPI=${UI_LOCK_RADIUS_LODPI:-32}   # swaylock ring, default ~50
 UI_CURSOR_HIDPI=${UI_CURSOR_HIDPI:-48}   # mirrors wayfire.ini cursor_size
 UI_CURSOR_LODPI=${UI_CURSOR_LODPI:-32}   # shrink on a small panel
+UI_MAGNIFY_HIDPI=${UI_MAGNIFY_HIDPI:-3}  # 640x480 -> 1920x1440, fits 1800 tall
+UI_MAGNIFY_LODPI=${UI_MAGNIFY_LODPI:-2}  # 640x480 -> 1280x960, fits 1080 tall
 LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
 
 # With NO display at all, say so and emit nothing. Every consumer reads these
@@ -53,8 +63,10 @@ _rw=$(panel_width)
 if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
   _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
   _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI
+  _magnify=$UI_MAGNIFY_LODPI
 else
   _kitty=; _title=$UI_TITLE_HIDPI; _mako=; _lockr=; _cursor=$UI_CURSOR_HIDPI
+  _magnify=$UI_MAGNIFY_HIDPI
 fi
 
 # The override wins per key. Read it LITERALLY (never shell-sourced), so a value
@@ -67,11 +79,13 @@ if [ -f "$_ovr" ]; then
   _m=$(sed -n 's/^MAKO_FONT=//p' "$_ovr" | head -1)
   _lr=$(sed -n 's/^LOCK_RADIUS=//p' "$_ovr" | head -1)
   _cs=$(sed -n 's/^CURSOR_SIZE=//p' "$_ovr" | head -1)
+  _mg=$(sed -n 's/^MAGNIFY=//p' "$_ovr" | head -1)
   [ -n "$_k" ]  && _kitty=$_k
   [ -n "$_t" ]  && _title=$_t
   [ -n "$_m" ]  && _mako=$_m
   [ -n "$_lr" ] && _lockr=$_lr
   [ -n "$_cs" ] && _cursor=$_cs
+  [ -n "$_mg" ] && _magnify=$_mg
 fi
 
 printf 'KITTY_FONT=%s\n'  "$_kitty"
@@ -79,3 +93,4 @@ printf 'TITLE_FONT=%s\n'  "$_title"
 printf 'MAKO_FONT=%s\n'   "$_mako"
 printf 'LOCK_RADIUS=%s\n' "$_lockr"
 printf 'CURSOR_SIZE=%s\n' "$_cursor"
+printf 'MAGNIFY=%s\n'     "$_magnify"

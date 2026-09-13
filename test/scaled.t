@@ -212,6 +212,45 @@ _o=$(run --native=640x480 --fullscreen /usr/bin/true) \
   && fail "--native with --fullscreen was accepted"
 _o=$(run --native=bogus /usr/bin/true) && fail "--native=bogus was accepted"
 
+# --- the scale DEFAULTS TO THE DISPLAY --------------------------------------
+# The factor belongs to the panel, not the caller: 3x a 640x480 app is a
+# 1920x1440 window, which fits a 1800-tall screen and overflows a 1080-tall
+# one. A launcher hardcoding it is tuned for whichever machine its author sat
+# at -- which is exactly what happened.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = ui ] && echo "MAGNIFY=${STUB_MAGNIFY:-3}"
+exit 0
+EOF
+chmod +x "$T/bin/hwdp"
+_o=$(run --native=640x480 /usr/bin/true) || fail "no --scale failed: $_o"
+case $_o in
+  *"-w 640 -h 480 -W 1920 -H 1440"*) ;;
+  *) fail "the scale did not come from hwdp ui MAGNIFY: $_o" ;;
+esac
+_o=$(STUB_MAGNIFY=2 run --native=640x480 /usr/bin/true)
+case $_o in
+  *"-W 1280 -H 960"*) ;;
+  *) fail "a lodpi MAGNIFY did not shrink the window: $_o" ;;
+esac
+# An explicit --scale still wins; the display is a DEFAULT, not an override.
+_o=$(STUB_MAGNIFY=3 run --native=640x480 --scale=2 /usr/bin/true)
+case $_o in
+  *"-W 1280 -H 960"*) ;;
+  *) fail "an explicit --scale was overridden by the display: $_o" ;;
+esac
+# And with no hwdp to ask, it falls back to what the default always was.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$T/bin/hwdp"
+_o=$(run --native=640x480 /usr/bin/true) || fail "no hwdp answer failed: $_o"
+case $_o in
+  *"-W 1280 -H 960"*) ;;
+  *) fail "without hwdp the scale should fall back to 2: $_o" ;;
+esac
+
 # --- gamescope is found OUTSIDE PATH ----------------------------------------
 # Debian ships gamescope in /usr/games, which a login shell has and a launcher
 # does not: a compositor keybind or a .desktop entry runs with
