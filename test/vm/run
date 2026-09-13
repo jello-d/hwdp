@@ -114,6 +114,14 @@ runcmd:
                HWDP_LIBEXEC=/root/hwdp/libexec/hwdp probe_panels' \
         2>/dev/null | head -1 | tr '\t' ' ')"
 
+      # The record SHAPE, against a real kernel rather than a fixture. The
+      # stub tier asserts this against a fake DRM tree we wrote ourselves; here
+      # the bytes come from the kernel.
+      echo "HWDP_VM_PANELS_FIELDS=$(sh -c '
+        HWDP_DRM=/sys/class/drm \
+        /root/hwdp/libexec/hwdp/providers/panels/10-drm-sysfs' 2>/dev/null \
+        | awk -F'\t' 'NR==1{print NF}')"
+
       echo "=== the stub suite, on a real kernel ==="
       sh test/run
       echo "HWDP_VM_EXIT=$?"
@@ -213,6 +221,9 @@ HWDP_VM_UI_CURSOR_SIZE))"
 for _c in "$LO" "$HI"; do
   [ "$(_val "$_c" HWDP_VM_SHAPE)" = single ] \
     || _fail "one panel should be shape 'single' ($_c)"
+  [ "$(_val "$_c" HWDP_VM_PANELS_FIELDS)" = 4 ] \
+    || _fail "the panels record is not 4 fields against a real kernel: \
+$(_val "$_c" HWDP_VM_PANELS_FIELDS) ($_c)"
 done
 
 [ "$RC" = 0 ] && echo "vm: PASS" || echo "vm: FAILED"
