@@ -12,9 +12,17 @@
 
 SCALE=2
 SIZE="1280x800"          # gamescope window (output) size; --fullscreen ignores
+SIZE_SET=0               # was --size given, or is that just the default?
+NATIVE=                  # the app's OWN canvas; the window becomes native*scale
 FILTER=linear            # linear | nearest | integer | fsr | nis
 FULLSCREEN=0             # 0 = windowed (default), 1 = fill the output
 WAYLAND_APP=0
+
+# Below this, an app of the kind people magnify (fixed-layout SDL and Qt
+# programs) draws its own layout into a buffer too small for it and the edges
+# are simply lost. Overridable, because it is a rule of thumb about other
+# people's software rather than a fact about this one.
+MIN_CANVAS=${RUN_SCALED_MIN_CANVAS:-640x480}
 
 print_help() {
     echo "Usage: run-scaled [--scale=N] [--size=WxH] [--fullscreen] \
@@ -24,6 +32,14 @@ print_help() {
     echo "              upscaled to fill the window. e.g. 1, 1.5, 2, 2x. Def 2."
     echo "--size        gamescope window size WxH. Default 1280x800. The window"
     echo "              is resizable; resizing rescales live."
+    echo "--native      the app's OWN canvas WxH; the window becomes"
+    echo "              native*scale. Use this when the app has a fixed layout"
+    echo "              (most things worth magnifying do): give it the canvas"
+    echo "              it expects and say how much bigger you want it, rather"
+    echo "              than sizing the window and hoping what is left over"
+    echo "              fits. Too small a canvas CLIPS the app, and the clip is"
+    echo "              then magnified, which looks like a window fighting its"
+    echo "              own contents."
     echo "--fullscreen  Fill the current output instead of a window. The box"
     echo "              becomes the output mode (xrandr/wlr-randr detected)."
     echo "--filter      Upscaler: linear (default), nearest, integer, fsr, nis."
@@ -36,7 +52,8 @@ if [ $# = 0 ]; then print_help; exit 1; fi
 while [ $# -gt 0 ]; do
     case $1 in
         --scale=*)      SCALE="${1#*=}"; SCALE="${SCALE%x}"; shift ;;
-        --size=*)       SIZE="${1#*=}"; shift ;;
+        --size=*)       SIZE="${1#*=}"; SIZE_SET=1; shift ;;
+        --native=*)     NATIVE="${1#*=}"; shift ;;
         --filter=*)     FILTER="${1#*=}"; shift ;;
         --fullscreen)   FULLSCREEN=1; shift ;;
         --wayland-app)  WAYLAND_APP=1; shift ;;
@@ -64,16 +81,35 @@ case $(echo "$SCALE > 0" | bc 2>/dev/null) in
     *) echo "run-scaled: --scale must be greater than 0, got '$SCALE'" >&2
        exit 1 ;;
 esac
-if [ "$FULLSCREEN" -ne 1 ]; then
-    case $SIZE in
+# _wxh <value> <flag>: the WxH shape, used by --size and --native alike.
+_wxh() {
+    case $1 in
         [0-9]*x[0-9]*)
-            case ${SIZE%x*}${SIZE#*x} in
-                *[!0-9]*) echo "run-scaled: --size must be WxH in pixels," \
-                    "got '$SIZE'" >&2; exit 1 ;;
+            case ${1%x*}${1#*x} in
+                *[!0-9]*) ;;
+                *) return 0 ;;
             esac ;;
-        *) echo "run-scaled: --size must be WxH in pixels, got '$SIZE'" >&2
-           exit 1 ;;
     esac
+    echo "run-scaled: $2 must be WxH in pixels, got '$1'" >&2
+    exit 1
+}
+if [ "$FULLSCREEN" -ne 1 ] && [ -z "$NATIVE" ]; then
+    _wxh "$SIZE" --size
+fi
+if [ -n "$NATIVE" ]; then
+    _wxh "$NATIVE" --native
+    # REFUSE rather than pick a winner. --native and --size both determine the
+    # window, and --fullscreen determines it too; silently honouring one would
+    # be the same class of surprise this option exists to remove.
+    if [ "$SIZE_SET" -eq 1 ]; then
+        echo "run-scaled: --native and --size both set the window; give one" >&2
+        exit 1
+    fi
+    if [ "$FULLSCREEN" -eq 1 ]; then
+        echo "run-scaled: --native has nothing to set under --fullscreen," \
+            "where the window is the output" >&2
+        exit 1
+    fi
 fi
 # RESOLVE gamescope, do not just trust PATH. Debian ships it in /usr/games,
 # which a LOGIN shell has and a launcher generally does not: a compositor
@@ -116,13 +152,35 @@ if [ "$FULLSCREEN" -eq 1 ]; then
         | awk 'NR == 1 { print $2, $3 }')"
     [ -z "$BOX_W" ] && { echo "run-scaled: could not detect output; use" \
         "--size=WxH without --fullscreen" >&2; exit 3; }
+elif [ -n "$NATIVE" ]; then
+    # The window is what the app needs, magnified: box = native * scale, so the
+    # canvas below comes back out as exactly the native size.
+    BOX_W=$(bc <<<"${NATIVE%x*} * $SCALE / 1")
+    BOX_H=$(bc <<<"${NATIVE#*x} * $SCALE / 1")
 else
     BOX_W="${SIZE%x*}"; BOX_H="${SIZE#*x}"
 fi
 
-# Internal render size = box / scale (integers for gamescope).
+# Internal render size = box / scale (integers for gamescope). This is the
+# CANVAS the app is handed, and the number that actually matters: a fixed-layout
+# app draws its own size into it and loses whatever does not fit.
 INT_W=$(bc <<<"$BOX_W / $SCALE")
 INT_H=$(bc <<<"$BOX_H / $SCALE")
+
+# WARN, not fail: plenty of apps are happy in a small canvas, and refusing
+# would be this tool deciding it knows better. But silence here is how a
+# 426x266 canvas reached tuxtype, which wants 640x480, clipped two menu items
+# and half its title off the edges, and then magnified the crop -- reported,
+# reasonably, as "the window is fighting the scale".
+if [ "${INT_W:-0}" -lt "${MIN_CANVAS%x*}" ] \
+   || [ "${INT_H:-0}" -lt "${MIN_CANVAS#*x}" ]; then
+    echo "run-scaled: the app gets a ${INT_W}x${INT_H} canvas, under" \
+        "${MIN_CANVAS}." >&2
+    echo "run-scaled: a fixed-layout app will CLIP, and the clip is what gets" \
+        "magnified." >&2
+    echo "run-scaled: try --native=WxH (the app's own size) instead of" \
+        "--size/--scale." >&2
+fi
 
 # --- assemble gamescope invocation ------------------------------------------
 GS=("$GAMESCOPE" -w "$INT_W" -h "$INT_H" -W "$BOX_W" -H "$BOX_H")

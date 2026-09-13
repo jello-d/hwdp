@@ -158,6 +158,60 @@ esac
 _o=$(run --fullscreen --size=bogus /usr/bin/true) \
   || fail "--fullscreen rejected an unused --size: $_o"
 
+# --- --native: say what the app needs, not what is left over ----------------
+# The bug this exists for: tt asked for --scale=3 in the default 1280x800
+# window, so tuxtype got a 426x266 canvas, drew its fixed 640x480 layout into
+# it, lost two menu items and half the title off the edges, and the CLIP was
+# what got magnified. Reported as "the window is fighting the scale", which is
+# exactly what a magnified crop looks like.
+_o=$(run --native=640x480 --scale=3 /usr/bin/true) \
+  || fail "--native rejected: $_o"
+case $_o in
+  *"-w 640 -h 480 -W 1920 -H 1440"*) ;;
+  *) fail "--native did not make the window native*scale: $_o" ;;
+esac
+# The canvas comes back out as EXACTLY the native size, which is the whole
+# point -- an off-by-rounding here would clip the app again, quietly.
+_o=$(run --native=800x600 --scale=2 /usr/bin/true)
+case $_o in
+  *"-w 800 -h 600 -W 1600 -H 1200"*) ;;
+  *) fail "--native canvas is not the native size: $_o" ;;
+esac
+
+# A too-small canvas WARNS. Not fails: plenty of apps are happy small, and
+# refusing would be this tool deciding it knows better. But silence is how the
+# original bug survived.
+_o=$(run --scale=3 /usr/bin/true)
+case $_o in
+  *"under 640x480"*) ;;
+  *) fail "a 426x266 canvas did not warn: $_o" ;;
+esac
+case $_o in
+  *"--native"*) ;;
+  *) fail "the warning should point at --native: $_o" ;;
+esac
+# ...and it is a warning, so the app still runs.
+case $_o in
+  *"-W 1280 -H 800"*) ;;
+  *) fail "the canvas warning must not stop the launch: $_o" ;;
+esac
+# A big enough canvas stays quiet.
+_o=$(run --native=640x480 --scale=3 /usr/bin/true)
+case $_o in
+  *"under"*) fail "a native-sized canvas should not warn: $_o" ;;
+esac
+
+# Both ways of setting the window at once is a REFUSAL, not a silent winner.
+_o=$(run --native=640x480 --size=800x600 /usr/bin/true) \
+  && fail "--native with --size was accepted"
+case $_o in
+  *"give one"*) ;;
+  *) fail "--native + --size should say why: $_o" ;;
+esac
+_o=$(run --native=640x480 --fullscreen /usr/bin/true) \
+  && fail "--native with --fullscreen was accepted"
+_o=$(run --native=bogus /usr/bin/true) && fail "--native=bogus was accepted"
+
 # --- gamescope is found OUTSIDE PATH ----------------------------------------
 # Debian ships gamescope in /usr/games, which a login shell has and a launcher
 # does not: a compositor keybind or a .desktop entry runs with
