@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # wallpaper-slicer -- slice one image into per-output crops that tile across a
 # multi-output Wayland layout.
 #
@@ -45,7 +45,24 @@
 # Callers slicing DIFFERENT sources must pass distinct -o dirs; slices are named
 # NAME.png and would otherwise clobber each other (and thrash the cache).
 
-set -u
+# POSIX sh under `set -eu`, per the house rule. It was bash only by accident of
+# where it was written: the bashisms were `local`, `<<<` and `read < <(...)`,
+# all convenience rather than necessity. (run-scaled is bash for a REAL reason
+# -- it builds gamescope's argv in an array -- and says so.)
+#
+# `set -e` here is not cosmetic, and what it does and does NOT catch was
+# measured rather than assumed. It catches an assignment from a failing command
+# substitution, `x=$(cmd)`, which exits SILENTLY: two of those were live here,
+# a `stat` that yielded an empty fingerprint (so every run was a cache miss)
+# and a `grep -c` output count (grep exits 1 on zero matches, so the no-display
+# case would have died before reaching its own error message). Both are
+# rewritten below.
+#
+# It does NOT catch a false test on the left of `&&` -- `set -e` is ignored for
+# any command of an AND-OR list except the last -- so the `[ ... ] && ...`
+# lines here are safe as written, under dash and bash alike. Believing
+# otherwise costs a pile of needless `if` rewrites.
+set -eu
 
 mode="${WALLPAPER_SLICER_MODE:-fill}"
 outdir="${XDG_CACHE_HOME:-$HOME/.cache}/wallpaper-slicer"
@@ -92,17 +109,26 @@ fi
 # pixel space (inverse of the cover scale), extract just that source region, and
 # resize it to the output's logical pixel size in a single op. No giant
 # intermediate, no rotation.
+#
+# POSIX sh has no `local`, so the working names are underscore-prefixed to keep
+# them clear of the caller's -- $iw/$ih in particular are globals this is also
+# PASSED, and an unprefixed assignment would write straight through them.
 make_slice() {
-  local s="$1" d="$2"
-  local cx="$3" cy="$4" cw="$5" ch="$6"
-  local ox="$7" oy="$8" ow="$9" oh="${10}"
-  local iw="${11}" ih="${12}"
+  _s=$1 _d=$2
+  _cx=$3 _cy=$4 _cw=$5 _ch=$6
+  _ox=$7 _oy=$8 _ow=$9 _oh=${10}
+  _iw=${11} _ih=${12}
 
   # Scale from source px -> cover px is cw/iw (== ch/ih, uniform). Invert it to
   # find which source pixels map to this output's logical rect.
   #   source_x = (global_x - cover_x) * iw / cw
-  read sx sy sw sh < <(awk -v ox="$ox" -v oy="$oy" -v ow="$ow" -v oh="$oh" \
-      -v cx="$cx" -v cy="$cy" -v cw="$cw" -v ch="$ch" -v iw="$iw" -v ih="$ih" \
+  #
+  # A HEREDOC, not a pipe: `awk ... | read` runs the read in a SUBSHELL, so the
+  # values would be set and then discarded the moment the pipeline ended.
+  IFS=' ' read -r _sx _sy _sw _sh <<EOF
+$(awk -v ox="$_ox" -v oy="$_oy" -v ow="$_ow" -v oh="$_oh" \
+      -v cx="$_cx" -v cy="$_cy" -v cw="$_cw" -v ch="$_ch" \
+      -v iw="$_iw" -v ih="$_ih" \
       'BEGIN {
         fx = iw / cw; fy = ih / ch
         sx = (ox - cx) * fx
@@ -116,19 +142,25 @@ make_slice() {
         if (sy + sh > ih) sh = ih - sy
         printf "%d %d %d %d", sx + 0.5, sy + 0.5, sw + 0.5, sh + 0.5
       }')
+EOF
 
   case "$img_tool" in
     magick|convert)
       # crop source region, then resize to the output's logical size.
-      "$img_tool" "$s" -crop "${sw}x${sh}+${sx}+${sy}" +repage \
-        -resize "${ow}x${oh}!" "$d"
+      "$img_tool" "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
+        -resize "${_ow}x${_oh}!" "$_d"
       ;;
     vips)
-      local tmp; tmp=$(mktemp --suffix=.png)
-      vips extract_area "$s" "$tmp" "$sx" "$sy" "$sw" "$sh" >/dev/null 2>&1
-      vips thumbnail "$tmp" "$d" "$ow" --height "$oh" --size force \
-        >/dev/null 2>&1
-      rm -f "$tmp"
+      # stderr is NOT suppressed here any more. It was, and combined with the
+      # old lack of `set -e` a vips failure produced a missing slice and a
+      # zero exit -- the silent-success path the fail-loud rule forbids. Now a
+      # failure aborts, carrying vips's own message. (UNVERIFIED: no vips on
+      # either box, so this path is reasoned, not run.)
+      _tmp=$(mktemp --suffix=.png)
+      vips extract_area "$_s" "$_tmp" "$_sx" "$_sy" "$_sw" "$_sh" >/dev/null
+      vips thumbnail "$_tmp" "$_d" "$_ow" --height "$_oh" --size force \
+        >/dev/null
+      rm -f "$_tmp"
       ;;
   esac
 }
@@ -156,50 +188,62 @@ read_geometry() {
 
 # ---- main -------------------------------------------------------------------
 geom=$(read_geometry)
-nout=$(printf '%s\n' "$geom" | grep -c .)
+# awk, not `grep -c`: grep exits 1 when the count is ZERO, so under `set -e`
+# the no-display case would abort here instead of reaching the message below --
+# the exact silent failure this is meant to report.
+nout=$(printf '%s\n' "$geom" | awk 'NF { n++ } END { print n + 0 }')
 
 if [ "$nout" -lt 2 ]; then
   log "fewer than 2 outputs; nothing to span"; exit 1
 fi
 
 # Union of all outputs, logical coords.
-read ux uy uw uh < <(printf '%s\n' "$geom" | awk '
+IFS=' ' read -r ux uy uw uh <<EOF
+$(printf '%s\n' "$geom" | awk '
   NR==1 { minx=$2; miny=$3; maxx=$2+$4; maxy=$3+$5; next }
   { if($2<minx)minx=$2; if($3<miny)miny=$3
     if($2+$4>maxx)maxx=$2+$4; if($3+$5>maxy)maxy=$3+$5 }
   END { print minx, miny, maxx-minx, maxy-miny }
 ')
+EOF
 
 # Source dimensions.
-read iw ih < <(
-  case "$img_tool" in
+IFS=' ' read -r iw ih <<EOF
+$(case "$img_tool" in
     magick)  magick identify -format '%w %h' "$src[0]" 2>/dev/null ;;
     convert) identify -format '%w %h' "$src[0]" 2>/dev/null ;;
     vips)    printf '%s %s' "$(vips width "$src" 2>/dev/null)" \
                             "$(vips height "$src" 2>/dev/null)" ;;
-  esac
-)
+  esac)
+EOF
 if [ -z "${iw:-}" ] || [ -z "${ih:-}" ] || [ "$iw" -le 0 ] \
    || [ "$ih" -le 0 ]; then
   log "could not read source dimensions"; exit 1
 fi
 
 # Cover/contain size of the source over the union (global px).
-read cover_w cover_h < <(awk -v iw="$iw" -v ih="$ih" -v uw="$uw" -v uh="$uh" \
+IFS=' ' read -r cover_w cover_h <<EOF
+$(awk -v iw="$iw" -v ih="$ih" -v uw="$uw" -v uh="$uh" \
   -v mode="$mode" 'BEGIN {
     sx = uw/iw; sy = uh/ih
     s  = (mode=="fit") ? ((sx<sy)?sx:sy) : ((sx>sy)?sx:sy)
     printf "%d %d", int(iw*s+0.5), int(ih*s+0.5)
   }')
+EOF
 # Top-left of the cover image within the union (centered).
-read cover_x cover_y < <(awk -v cw="$cover_w" -v ch="$cover_h" \
+IFS=' ' read -r cover_x cover_y <<EOF
+$(awk -v cw="$cover_w" -v ch="$cover_h" \
   -v uw="$uw" -v uh="$uh" -v ux="$ux" -v uy="$uy" 'BEGIN {
     printf "%d %d", ux+int((uw-cw)/2), uy+int((uh-ch)/2)
   }')
+EOF
 
 # ---- cache fingerprint ------------------------------------------------------
 mkdir -p "$outdir"
-src_stat=$(stat -c '%Y:%s' "$src" 2>/dev/null)
+# An unreadable stat used to yield an EMPTY component, which silently made the
+# fingerprint match nothing and recut on every single run.
+src_stat=$(stat -c '%Y:%s' "$src") \
+  || { log "cannot stat source: '$src'"; exit 1; }
 fp_input="$src|$src_stat|$mode|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
 fp=$(printf '%s' "$fp_input" | cksum | awk '{print $1}')
 fp_file="$outdir/fingerprint"
@@ -210,7 +254,9 @@ if [ -r "$fp_file" ] && [ "$(cat "$fp_file" 2>/dev/null)" = "$fp" ]; then
   while read -r name x y lw lh; do
     [ -z "$name" ] && continue
     [ -f "$outdir/$name.png" ] || cache_valid=0
-  done <<< "$geom"
+  done <<EOF
+$geom
+EOF
 fi
 
 # ---- cut slices as needed, emit NAME<TAB>PATH mapping -----------------------
@@ -228,7 +274,9 @@ while read -r name x y lw lh; do
   fi
   touch "$dst" 2>/dev/null || true
   printf '%s\t%s\n' "$name" "$dst"
-done <<< "$geom"
+done <<EOF
+$geom
+EOF
 
 [ "$cache_valid" -eq 0 ] && printf '%s' "$fp" > "$fp_file"
 # The sweep keys on the DIR's mtime (a top-level ~/.cache entry), which a file

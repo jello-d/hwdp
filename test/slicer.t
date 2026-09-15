@@ -136,4 +136,60 @@ case $_out in
   *) fail "single-output refusal should say why: $_out" ;;
 esac
 
-pass "tiling slices, cache reuse, single-output refusal"
+# --- fit vs fill -------------------------------------------------------------
+# The two modes differ only by one flipped comparison in the cover-rect maths,
+# which is exactly what a rewrite inverts by accident, so pin that they still
+# produce DIFFERENT slices for a source whose aspect does not match the union.
+#
+# DELIBERATELY NOT asserting that fit CONTAINS: it does not, and pinning the
+# current behaviour would enshrine a bug. Measured 2026-09-14 with a 1000x2000
+# source over a 2000x1000 union: contained, the image should occupy only the
+# middle 500px of the union and leave the rest padded, but make_slice clamps
+# the source rect to the image bounds and then stretches what is left over the
+# whole output -- so DP-1 came back as the left half of the source distorted
+# 1:4 into a 1:1 output, with no padding anywhere. `fit` is unused (the one
+# caller takes the default `fill`), which is why it went unnoticed. Fix it and
+# this block is where the real containment assertion belongs.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+echo "DP-1 1000 1000 normal 1 0 0 1000 1000 landscape"
+echo "DP-2 1000 1000 normal 1 1000 0 1000 1000 landscape"
+EOF
+chmod +x "$T/bin/hwdp"
+# A VERTICAL gradient, because the two modes differ in which y-range they
+# sample (fill takes a 500px band from the middle, fit takes the full height)
+# and agree on x for this layout. A source that varies only in x compares equal
+# under both and proves nothing -- which is what the first attempt here did.
+"$_img" -size 1000x2000 gradient:black-white "$T/tall.png"
+_fit=$(PATH="$T/bin:$PATH" "$WS" -m fit -o "$T/fit" "$T/tall.png" 2>&1) \
+  || fail "fit mode failed: $_fit"
+_fill=$(PATH="$T/bin:$PATH" "$WS" -m fill -o "$T/fill" "$T/tall.png" 2>&1) \
+  || fail "fill mode failed: $_fill"
+cmp -s "$T/fit/DP-1.png" "$T/fill/DP-1.png" \
+  && fail "fit and fill produced identical slices for a mismatched aspect"
+
+# --- refusals, each with its reason ------------------------------------------
+# Every one of these is a path `set -eu` can turn into a SILENT non-zero exit,
+# which is why each asserts the MESSAGE and not just the status.
+_bad() {   # <want-status> <want-substring> <args...>
+  _w=$1; _m=$2; shift 2
+  _o=$(PATH="$T/bin:$PATH" "$WS" "$@" 2>&1); _s=$?
+  [ "$_s" = "$_w" ] || fail "'$*' exited $_s, want $_w (said: $_o)"
+  case $_o in *"$_m"*) ;; *) fail "'$*' should say '$_m', said: $_o" ;; esac
+}
+_bad 2 "no source image given"    -o "$T/e"
+_bad 2 "must be 'fill' or 'fit'"  -m sideways -o "$T/e" "$T/src.png"
+_bad 2 "requires an argument"     -o
+_bad 2 "unknown option"           -Z -o "$T/e" "$T/src.png"
+_bad 1 "not readable"             -o "$T/e" "$T/nope.png"
+
+# No image tool at all is a refusal, not a crash or an empty success: without
+# one there is nothing to cut with, and a caller must be able to tell.
+mkdir -p "$T/noimg"
+cp "$T/bin/hwdp" "$T/noimg/hwdp"
+_o=$(PATH="$T/noimg" "$WS" -o "$T/e" "$T/src.png" 2>&1); _s=$?
+[ "$_s" = 1 ] || fail "no image tool should exit 1, got $_s"
+case $_o in *"no image tool"*) ;; *) fail "no-image-tool reason: $_o" ;; esac
+
+pass "tiling, fit vs fill, cache reuse, refusals with reasons"
