@@ -72,6 +72,23 @@ warn() { printf '  %s[WARN]%s %s\n' "$_Y" "$_O" "$1"; }
 _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
   [ -e "$_m" ] && printf '%s\n' "$_m"; done; }
 
+# WHICH commands belong at a SHARED prefix. Classification is PER COMMAND and
+# never per package: the greeter runs `hwdp` for the display id and the
+# per-panel sizing, and nothing root-side runs `run-scaled` -- that is a
+# session launcher, invoked from a keybind or a menu by the person sitting
+# there. Installing it system-side would put a second copy of a user-only tool
+# on PATH, which is precisely the shadow the single-copy rule forbids.
+SYSTEM_TOOLS=${SYSTEM_TOOLS:-hwdp}
+
+# _wanted_at_prefix <tool>: is this tool wanted at the prefix being installed
+# to? Keyed on COPY MODE, which is already defined as "what a shared prefix
+# needs", so a symlinking install into a user prefix still gets everything.
+_wanted_at_prefix() {
+  [ "${HWDP_INSTALL_COPY:-0}" = 1 ] || return 0
+  for _w in $SYSTEM_TOOLS; do [ "$1" = "$_w" ] && return 0; done
+  return 1
+}
+
 # _place <src> <dst>: symlink, or COPY when HWDP_INSTALL_COPY=1.
 #
 # Copy mode is what a SHARED/SYSTEM prefix needs. The clone this installs from
@@ -133,15 +150,33 @@ _prune_stale() {
   done < "$_manifest"
 }
 
-# Record what we placed, so the next install can prune a tool that departs.
+# Record what we ACTUALLY placed, so the next install can prune a tool that
+# departs. Honours _wanted_at_prefix: at a shared prefix the manifest must not
+# claim a session tool we deliberately did not install, or it describes a
+# prefix that never existed.
 _write_manifest() {
-  for _t in "$_root"/bin/*; do basename "$_t"; done > "$_manifest"
+  : > "$_manifest"
+  for _t in "$_root"/bin/*; do
+    _n=$(basename "$_t")
+    _wanted_at_prefix "$_n" && printf '%s\n' "$_n" >> "$_manifest"
+  done
   [ "$(id -u)" = 0 ] && chown root:root "$_manifest" || :
 }
 
 do_install() {
   mkdir -p "$_bin" "$_lib"
-  for _t in "$_root"/bin/*; do _place "$_t" "$_bin/$(basename "$_t")"; done
+  for _t in "$_root"/bin/*; do
+    _n=$(basename "$_t")
+    if _wanted_at_prefix "$_n"; then
+      _place "$_t" "$_bin/$_n"
+    elif [ -e "$_bin/$_n" ] || [ -L "$_bin/$_n" ]; then
+      # SWEEP what an earlier over-install left at a shared prefix. A stale
+      # shadow is worse than a missing tool: the missing one fails loudly,
+      # the shadow quietly does the old thing.
+      rm -f "$_bin/$_n"
+      echo "$PKG: removed $_bin/$_n (session tool, not shared)"
+    fi
+  done
   _prune_stale
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
     # rm first: `cp -a` of a directory ONTO an existing one NESTS it rather

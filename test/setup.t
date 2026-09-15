@@ -59,6 +59,24 @@ C=$T/sys
 sys() { env HWDP_INSTALL_COPY=1 PREFIX="$C" XDG_BIN_HOME="$C/bin" \
   XDG_DATA_HOME="$C/share" sh "$HERE/setup.sh" "$@"; }
 sys install >/dev/null || fail "copy-mode install errored"
+
+# PER COMMAND, not per package: a shared prefix gets only what something
+# root-side actually runs. `run-scaled` is a session launcher -- publishing it
+# system-side would put a second copy of a user-only tool on PATH, which is the
+# shadow the single-copy rule exists to forbid.
+[ -e "$C/bin/hwdp" ] || fail "the shared command was not installed"
+[ -e "$C/bin/run-scaled" ] \
+  && fail "a session tool was installed at the SHARED prefix"
+grep -qx hwdp "$C/libexec/.hwdp-installed" \
+  || fail "the manifest does not record the shared command"
+grep -qx run-scaled "$C/libexec/.hwdp-installed" \
+  && fail "the manifest claims a tool the shared prefix never got"
+
+# An earlier over-install is SWEPT, not left to shadow.
+: > "$C/bin/run-scaled"; chmod +x "$C/bin/run-scaled"
+sys install >/dev/null || fail "re-install errored"
+[ -e "$C/bin/run-scaled" ] \
+  && fail "an over-installed session tool was left at the shared prefix"
 [ -f "$C/bin/hwdp" ] && [ ! -L "$C/bin/hwdp" ] \
   || fail "copy mode left a symlink, not a real file"
 [ -f "$C/libexec/hwdp/probe.sh" ] && [ ! -L "$C/libexec/hwdp" ] \
