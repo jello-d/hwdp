@@ -109,6 +109,27 @@ grep -qx hwdp "$C/libexec/.hwdp-installed" \
 grep -qx run-scaled "$C/libexec/.hwdp-installed" \
   && fail "the manifest claims a tool the shared prefix never got"
 
+# --- the classification is READABLE from outside, and AGREES with reality ----
+# An integrator must know which commands are SHARED before it can decide where
+# each goes, and the only honest source is the package. Reading an install
+# ARTIFACT instead (a published link) lets a STALE one outrank the package, so
+# a command reclassified from shared to user-only loses its correct copy to a
+# leftover from the old classification -- which is exactly what happened to
+# run-scaled on both boxes.
+_st=$(sh "$HERE/setup.sh" system-tools) || fail "system-tools exited non-zero"
+[ "$_st" = hwdp ] || fail "system-tools said '$_st', want just hwdp"
+
+# The declaration and the shared prefix are two views of one fact, so they must
+# not drift: compare what it CLAIMS against what a copy-mode install PLACED.
+_placed=$(for _b in "$C"/bin/*; do [ -e "$_b" ] && basename "$_b"; done | sort)
+[ "$(printf '%s\n' "$_st" | sort)" = "$_placed" ] \
+  || fail "system-tools says '$_st' but the shared prefix holds '$_placed'"
+
+# Honours the env override the classification itself is keyed on.
+_st=$(SYSTEM_TOOLS="hwdp run-scaled" sh "$HERE/setup.sh" system-tools)
+[ "$(printf '%s\n' "$_st" | grep -c .)" -eq 2 ] \
+  || fail "system-tools ignored a SYSTEM_TOOLS override: $_st"
+
 # An earlier over-install is SWEPT, not left to shadow.
 : > "$C/bin/run-scaled"; chmod +x "$C/bin/run-scaled"
 sys install >/dev/null || fail "re-install errored"

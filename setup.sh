@@ -18,6 +18,10 @@
 #   ./setup.sh check       every tool + dependency present; [OK]/[FAIL] markers
 #   ./setup.sh test        run the in-repo test suite (test/run)
 #   ./setup.sh version     the packaged version
+#   ./setup.sh system-tools which commands are SHARED (one per line, possibly
+#                          none) -- an integrator asks THIS rather than reading
+#                          what is already on disk, since an install artifact
+#                          can be stale while this answer cannot
 #
 # POSIX sh, non-privileged. Honors PREFIX (default ~/.local) + XDG_* so a test
 # sandboxes it. `hwdp watch` is autostarted by the compositor, not a systemd
@@ -286,7 +290,8 @@ do_check() {
     || warn "no image tool ($DEPS_IMAGE); wallpaper-slicer cannot cut slices"
 }
 
-_U="usage: setup.sh [install|uninstall|check|test|version]   (PREFIX=... env)"
+_U="usage: setup.sh\
+ [install|uninstall|check|test|version|system-tools]   (PREFIX=... env)"
 
 # The prefix is an ENV var, not a flag, and an extra argument used to be
 # ignored in silence: `setup.sh install --prefix /tmp/x` installed to the
@@ -305,6 +310,13 @@ case "${1:-install}" in
   check)     do_check; exit "$RC" ;;
   test)      exec sh "$_root/test/run" ;;
   version)   echo "$PKG $VERSION" ;;
+  # The classification, for an integrator deciding where each command goes.
+  # SYSTEM_TOOLS is the single source of truth and this is the only way to read
+  # it from outside; inferring it from a published link instead makes a STALE
+  # link outrank the package, which is how a reclassified command loses its
+  # correct copy. Empty output is a real answer (nothing here is shared), so
+  # callers must distinguish it from a non-zero exit (this verb not supported).
+  system-tools) for _w in $SYSTEM_TOOLS; do printf '%s\n' "$_w"; done ;;
   -h|--help|help) echo "$_U" ;;
   *) echo "setup.sh: unknown command '${1:-}'" >&2; echo "$_U" >&2; exit 2 ;;
 esac
