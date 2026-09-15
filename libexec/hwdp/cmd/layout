@@ -44,10 +44,17 @@ resolve() {
       _scale=$(printf '%s' "$_line" | cut -f2)
     fi
   fi
-  _tmp=$(mktemp)
+  # The temp goes BESIDE $STICKY, not in /tmp. A bare `mktemp` lands on
+  # whatever /tmp is -- usually tmpfs -- and a `mv` from there to ~/.config
+  # crosses filesystems, where mv degrades to copy-then-delete and stops being
+  # atomic. That defeats the entire point of writing through a temp: an abort
+  # mid-copy leaves a HALF-WRITTEN sticky file, and this one holds every
+  # panel's scale.
+  mkdir -p "$(dirname "$STICKY")"
+  _tmp=$(mktemp "$(dirname "$STICKY")/.auto-scale.XXXXXX")
   [ -f "$STICKY" ] && awk -F"$TAB" -v e="$_edid" '$1!=e' "$STICKY" >"$_tmp"
   printf '%s\t%s\t%s\n' "$_edid" "$_scale" "$_sig" >>"$_tmp"
-  mkdir -p "$(dirname "$STICKY")"; mv "$_tmp" "$STICKY"
+  mv "$_tmp" "$STICKY"
   printf '%s' "$_scale"
 }
 
@@ -92,9 +99,19 @@ outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
     "$edid" "$_sc" "$name" "$rw" "$rh" "$rate" "$tr" >>"$_map"
 done
 mkdir -p "$(dirname "$OUT")"
+# ATOMIC, because $OUT is LIVE: kanshi is watching this file and `hwdp watch`
+# restarts it when the file changes. Generating straight into it truncates it
+# first, so an abort part-way (a provider dying mid-stream under `set -e`) hands
+# the running session a half-written layout rather than the previous good one.
+# Temp beside the destination, for the cross-filesystem reason above.
+_otmp=$(mktemp "$(dirname "$OUT")/.hwdp-layout.XXXXXX")
+trap 'rm -f "$_map" "$_otmp"' EXIT INT TERM
 if [ -s "$TEMPLATE" ] && grep -q 'output ' "$TEMPLATE"; then
-  gen_template >"$OUT"
+  gen_template >"$_otmp"
 else
-  gen_fallback >"$OUT"
+  gen_fallback >"$_otmp"
 fi
+# 0644: kanshi reads it as the session user, and mktemp makes it 0600.
+chmod 644 "$_otmp"
+mv "$_otmp" "$OUT"
 printf '%s\n' "$OUT"

@@ -161,6 +161,29 @@ grep -q '^ *output .* scale ' "$out" \
 # --- emit: selects the matching profile and injects scale --------------------
 gen=$(run layout)                            # emit prints the OUT path
 grep -q "profile hwdp-$hwdp" "$gen" || fail "emit did not pick the hwdp profile"
+
+# The runtime config is LIVE: kanshi watches it and `hwdp watch` restarts kanshi
+# when it changes, so it is generated into a temp beside itself and renamed.
+# Two things that has to get right, both of which a direct `> $OUT` got wrong
+# or would regress:
+# mktemp makes 0600, and kanshi reads this file as the session user, so the
+# generated config must be widened back to 0644 before the rename.
+[ "$(stat -c %a "$gen")" = 644 ] \
+  || fail "the runtime config is mode $(stat -c %a "$gen"), want 644"
+# No temp litter beside the destination, or beside the sticky file.
+_litter=$(find "$(dirname "$gen")" -maxdepth 1 -name '.hwdp-layout.*' | wc -l)
+[ "$_litter" -eq 0 ] || fail "layout left $_litter temp files beside $gen"
+_litter=$(find "$(dirname "$T/sticky")" -maxdepth 1 -name '.auto-scale.*' \
+  2>/dev/null | wc -l)
+[ "$_litter" -eq 0 ] || fail "the sticky write left $_litter temp files"
+
+# Re-emitting is stable: same inputs, same bytes. (The rename must not perturb
+# content, and the sticky round-trip must not drift the scale it injects.)
+_sum=$(cksum < "$gen")
+gen2=$(run layout)
+[ "$gen2" = "$gen" ] || fail "a second emit wrote a different path"
+[ "$(cksum < "$gen")" = "$_sum" ] \
+  || fail "a second emit produced different bytes"
 grep -q '^ *output .* scale ' "$gen" || fail "emit did not inject a scale"
 
 # --- emit: the injected scale is ALWAYS 1.00 -- NEVER a downscale. Even with a
