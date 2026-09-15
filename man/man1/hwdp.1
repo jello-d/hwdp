@@ -8,8 +8,10 @@ for them, keyed on the HARDWARE (an EDID-derived display-profile id), never on
 a hostname. It installs ONE command,
 .BR hwdp ,
 whose subcommands are executables under libexec/hwdp/cmd/, so adding one is
-adding a file, plus the standalone
+adding a file, plus the standalone clients
 .B run-scaled
+and
+.B wallpaper-slicer
 described below. It is environment-agnostic: it works under X11 or a wlroots
 compositor, and hardcodes no downstream tool \(em everything session-specific
 is a HOOK or a PROVIDER an integrator fills.
@@ -64,18 +66,41 @@ so an integrator wires the reactions; it knows nothing of any specific
 compositor tool. Hook roots:
 .BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
 (default /etc/hwdp/hooks).
-.SH RUN-SCALED
-.B run-scaled
-is the package's other command, deliberately NOT a subcommand of
-.BR hwdp :
-every subcommand above reads or manages display state and returns, where this
-takes someone else's command line and BECOMES that process. It magnifies a
-single application via a nested
-.B gamescope
-window (renders at a size/scale and upscales), windowed or fullscreen, and
-consumes
+.SH CLIENTS
+Two further commands ship alongside
+.BR hwdp ,
+deliberately NOT subcommands of it: every subcommand above reads or manages
+display state and returns, where these CONSUME that state to do something else.
+Both read
 .B "hwdp geometry"
-as a client like any other tool would.
+or
+.B "hwdp ui"
+as ordinary clients, exactly as an integrator's own tool would.
+.TP
+.B run-scaled
+Takes someone else's command line and BECOMES that process, so its exit status
+and stdout are the child's. It magnifies a single application via a nested
+.B gamescope
+window (renders at a size/scale and upscales), windowed or fullscreen, for
+fixed-layout programs that cannot scale themselves. The default magnification
+comes from
+.BR "hwdp ui" 's
+.B MAGNIFY
+key, so the factor is a property of the DISPLAY rather than something each
+caller hardcodes.
+.TP
+.B wallpaper-slicer
+Cuts one image into per-output crops that TILE across a multi-output layout.
+Wayland clients that draw a wallpaper (swaylock, swaybg, a greeter background)
+paint the same image on every output and have no spanned mode, so the source is
+pre-sliced: each crop is that output's sub-rectangle of the image after it is
+cover-scaled (fill) or contained (fit) over the whole layout union. Every slice
+comes from one global cover rect, so a feature crossing a bezel stays
+continuous. Slices are cut in LOGICAL orientation and never pre-rotated \(em
+the compositor applies the output transform. Prints
+.IR NAME <TAB> PATH
+per output; needs one of
+.BR magick ", " convert " or " vips .
 .SH FILES
 .TP
 .I ~/.config/hwdp/hooks/<edge>.d/*

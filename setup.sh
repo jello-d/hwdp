@@ -8,9 +8,10 @@
 #   geometry           one line per enabled output (stable contract)
 #   layout capture     the kanshi adapter: emit the runtime config / snapshot
 #   watch              supervise the layout, fire display-change HOOKS
-# bin/run-scaled is the one other command: it wraps an APPLICATION in a nested
-# gamescope window rather than reading display state, so it is its own tool and
-# consumes `hwdp geometry` as a client.
+# The other two commands are hwdp CLIENTS rather than subcommands: each does
+# something TO something else, using `hwdp geometry` the way any consumer would.
+#   run-scaled        wrap an APPLICATION in a nested gamescope window
+#   wallpaper-slicer  cut an IMAGE into per-output slices that tile a layout
 #
 #   ./setup.sh install     symlink the tools (+ man) into ~/.local
 #   ./setup.sh uninstall   remove the symlinks
@@ -57,6 +58,9 @@ _manifest=$_lib/.$PKG-installed
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
 DEPS_SOFT="inotifywait gamescope xrandr bc"
+# wallpaper-slicer needs ONE of these, not all of them, which a flat list
+# cannot say -- hence its own check below.
+DEPS_IMAGE="magick convert vips"
 RC=0
 
 # marker contract: plain [OK]/[FAIL]/[WARN] an integrator styles in its palette;
@@ -216,7 +220,10 @@ do_uninstall() {
 
 do_check() {
   echo "== $PKG (display detect / layout / autoscale) =="
-  for _t in hwdp run-scaled; do
+  # Derived from what is SHIPPED, not a hand-kept list: adding a command to
+  # bin/ should not also require remembering to name it here, which is how a
+  # check comes to pass while a tool it never looked at is missing.
+  for _t in $(for _b in "$_root"/bin/*; do basename "$_b"; done); do
     if command -v "$_t" >/dev/null 2>&1; then ok "$_t present"
     else bad "$_t not on PATH"; fi; done
   # Every subcommand the dispatcher advertises must actually be installed --
@@ -255,6 +262,13 @@ do_check() {
     command -v "$_d" >/dev/null 2>&1 && ok "dep $_d present" \
       || warn "dep $_d absent (a feature degrades: inotify=auto-reapply," \
               "gamescope+bc=run-scaled, xrandr=X11 geometry)"; done
+  # ANY of the three will do, so report the one that would be used rather than
+  # warning three times about tools the user deliberately does not have.
+  _img=
+  for _d in $DEPS_IMAGE; do
+    command -v "$_d" >/dev/null 2>&1 && { _img=$_d; break; }; done
+  [ -n "$_img" ] && ok "image tool $_img present (wallpaper-slicer)" \
+    || warn "no image tool ($DEPS_IMAGE); wallpaper-slicer cannot cut slices"
 }
 
 _U="usage: setup.sh [install|uninstall|check|test|version]   (PREFIX=... env)"

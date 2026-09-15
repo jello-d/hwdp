@@ -22,11 +22,30 @@ hwdp capture    snapshot the current arrangement into a profile
 hwdp watch      supervise the layout; fire display-change hooks
 ```
 
-**`run-scaled`** is the one other command, and deliberately not a subcommand:
-everything above reads or manages display state and returns, where `run-scaled`
-takes someone else's command line and *becomes* that process. It magnifies a
-single application via a nested gamescope window, and consumes `hwdp geometry`
-as a client, exactly like any other integrator tool would.
+Two further commands ship alongside it. They are deliberately *not*
+subcommands: every subcommand above reads or manages display state and returns,
+where these consume that state to do something else. Both read `hwdp geometry`
+or `hwdp ui` as ordinary clients, exactly as an integrator's own tool would.
+
+```
+run-scaled        magnify one app in a nested gamescope window
+wallpaper-slicer  cut one image into per-output crops that tile
+```
+
+**`run-scaled`** takes someone else's command line and *becomes* that process,
+so its exit status and stdout are the child's. It exists for fixed-layout
+applications that cannot scale themselves: a 640x480 program is unusable on a
+2880x1800 panel and merely small on 1920x1080, so the magnification comes from
+`hwdp ui`'s `MAGNIFY` key rather than from each caller guessing.
+
+**`wallpaper-slicer`** works around the fact that Wayland clients which draw a
+wallpaper (swaylock, swaybg, a greeter background) paint the *same* image on
+every output and have no spanned mode. It pre-cuts the source into one crop per
+output, each crop that output's sub-rectangle of the image cover-scaled over
+the whole layout union, so the slices tile and a feature crossing a bezel stays
+continuous. Cutting a wallpaper per output is a function of the panel layout,
+which is this package's subject, so it lives here rather than in whichever
+integrator happens to call it. Needs one of `magick`, `convert` or `vips`.
 
 `id`, `shape` and `ui` answer **headless** — from a TTY, over ssh, at boot, at
 a greeter — because they ask the kernel about panels when no compositor is

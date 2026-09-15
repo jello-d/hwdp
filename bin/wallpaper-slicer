@@ -1,0 +1,238 @@
+#!/bin/bash
+# wallpaper-slicer -- slice one image into per-output crops that tile across a
+# multi-output Wayland layout.
+#
+# An hwdp CLIENT, like run-scaled: it asks `hwdp geometry` where the outputs
+# are and never parses a compositor itself. Cutting a wallpaper per output IS a
+# function of the panel layout, which is this package's whole subject, so it
+# lives here rather than in the integrator that happens to call it.
+#
+# Wayland clients that draw a wallpaper (swaylock, swaybg, a greeter background)
+# draw the SAME image on every output independently; there is no spanned mode.
+# To fake a span we PRE-SLICE the source into one crop per output -- each crop
+# being that output's logical sub-rectangle of the image after the image is
+# cover-scaled (fill) or contained (fit) over the WHOLE output-layout union --
+# and let the caller hand each output its own slice. Every slice comes from one
+# global cover rect, so the slices tile exactly: a feature crossing a bezel is
+# continuous, the same property the workspace-wallpaper compositor plugin has.
+#
+# NO ROTATION. These are Wayland clients: they draw into each output's LOGICAL
+# surface and the COMPOSITOR applies the output transform. So slices are cut in
+# plain logical (landscape) orientation; the compositor rotates them onto the
+# portrait panels. Pre-rotating here would double-rotate. We work entirely in
+# logical coordinates and never touch transform. (So a slice image is already
+# in logical space -- do not infer a panel's rotation from it; read the live
+# output transform instead.)
+#
+# Slices are cached and only recut when inputs change: the cache key is a
+# fingerprint of (source path, source mtime+size, geometry, mode). Swap the
+# image or move a panel and it recuts; otherwise it reuses crops instantly.
+#
+# Output: one line per output on stdout, TAB-separated:
+#     NAME<TAB>/abs/path/to/NAME.png
+# Callers format this however they need (e.g. swaylock's `-i NAME:PATH`).
+#
+# Exit status:
+#     0  sliced; mapping written to stdout
+#     1  nothing to slice (reason on stderr): no image tool, unreadable source,
+#        unreadable geometry, or fewer than 2 outputs
+#     2  usage error
+#
+# Usage: wallpaper-slicer [-m fill|fit] [-o OUTDIR] SOURCE
+#   -m  fill (cover, default) | fit (contain)   [env: WALLPAPER_SLICER_MODE]
+#   -o  output directory   (default ~/.cache/wallpaper-slicer)
+#
+# Callers slicing DIFFERENT sources must pass distinct -o dirs; slices are named
+# NAME.png and would otherwise clobber each other (and thrash the cache).
+
+set -u
+
+mode="${WALLPAPER_SLICER_MODE:-fill}"
+outdir="${XDG_CACHE_HOME:-$HOME/.cache}/wallpaper-slicer"
+
+log() { printf 'wallpaper-slicer: %s\n' "$*" >&2; }
+
+while getopts ':m:o:' opt; do
+  case "$opt" in
+    m)  mode="$OPTARG" ;;
+    o)  outdir="$OPTARG" ;;
+    :)  log "option -$OPTARG requires an argument"; exit 2 ;;
+    \?) log "unknown option -$OPTARG"; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+case "$mode" in
+  fill|fit) ;;
+  *) log "mode must be 'fill' or 'fit' (got '$mode')"; exit 2 ;;
+esac
+
+src="${1:-}"
+if [ -z "$src" ]; then log "no source image given"; exit 2; fi
+case "$src" in "~"/*) src="$HOME/${src#"~"/}";; esac
+if [ ! -r "$src" ]; then log "source not readable: '$src'"; exit 1; fi
+
+# image CLI: magick (IM7) > convert (IM6) > vips
+img_tool=""
+if command -v magick >/dev/null 2>&1; then img_tool=magick
+elif command -v convert >/dev/null 2>&1; then img_tool=convert
+elif command -v vips >/dev/null 2>&1; then img_tool=vips
+fi
+if [ -z "$img_tool" ]; then
+  log "no image tool (magick/convert/vips)"; exit 1
+fi
+
+# Cut ONE slice. All rectangles are in GLOBAL/LOGICAL coordinates.
+#   $1 src  $2 dst
+#   $3 cover_x $4 cover_y $5 cover_w $6 cover_h   cover image placement (global)
+#   $7 out_x   $8 out_y   $9 out_w  $10 out_h     this output's logical rect
+#   $11 img_w  $12 img_h                          source pixel dimensions
+#
+# Strategy for speed + correctness: map the output's logical rect into SOURCE
+# pixel space (inverse of the cover scale), extract just that source region, and
+# resize it to the output's logical pixel size in a single op. No giant
+# intermediate, no rotation.
+make_slice() {
+  local s="$1" d="$2"
+  local cx="$3" cy="$4" cw="$5" ch="$6"
+  local ox="$7" oy="$8" ow="$9" oh="${10}"
+  local iw="${11}" ih="${12}"
+
+  # Scale from source px -> cover px is cw/iw (== ch/ih, uniform). Invert it to
+  # find which source pixels map to this output's logical rect.
+  #   source_x = (global_x - cover_x) * iw / cw
+  read sx sy sw sh < <(awk -v ox="$ox" -v oy="$oy" -v ow="$ow" -v oh="$oh" \
+      -v cx="$cx" -v cy="$cy" -v cw="$cw" -v ch="$ch" -v iw="$iw" -v ih="$ih" \
+      'BEGIN {
+        fx = iw / cw; fy = ih / ch
+        sx = (ox - cx) * fx
+        sy = (oy - cy) * fy
+        sw = ow * fx
+        sh = oh * fy
+        # clamp to source bounds (fit/letterbox or rounding can push over)
+        if (sx < 0) { sw += sx; sx = 0 }
+        if (sy < 0) { sh += sy; sy = 0 }
+        if (sx + sw > iw) sw = iw - sx
+        if (sy + sh > ih) sh = ih - sy
+        printf "%d %d %d %d", sx + 0.5, sy + 0.5, sw + 0.5, sh + 0.5
+      }')
+
+  case "$img_tool" in
+    magick|convert)
+      # crop source region, then resize to the output's logical size.
+      "$img_tool" "$s" -crop "${sw}x${sh}+${sx}+${sy}" +repage \
+        -resize "${ow}x${oh}!" "$d"
+      ;;
+    vips)
+      local tmp; tmp=$(mktemp --suffix=.png)
+      vips extract_area "$s" "$tmp" "$sx" "$sy" "$sw" "$sh" >/dev/null 2>&1
+      vips thumbnail "$tmp" "$d" "$ow" --height "$oh" --size force \
+        >/dev/null 2>&1
+      rm -f "$tmp"
+      ;;
+  esac
+}
+
+# Emit: NAME X Y LOGICAL_W LOGICAL_H  (logical = post-transform layout size),
+# straight out of `hwdp geometry`, whose published line is
+#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+# so this is a projection of fields 1, 6, 7, 8, 9 and nothing more.
+#
+# This USED to be a fourth wlr-randr parser -- the package already had one in
+# the geometry command, one in the kanshi adapter and one in the magnifier, and
+# each had to learn the same gotchas separately (a mode line can read
+# "(preferred, current)", so a bare /\(current\)/ match silently sees nothing).
+# Consolidating them is the whole reason this tool moved into hwdp.
+#
+# It is also more correct than what it replaces: the old parser swapped W/H for
+# a 90/270 transform but never divided by SCALE, so on a scaled output every
+# slice was cut from the wrong rectangle. `hwdp geometry` does both.
+#
+# The default (settling) read is deliberate: slicing during a hotplug would cut
+# against a layout that is still moving.
+read_geometry() {
+  hwdp geometry 2>/dev/null | awk '{ print $1, $6, $7, $8, $9 }'
+}
+
+# ---- main -------------------------------------------------------------------
+geom=$(read_geometry)
+nout=$(printf '%s\n' "$geom" | grep -c .)
+
+if [ "$nout" -lt 2 ]; then
+  log "fewer than 2 outputs; nothing to span"; exit 1
+fi
+
+# Union of all outputs, logical coords.
+read ux uy uw uh < <(printf '%s\n' "$geom" | awk '
+  NR==1 { minx=$2; miny=$3; maxx=$2+$4; maxy=$3+$5; next }
+  { if($2<minx)minx=$2; if($3<miny)miny=$3
+    if($2+$4>maxx)maxx=$2+$4; if($3+$5>maxy)maxy=$3+$5 }
+  END { print minx, miny, maxx-minx, maxy-miny }
+')
+
+# Source dimensions.
+read iw ih < <(
+  case "$img_tool" in
+    magick)  magick identify -format '%w %h' "$src[0]" 2>/dev/null ;;
+    convert) identify -format '%w %h' "$src[0]" 2>/dev/null ;;
+    vips)    printf '%s %s' "$(vips width "$src" 2>/dev/null)" \
+                            "$(vips height "$src" 2>/dev/null)" ;;
+  esac
+)
+if [ -z "${iw:-}" ] || [ -z "${ih:-}" ] || [ "$iw" -le 0 ] \
+   || [ "$ih" -le 0 ]; then
+  log "could not read source dimensions"; exit 1
+fi
+
+# Cover/contain size of the source over the union (global px).
+read cover_w cover_h < <(awk -v iw="$iw" -v ih="$ih" -v uw="$uw" -v uh="$uh" \
+  -v mode="$mode" 'BEGIN {
+    sx = uw/iw; sy = uh/ih
+    s  = (mode=="fit") ? ((sx<sy)?sx:sy) : ((sx>sy)?sx:sy)
+    printf "%d %d", int(iw*s+0.5), int(ih*s+0.5)
+  }')
+# Top-left of the cover image within the union (centered).
+read cover_x cover_y < <(awk -v cw="$cover_w" -v ch="$cover_h" \
+  -v uw="$uw" -v uh="$uh" -v ux="$ux" -v uy="$uy" 'BEGIN {
+    printf "%d %d", ux+int((uw-cw)/2), uy+int((uh-ch)/2)
+  }')
+
+# ---- cache fingerprint ------------------------------------------------------
+mkdir -p "$outdir"
+src_stat=$(stat -c '%Y:%s' "$src" 2>/dev/null)
+fp_input="$src|$src_stat|$mode|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
+fp=$(printf '%s' "$fp_input" | cksum | awk '{print $1}')
+fp_file="$outdir/fingerprint"
+
+cache_valid=0
+if [ -r "$fp_file" ] && [ "$(cat "$fp_file" 2>/dev/null)" = "$fp" ]; then
+  cache_valid=1
+  while read -r name x y lw lh; do
+    [ -z "$name" ] && continue
+    [ -f "$outdir/$name.png" ] || cache_valid=0
+  done <<< "$geom"
+fi
+
+# ---- cut slices as needed, emit NAME<TAB>PATH mapping -----------------------
+# touch-on-use: whether we recut or reused, mark the crops used NOW so their
+# mtime tracks the last LOCK, not the last recut. @home is noatime, so read
+# access leaves no trace; without this a stable wallpaper's crops age out under
+# rm-stale's daily cache sweep and force a needless recut on the next lock.
+while read -r name x y lw lh; do
+  [ -n "$name" ] || continue
+  dst="$outdir/$name.png"
+  if [ "$cache_valid" -eq 0 ]; then
+    make_slice "$src" "$dst" \
+      "$cover_x" "$cover_y" "$cover_w" "$cover_h" \
+      "$x" "$y" "$lw" "$lh" "$iw" "$ih"
+  fi
+  touch "$dst" 2>/dev/null || true
+  printf '%s\t%s\n' "$name" "$dst"
+done <<< "$geom"
+
+[ "$cache_valid" -eq 0 ] && printf '%s' "$fp" > "$fp_file"
+# The sweep keys on the DIR's mtime (a top-level ~/.cache entry), which a file
+# touch does not bump -- so bump the dir itself.
+touch "$outdir" 2>/dev/null || true
+
+exit 0
