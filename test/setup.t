@@ -47,6 +47,25 @@ sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
   || fail "install pruned a link that belongs to another package"
 rm -f "$XDG_BIN_HOME/theirs"
 
+# A prefix that once held a COPY install keeps a REAL libexec/<pkg>/ directory,
+# and both placement commands NEST rather than replace against one: `cp -a`
+# puts the tree a level down, and `ln -sfn` buries the link at
+# libexec/hwdp/hwdp. The symlink branch used to miss this, so the stale tree
+# went on resolving in front of the new link -- silently, because the tools
+# find their libexec from their own real path and kept working. Found on a live
+# box by check's WARN; pinned here so it cannot come back.
+rm -rf "$PREFIX/libexec/hwdp"
+mkdir -p "$PREFIX/libexec/hwdp/cmd"
+: > "$PREFIX/libexec/hwdp/probe.sh"           # a stale file from that install
+sh "$HERE/setup.sh" install >/dev/null \
+  || fail "re-install over a real dir errored"
+[ -L "$PREFIX/libexec/hwdp" ] \
+  || fail "libexec/hwdp is not a symlink; the install nested under a stale dir"
+[ -e "$PREFIX/libexec/hwdp/hwdp" ] \
+  && fail "the link was nested one level down (libexec/hwdp/hwdp)"
+[ -e "$PREFIX/libexec/hwdp/probe.sh" ] \
+  || fail "the linked libexec does not resolve probe.sh"
+
 # COPY mode: what a SHARED/SYSTEM prefix needs, because the clone lives under a
 # 0750 home and a symlink from /usr/local into it is unreadable by the greeter
 # account that has to follow it. The copy must be a REAL FILE, must resolve its

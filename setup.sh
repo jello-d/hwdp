@@ -182,10 +182,16 @@ do_install() {
     fi
   done
   _prune_stale
+  # rm first, in BOTH modes, because BOTH placement commands nest instead of
+  # replacing when the destination is a real directory. `cp -a` of a directory
+  # onto an existing one puts it one level down; `ln -sfn` does exactly the
+  # same, which the symlink branch used to miss. That is not hypothetical: a
+  # prefix that once held a COPY install keeps a real libexec/<pkg>/ tree, so
+  # the next SYMLINK install buried its link at libexec/hwdp/hwdp and left the
+  # stale Sep-11 tree resolving in front of it (found on manifold 2026-09-15
+  # by check's own WARN, which is the drift-detection earning its keep).
+  rm -rf "$_lib/$PKG"
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
-    # rm first: `cp -a` of a directory ONTO an existing one NESTS it rather
-    # than replacing it, which would leave a stale tree one level down.
-    rm -rf "$_lib/$PKG"
     cp -a "$_root/libexec/$PKG" "$_lib/$PKG"
     [ "$(id -u)" = 0 ] && chown -R root:root "$_lib/$PKG" || :
   else
