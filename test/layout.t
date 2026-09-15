@@ -115,6 +115,46 @@ grep -q "profile hwdp-$hwdp" "$out" || fail "captured profile not named by hwdp"
 grep -q 'AW2725Q AAA111' "$out" || fail "captured profile missing panel 1"
 grep -q 'AW2725Q BBB222' "$out" || fail "captured profile missing panel 2"
 grep -q 'transform 270' "$out" || fail "captured profile lost a transform"
+
+# --- capture never destroys a profile silently -------------------------------
+# The file invites hand-editing (its own comments say so), and capture used to
+# `> $dst`, truncating BEFORE it built the replacement: a re-capture threw the
+# edits away, and a failure part-way left a corrupt file with no original.
+#
+# Re-capturing an UNCHANGED rig is a no-op: same bytes, and the file is not
+# rewritten at all, so even its mtime stands.
+_sum=$(cksum < "$out")
+_before=$(stat -c %Y "$out")
+sleep 1
+out2=$(run capture)
+[ "$out2" = "$out" ] || fail "re-capture wrote a different path"
+[ "$(cksum < "$out")" = "$_sum" ] || fail "an unchanged re-capture rewrote it"
+[ "$(stat -c %Y "$out")" = "$_before" ] \
+  || fail "an unchanged re-capture touched the profile"
+[ -e "$out.bak" ] && fail "an unchanged re-capture made a needless backup" || :
+
+# When the file DOES differ from what capture would write -- a hand edit is the
+# case that matters -- the old one is kept and the overwrite is announced.
+# Editing the file is the direct way to reach that branch; it needs no stub
+# gymnastics, and a hand edit is literally the thing being protected.
+printf '# my own notes\n' >> "$out"
+_edited=$(cksum < "$out")
+out3=$(run capture 2>"$T/cap.err") || fail "re-capture over an edit errored"
+[ "$out3" = "$out" ] || fail "re-capture wrote a different path"
+[ -f "$out.bak" ] || fail "capture destroyed a hand-edited profile"
+[ "$(cksum < "$out.bak")" = "$_edited" ] \
+  || fail "the backup is not the file that was replaced"
+grep -q 'previous profile kept as' "$T/cap.err" \
+  || fail "capture overwrote a profile without saying so"
+grep -q 'my own notes' "$out" \
+  && fail "the edit survived into the new profile" || :
+grep -q "profile hwdp-$hwdp" "$out" || fail "the rewritten profile is malformed"
+
+# stdout stays JUST the path: the announcement went to stderr, so a caller
+# reading the path still gets one clean line.
+[ "$(printf '%s' "$out3" | grep -c .)" -eq 1 ] \
+  || fail "capture put more than the path on stdout"
+rm -f "$out.bak"
 grep -q '^ *output .* scale ' "$out" \
   && fail "captured output line must NOT carry a scale"
 

@@ -6,6 +6,21 @@
 # Transforms, positions and modes only; NO scale -- `hwdp layout` fills that at
 # session start from the sticky per-panel value, and baking one in here would
 # freeze a number that is meant to track the hardware.
+#
+# WRITES ATOMICALLY, AND NEVER DESTROYS A PROFILE SILENTLY. This used to be a
+# plain `> $dst`, which truncates BEFORE the block that fills it: a re-capture
+# of a set whose profile had been hand-edited threw that work away with no
+# warning, and a failure part-way through left a corrupt profile with no
+# original to fall back on. The file carries comments inviting exactly that
+# hand-editing, so overwriting it quietly was the wrong default.
+#
+#   unchanged  the file is left ALONE and the path printed (idempotent, so
+#              re-capturing an unchanged rig is a genuine no-op)
+#   changed    the previous file is kept as <id>.conf.bak and the change is
+#              announced on stderr; stdout stays just the path
+#
+# The temp file is made INSIDE $PROFILES so the rename is atomic: across
+# filesystems `mv` degrades to copy-then-delete and stops being.
 set -eu
 . "$HWDP_LIBEXEC/displayset.sh"
 
@@ -13,6 +28,11 @@ _id=$(hwdp_id)
 [ -n "$_id" ] || { echo "hwdp capture: no outputs to capture" >&2; exit 1; }
 _dst=$PROFILES/$_id.conf
 mkdir -p "$PROFILES"
+
+# Clean up the temp on ANY exit, including the `set -e` aborts that the writes
+# below can trigger -- a stray .tmp beside the profiles is confusing litter.
+_tmp=$(mktemp "$PROFILES/.$_id.conf.XXXXXX")
+trap 'rm -f "$_tmp"' EXIT HUP INT TERM
 {
   printf '# captured by hwdp capture -- layout for this monitor set.\n'
   printf '# Outputs/transforms/positions only; the per-output scale is\n'
@@ -31,5 +51,16 @@ mkdir -p "$PROFILES"
       "$edid" "$rw" "$rh" "$rate" "$_t" "$pos"
   done
   printf '}\n'
-} > "$_dst"
+} > "$_tmp"
+
+if [ -f "$_dst" ] && cmp -s "$_tmp" "$_dst"; then
+  : # identical: leave the file (and its mtime) untouched
+elif [ -f "$_dst" ]; then
+  cp -p "$_dst" "$_dst.bak"
+  mv "$_tmp" "$_dst"
+  echo "hwdp capture: the arrangement changed; previous profile kept as" \
+    "$_dst.bak" >&2
+else
+  mv "$_tmp" "$_dst"
+fi
 printf '%s\n' "$_dst"
