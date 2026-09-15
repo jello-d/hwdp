@@ -41,6 +41,7 @@
 # Usage: wallpaper-slicer [-m fill|fit] [-o OUTDIR] SOURCE
 #   -m  fill (cover, default) | fit (contain)   [env: WALLPAPER_SLICER_MODE]
 #   -o  output directory   (default ~/.cache/wallpaper-slicer)
+#       fit's padding colour is WALLPAPER_SLICER_BG (default black)
 #
 # Callers slicing DIFFERENT sources must pass distinct -o dirs; slices are named
 # NAME.png and would otherwise clobber each other (and thrash the cache).
@@ -65,6 +66,9 @@
 set -eu
 
 mode="${WALLPAPER_SLICER_MODE:-fill}"
+# What `fit` pads WITH. Only fit ever shows it: in fill the image covers every
+# output completely. Any ImageMagick colour name or #rrggbb.
+bg="${WALLPAPER_SLICER_BG:-black}"
 outdir="${XDG_CACHE_HOME:-$HOME/.cache}/wallpaper-slicer"
 
 log() { printf 'wallpaper-slicer: %s\n' "$*" >&2; }
@@ -110,6 +114,16 @@ fi
 # resize it to the output's logical pixel size in a single op. No giant
 # intermediate, no rotation.
 #
+# INTERSECT, never clamp. The output rect and the IMAGE rect are both global, so
+# the part of this output the image actually covers is their intersection; that
+# gives the source region AND where it lands within the output. Clamping the
+# source rect to the image bounds instead (what this did) silently STRETCHED
+# whatever was left across the whole output: `fit` then produced no padding at
+# all and a distorted aspect, measured at 1:4 into 1:1 on a 1000x2000 source
+# over a 2000x1000 union. In `fill` the image covers the output completely, so
+# the intersection IS the output rect and this reduces to exactly the old
+# single crop+resize -- the hot path is unchanged.
+#
 # POSIX sh has no `local`, so the working names are underscore-prefixed to keep
 # them clear of the caller's -- $iw/$ih in particular are globals this is also
 # PASSED, and an unprefixed assignment would write straight through them.
@@ -125,42 +139,81 @@ make_slice() {
   #
   # A HEREDOC, not a pipe: `awk ... | read` runs the read in a SUBSHELL, so the
   # values would be set and then discarded the moment the pipeline ended.
-  IFS=' ' read -r _sx _sy _sw _sh <<EOF
+  # s* = the source region to take; d* = where it goes inside the output.
+  IFS=' ' read -r _sx _sy _sw _sh _dx _dy _dw _dh <<EOF
 $(awk -v ox="$_ox" -v oy="$_oy" -v ow="$_ow" -v oh="$_oh" \
       -v cx="$_cx" -v cy="$_cy" -v cw="$_cw" -v ch="$_ch" \
       -v iw="$_iw" -v ih="$_ih" \
       'BEGIN {
         fx = iw / cw; fy = ih / ch
-        sx = (ox - cx) * fx
-        sy = (oy - cy) * fy
-        sw = ow * fx
-        sh = oh * fy
-        # clamp to source bounds (fit/letterbox or rounding can push over)
-        if (sx < 0) { sw += sx; sx = 0 }
-        if (sy < 0) { sh += sy; sy = 0 }
-        if (sx + sw > iw) sw = iw - sx
-        if (sy + sh > ih) sh = ih - sy
-        printf "%d %d %d %d", sx + 0.5, sy + 0.5, sw + 0.5, sh + 0.5
+        # the overlap of this output and the image, in GLOBAL coords
+        gx0 = (ox > cx)           ? ox      : cx
+        gy0 = (oy > cy)           ? oy      : cy
+        gx1 = (ox + ow < cx + cw) ? ox + ow : cx + cw
+        gy1 = (oy + oh < cy + ch) ? oy + oh : cy + ch
+        # no overlap at all: this output is entirely background
+        if (gx1 <= gx0 || gy1 <= gy0) { printf "0 0 0 0 0 0 0 0"; exit }
+        printf "%d %d %d %d %d %d %d %d",
+          (gx0 - cx) * fx + 0.5, (gy0 - cy) * fy + 0.5,
+          (gx1 - gx0) * fx + 0.5, (gy1 - gy0) * fy + 0.5,
+          gx0 - ox + 0.5, gy0 - oy + 0.5,
+          gx1 - gx0 + 0.5, gy1 - gy0 + 0.5
       }')
 EOF
 
+  # Three cases, cheapest first. COVERED is the `fill` hot path and is the
+  # single crop+resize this has always done; the other two exist for `fit`.
+  if [ "$_dw" -le 0 ] || [ "$_dh" -le 0 ]; then _case=empty
+  elif [ "$_dx" -eq 0 ] && [ "$_dy" -eq 0 ] \
+       && [ "$_dw" -eq "$_ow" ] && [ "$_dh" -eq "$_oh" ]; then _case=covered
+  else _case=padded
+  fi
+
   case "$img_tool" in
     magick|convert)
-      # crop source region, then resize to the output's logical size.
-      "$img_tool" "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
-        -resize "${_ow}x${_oh}!" "$_d"
+      case $_case in
+        empty)
+          "$img_tool" -size "${_ow}x${_oh}" "xc:$bg" "$_d" ;;
+        covered)
+          "$img_tool" "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
+            -resize "${_ow}x${_oh}!" "$_d" ;;
+        padded)
+          # The crop is resized to the OVERLAP size, then composited at its
+          # offset on a background canvas the size of the output -- which is
+          # what containment means, and what clamping never did.
+          "$img_tool" -size "${_ow}x${_oh}" "xc:$bg" \
+            \( "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
+               -resize "${_dw}x${_dh}!" \) \
+            -geometry "+${_dx}+${_dy}" -composite "$_d" ;;
+      esac
       ;;
     vips)
       # stderr is NOT suppressed here any more. It was, and combined with the
       # old lack of `set -e` a vips failure produced a missing slice and a
       # zero exit -- the silent-success path the fail-loud rule forbids. Now a
       # failure aborts, carrying vips's own message. (UNVERIFIED: no vips on
-      # either box, so this path is reasoned, not run.)
-      _tmp=$(mktemp --suffix=.png)
-      vips extract_area "$_s" "$_tmp" "$_sx" "$_sy" "$_sw" "$_sh" >/dev/null
-      vips thumbnail "$_tmp" "$_d" "$_ow" --height "$_oh" --size force \
-        >/dev/null
-      rm -f "$_tmp"
+      # either box, so this path is reasoned, not run. The background is black
+      # here regardless of WALLPAPER_SLICER_BG, which magick does honour.)
+      case $_case in
+        empty)
+          vips black "$_d" "$_ow" "$_oh" >/dev/null ;;
+        *)
+          _tmp=$(mktemp --suffix=.png)
+          vips extract_area "$_s" "$_tmp" "$_sx" "$_sy" "$_sw" "$_sh" \
+            >/dev/null
+          if [ "$_case" = covered ]; then
+            vips thumbnail "$_tmp" "$_d" "$_ow" --height "$_oh" \
+              --size force >/dev/null
+          else
+            _tmp2=$(mktemp --suffix=.png)
+            vips thumbnail "$_tmp" "$_tmp2" "$_dw" --height "$_dh" \
+              --size force >/dev/null
+            vips embed "$_tmp2" "$_d" "$_dx" "$_dy" "$_ow" "$_oh" \
+              --extend background >/dev/null
+            rm -f "$_tmp2"
+          fi
+          rm -f "$_tmp" ;;
+      esac
       ;;
   esac
 }
@@ -244,7 +297,9 @@ mkdir -p "$outdir"
 # fingerprint match nothing and recut on every single run.
 src_stat=$(stat -c '%Y:%s' "$src") \
   || { log "cannot stat source: '$src'"; exit 1; }
-fp_input="$src|$src_stat|$mode|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
+# $bg is in here because `fit` PAINTS it: change the padding colour and
+# the slices must be recut, or the cache serves the old one forever.
+fp_input="$src|$src_stat|$mode|$bg|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
 fp=$(printf '%s' "$fp_input" | cksum | awk '{print $1}')
 fp_file="$outdir/fingerprint"
 

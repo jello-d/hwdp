@@ -136,20 +136,15 @@ case $_out in
   *) fail "single-output refusal should say why: $_out" ;;
 esac
 
-# --- fit vs fill -------------------------------------------------------------
-# The two modes differ only by one flipped comparison in the cover-rect maths,
-# which is exactly what a rewrite inverts by accident, so pin that they still
-# produce DIFFERENT slices for a source whose aspect does not match the union.
+# --- fit CONTAINS, fill COVERS ----------------------------------------------
+# The two modes differ by one flipped comparison in the cover-rect maths, so
+# this pins what each actually produces rather than merely that they differ.
 #
-# DELIBERATELY NOT asserting that fit CONTAINS: it does not, and pinning the
-# current behaviour would enshrine a bug. Measured 2026-09-14 with a 1000x2000
-# source over a 2000x1000 union: contained, the image should occupy only the
-# middle 500px of the union and leave the rest padded, but make_slice clamps
-# the source rect to the image bounds and then stretches what is left over the
-# whole output -- so DP-1 came back as the left half of the source distorted
-# 1:4 into a 1:1 output, with no padding anywhere. `fit` is unused (the one
-# caller takes the default `fill`), which is why it went unnoticed. Fix it and
-# this block is where the real containment assertion belongs.
+# A 1000x2000 source over the 2000x1000 union: contained, it scales to 500x1000
+# and centres, so the image occupies global x 750..1250 ONLY. DP-1 (x 0..1000)
+# therefore shows background across its left 750px and image in its right
+# 250px; DP-2 is the mirror. Round numbers on purpose -- the boundary lands on
+# an exact pixel, so a fractional error shows up rather than hiding in rounding.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh
 [ "$1" = geometry ] || exit 1
@@ -157,17 +152,47 @@ echo "DP-1 1000 1000 normal 1 0 0 1000 1000 landscape"
 echo "DP-2 1000 1000 normal 1 1000 0 1000 1000 landscape"
 EOF
 chmod +x "$T/bin/hwdp"
-# A VERTICAL gradient, because the two modes differ in which y-range they
-# sample (fill takes a 500px band from the middle, fit takes the full height)
-# and agree on x for this layout. A source that varies only in x compares equal
-# under both and proves nothing -- which is what the first attempt here did.
-"$_img" -size 1000x2000 gradient:black-white "$T/tall.png"
+"$_img" -size 1000x2000 xc:white "$T/tall.png"
+
 _fit=$(PATH="$T/bin:$PATH" "$WS" -m fit -o "$T/fit" "$T/tall.png" 2>&1) \
   || fail "fit mode failed: $_fit"
+
+# A WHITE source on the default BLACK padding, so mean is the image's share of
+# the output: 250 of 1000 columns = 0.25.
+_m=$(_mean "$T/fit/DP-1.png")
+awk -v m="$_m" 'BEGIN { exit !(m > 0.23 && m < 0.27) }' \
+  || fail "fit: DP-1 mean=$_m, want ~0.25 (250 of 1000 columns imaged)"
+_m=$(_mean "$T/fit/DP-2.png")
+awk -v m="$_m" 'BEGIN { exit !(m > 0.23 && m < 0.27) }' \
+  || fail "fit: DP-2 mean=$_m, want ~0.25"
+
+# WHERE the padding is, not just how much: sample a column deep in the padded
+# region and one inside the image. A slicer that centred the image on EACH
+# output would pass the mean test above and fail this.
+_px() { "$_img" "$1" -format "%[fx:p{$2,$3}.r]" info:; }
+_l=$(_px "$T/fit/DP-1.png" 100 500)      # DP-1 x=100  -> padding
+_r=$(_px "$T/fit/DP-1.png" 900 500)      # DP-1 x=900  -> image
+awk -v l="$_l" -v r="$_r" 'BEGIN { exit !(l < 0.1 && r > 0.9) }' \
+  || fail "fit: DP-1 padding is on the wrong side (x100=$_l x900=$_r)"
+_l=$(_px "$T/fit/DP-2.png" 100 500)      # DP-2 x=100  -> image
+_r=$(_px "$T/fit/DP-2.png" 900 500)      # DP-2 x=900  -> padding
+awk -v l="$_l" -v r="$_r" 'BEGIN { exit !(l > 0.9 && r < 0.1) }' \
+  || fail "fit: DP-2 padding is on the wrong side (x100=$_l x900=$_r)"
+
+# The padding colour is configurable, and changing it must RECUT rather than
+# serve the cached black one.
+_fitb=$(WALLPAPER_SLICER_BG=white PATH="$T/bin:$PATH" \
+  "$WS" -m fit -o "$T/fit" "$T/tall.png" 2>&1) || fail "fit+bg failed: $_fitb"
+_m=$(_mean "$T/fit/DP-1.png")
+awk -v m="$_m" 'BEGIN { exit !(m > 0.95) }' \
+  || fail "a white pad on a white source should be ~1, got $_m (cache stale?)"
+
+# fill COVERS: the same source fills every output edge to edge, no padding.
 _fill=$(PATH="$T/bin:$PATH" "$WS" -m fill -o "$T/fill" "$T/tall.png" 2>&1) \
   || fail "fill mode failed: $_fill"
-cmp -s "$T/fit/DP-1.png" "$T/fill/DP-1.png" \
-  && fail "fit and fill produced identical slices for a mismatched aspect"
+_m=$(_mean "$T/fill/DP-1.png")
+awk -v m="$_m" 'BEGIN { exit !(m > 0.99) }' \
+  || fail "fill left padding on a white source (mean=$_m); it must cover"
 
 # --- refusals, each with its reason ------------------------------------------
 # Every one of these is a path `set -eu` can turn into a SILENT non-zero exit,
