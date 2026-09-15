@@ -66,6 +66,24 @@ sh "$HERE/setup.sh" install >/dev/null \
 [ -e "$PREFIX/libexec/hwdp/probe.sh" ] \
   || fail "the linked libexec does not resolve probe.sh"
 
+# ...and UNINSTALL clears the same stale tree rather than leaving the crumb a
+# mode switch is meant not to leave. Gated on our manifest sitting beside it,
+# so a directory this package never installed is never rm -rf'd.
+rm -rf "$PREFIX/libexec/hwdp"
+mkdir -p "$PREFIX/libexec/hwdp/cmd"
+sh "$HERE/setup.sh" uninstall >/dev/null \
+  || fail "uninstall over a real dir errored"
+[ -e "$PREFIX/libexec/hwdp" ] \
+  && fail "uninstall left a stale copy-mode libexec tree"
+# A tree with NO manifest beside it is somebody else's: leave it alone.
+mkdir -p "$PREFIX/libexec/hwdp/cmd"
+rm -f "$PREFIX/libexec/.hwdp-installed"
+sh "$HERE/setup.sh" uninstall >/dev/null || fail "uninstall errored"
+[ -d "$PREFIX/libexec/hwdp" ] \
+  || fail "uninstall removed an unowned directory (no manifest beside it)"
+rm -rf "$PREFIX/libexec/hwdp"
+sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
+
 # COPY mode: what a SHARED/SYSTEM prefix needs, because the clone lives under a
 # 0750 home and a symlink from /usr/local into it is unreadable by the greeter
 # account that has to follow it. The copy must be a REAL FILE, must resolve its

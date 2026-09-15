@@ -211,11 +211,20 @@ do_install() {
 do_uninstall() {
   for _t in "$_root"/bin/*; do _unplace "$_bin/$(basename "$_t")" "$_t"; done
   _prune_stale
+  # -L BEFORE -d, since a symlink TO a directory satisfies both.
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
     rm -rf "$_lib/$PKG"
-  else
-    [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
+  elif [ -L "$_lib/$PKG" ]; then
+    [ "$(readlink "$_lib/$PKG")" = "$_root/libexec/$PKG" ] \
       && rm -f "$_lib/$PKG" || :
+  elif [ -d "$_lib/$PKG" ] && [ -f "$_manifest" ]; then
+    # A REAL tree where a symlink belongs: an earlier COPY install at this same
+    # prefix. Left behind, it is exactly the crumb a mode switch is supposed
+    # not to leave -- and worse, the next symlinking install would nest its
+    # link INSIDE it. The manifest beside it is what says this prefix is ours;
+    # without that signal we would be rm -rf'ing a directory we never made.
+    rm -rf "$_lib/$PKG"
+    echo "$PKG: removed a stale copy-mode libexec tree at $_lib/$PKG"
   fi
   _man_pages | while IFS= read -r _m; do
     _unplace "$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")" "$_m"
