@@ -257,7 +257,19 @@ do_check() {
               "gamescope+bc=run-scaled, xrandr=X11 geometry)"; done
 }
 
-_U="usage: setup.sh [install|uninstall|check|test|version]"
+_U="usage: setup.sh [install|uninstall|check|test|version]   (PREFIX=... env)"
+
+# The prefix is an ENV var, not a flag, and an extra argument used to be
+# ignored in silence: `setup.sh install --prefix /tmp/x` installed to the
+# DEFAULT prefix and reported success, so a sandboxed install quietly went to
+# the real ~/.local instead. Silent success on a misunderstood command line is
+# the failure mode the fail-loud rule exists for.
+if [ "$#" -gt 1 ]; then
+  echo "setup.sh: unexpected argument '$2' (the prefix is PREFIX=..., not a" \
+       "flag)" >&2
+  echo "$_U" >&2; exit 2
+fi
+
 case "${1:-install}" in
   install)   do_install ;;
   uninstall) do_uninstall ;;
