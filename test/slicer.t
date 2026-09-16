@@ -217,4 +217,74 @@ _o=$(PATH="$T/noimg" "$WS" -o "$T/e" "$T/src.png" 2>&1); _s=$?
 [ "$_s" = 1 ] || fail "no image tool should exit 1, got $_s"
 case $_o in *"no image tool"*) ;; *) fail "no-image-tool reason: $_o" ;; esac
 
-pass "tiling, fit vs fill, cache reuse, refusals with reasons"
+# --- the backends must AGREE ------------------------------------------------
+# magick, convert and vips are interchangeable BACKENDS, not shared code: each
+# has its own crop/resize/composite calls, so "it works" for one says nothing
+# about the others. Until WALLPAPER_SLICER_TOOL existed there was no way to
+# reach a non-default one, and on every box here magick wins the probe -- so
+# the vips branch had never executed at all.
+#
+# Two independent implementations producing the same pixels is a far stronger
+# check than either alone, so run the SAME slice through each backend present
+# and diff them. Anything absent is NOTED, never silently passed.
+#
+# HOW STRONG this is depends on which backends exist. magick and convert share
+# render_magick, so agreeing proves the two ImageMagick binaries behave alike
+# -- worth something, but not much. vips is the one with its own code path
+# (extract_area/thumbnail/embed rather than crop/resize/composite), so it is
+# vips-vs-ImageMagick that actually cross-checks the ALGORITHM. Until vips is
+# installed somewhere this block is a portability check, not a correctness
+# one, and the note below says so out loud.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+echo "DP-1 1000 1000 normal 1 0 0 1000 1000 landscape"
+echo "DP-2 1000 1000 normal 1 1000 0 1000 1000 landscape"
+EOF
+chmod +x "$T/bin/hwdp"
+
+_avail=
+for _c in magick convert vips; do
+  command -v "$_c" >/dev/null 2>&1 && _avail="$_avail $_c"
+done
+_ref=
+for _mode in fill fit; do
+  for _b in $_avail; do
+    _o=$T/agree-$_mode-$_b
+    if ! _e=$(WALLPAPER_SLICER_TOOL=$_b PATH="$T/bin:$PATH" \
+         "$WS" -m "$_mode" -o "$_o" "$T/tall.png" 2>&1); then
+      fail "backend $_b failed in $_mode mode: $_e"
+    fi
+    [ -s "$_o/DP-1.png" ] || fail "backend $_b produced no slice in $_mode"
+  done
+done
+
+# Compare each backend against the first, per mode. `magick compare -metric AE`
+# counts differing pixels; a BYTE compare would be useless here because
+# ImageMagick stamps a date into every PNG.
+if command -v magick >/dev/null 2>&1; then
+  for _mode in fill fit; do
+    _ref=
+    for _b in $_avail; do
+      if [ -z "$_ref" ]; then _ref=$_b; continue; fi
+      for _out in DP-1 DP-2; do
+        _ae=$(magick compare -metric AE \
+          "$T/agree-$_mode-$_ref/$_out.png" \
+          "$T/agree-$_mode-$_b/$_out.png" null: 2>&1 | sed 's/ .*//')
+        # A handful of pixels can differ on a resampling boundary; a WRONG
+        # rectangle differs in thousands. 0.1% of the slice is the line.
+        awk -v ae="${_ae:-999999}" 'BEGIN { exit !(ae <= 1000) }' \
+          || fail "$_ref and $_b disagree on $_out in $_mode mode: $_ae pixels"
+      done
+    done
+  done
+fi
+
+_missing=
+for _c in magick convert vips; do
+  command -v "$_c" >/dev/null 2>&1 || _missing="$_missing $_c"
+done
+[ -z "$_missing" ] \
+  || note "backend(s) not installed, so unverified here:$_missing"
+
+pass "tiling, fit vs fill, cache reuse, refusals, backends agree ($_avail )"

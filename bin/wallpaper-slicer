@@ -42,6 +42,7 @@
 #   -m  fill (cover, default) | fit (contain)   [env: WALLPAPER_SLICER_MODE]
 #   -o  output directory   (default ~/.cache/wallpaper-slicer)
 #       fit's padding colour is WALLPAPER_SLICER_BG (default black)
+#       WALLPAPER_SLICER_TOOL pins the backend (magick|convert|vips)
 #
 # Callers slicing DIFFERENT sources must pass distinct -o dirs; slices are named
 # NAME.png and would otherwise clobber each other (and thrash the cache).
@@ -93,9 +94,23 @@ if [ -z "$src" ]; then log "no source image given"; exit 2; fi
 case "$src" in "~"/*) src="$HOME/${src#"~"/}";; esac
 if [ ! -r "$src" ]; then log "source not readable: '$src'"; exit 1; fi
 
-# image CLI: magick (IM7) > convert (IM6) > vips
-img_tool=""
-if command -v magick >/dev/null 2>&1; then img_tool=magick
+# image CLI: magick (IM7) > convert (IM6) > vips.
+#
+# WALLPAPER_SLICER_TOOL pins one instead of taking the first found. It exists
+# because the backends are INTERCHANGEABLE but not identical code, and without
+# a way to select one the vips branch was unreachable on any box that also has
+# ImageMagick -- which is every box here, so it went unexecuted entirely. The
+# test uses it to run the same assertions against each backend present and to
+# check they agree.
+img_tool=${WALLPAPER_SLICER_TOOL:-}
+if [ -n "$img_tool" ]; then
+  command -v "$img_tool" >/dev/null 2>&1 \
+    || { log "WALLPAPER_SLICER_TOOL=$img_tool is not installed"; exit 1; }
+  case $img_tool in
+    magick|convert|vips) ;;
+    *) log "WALLPAPER_SLICER_TOOL must be magick, convert or vips"; exit 2 ;;
+  esac
+elif command -v magick >/dev/null 2>&1; then img_tool=magick
 elif command -v convert >/dev/null 2>&1; then img_tool=convert
 elif command -v vips >/dev/null 2>&1; then img_tool=vips
 fi
@@ -127,24 +142,19 @@ fi
 # POSIX sh has no `local`, so the working names are underscore-prefixed to keep
 # them clear of the caller's -- $iw/$ih in particular are globals this is also
 # PASSED, and an unprefixed assignment would write straight through them.
-make_slice() {
-  _s=$1 _d=$2
-  _cx=$3 _cy=$4 _cw=$5 _ch=$6
-  _ox=$7 _oy=$8 _ow=$9 _oh=${10}
-  _iw=${11} _ih=${12}
-
-  # Scale from source px -> cover px is cw/iw (== ch/ih, uniform). Invert it to
-  # find which source pixels map to this output's logical rect.
-  #   source_x = (global_x - cover_x) * iw / cw
-  #
-  # A HEREDOC, not a pipe: `awk ... | read` runs the read in a SUBSHELL, so the
-  # values would be set and then discarded the moment the pipeline ended.
-  # s* = the source region to take; d* = where it goes inside the output.
+# slice_rects: the geometry, and nothing else. Sets _sx.._sh (the source region
+# to take) and _dx.._dh (where it lands inside the output), plus _case naming
+# which of the three placements applies.
+#
+# A HEREDOC, not a pipe: `awk ... | read` runs the read in a SUBSHELL, so the
+# values would be set and then discarded the moment the pipeline ended.
+slice_rects() {   # cx cy cw ch  ox oy ow oh  iw ih
   IFS=' ' read -r _sx _sy _sw _sh _dx _dy _dw _dh <<EOF
-$(awk -v ox="$_ox" -v oy="$_oy" -v ow="$_ow" -v oh="$_oh" \
-      -v cx="$_cx" -v cy="$_cy" -v cw="$_cw" -v ch="$_ch" \
-      -v iw="$_iw" -v ih="$_ih" \
+$(awk -v cx="$1" -v cy="$2" -v cw="$3" -v ch="$4" \
+      -v ox="$5" -v oy="$6" -v ow="$7" -v oh="$8" \
+      -v iw="$9" -v ih="${10}" \
       'BEGIN {
+        # source px -> cover px is cw/iw (== ch/ih, uniform); invert it.
         fx = iw / cw; fy = ih / ch
         # the overlap of this output and the image, in GLOBAL coords
         gx0 = (ox > cx)           ? ox      : cx
@@ -160,61 +170,69 @@ $(awk -v ox="$_ox" -v oy="$_oy" -v ow="$_ow" -v oh="$_oh" \
           gx1 - gx0 + 0.5, gy1 - gy0 + 0.5
       }')
 EOF
-
-  # Three cases, cheapest first. COVERED is the `fill` hot path and is the
-  # single crop+resize this has always done; the other two exist for `fit`.
+  # COVERED is the `fill` hot path: the image spans the whole output, so this is
+  # the single crop+resize the tool has always done. The other two are `fit`.
   if [ "$_dw" -le 0 ] || [ "$_dh" -le 0 ]; then _case=empty
   elif [ "$_dx" -eq 0 ] && [ "$_dy" -eq 0 ] \
-       && [ "$_dw" -eq "$_ow" ] && [ "$_dh" -eq "$_oh" ]; then _case=covered
+       && [ "$_dw" -eq "$7" ] && [ "$_dh" -eq "$8" ]; then _case=covered
   else _case=padded
   fi
+}
 
+# One renderer per backend, each reading the rects slice_rects computed. Split
+# out because a single function carrying the geometry AND both backends' three
+# placements ran to 89 lines, and the two halves change for different reasons:
+# the geometry is the algorithm, the renderers are just command lines.
+render_magick() {   # src dst ow oh
+  case $_case in
+    empty)
+      "$img_tool" -size "${3}x${4}" "xc:$bg" "$2" ;;
+    covered)
+      "$img_tool" "$1" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
+        -resize "${3}x${4}!" "$2" ;;
+    padded)
+      # Resize the crop to the OVERLAP size and composite it at its offset on a
+      # background canvas the size of the output. That is what containment
+      # means, and what clamping the source rect never did.
+      "$img_tool" -size "${3}x${4}" "xc:$bg" \
+        \( "$1" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
+           -resize "${_dw}x${_dh}!" \) \
+        -geometry "+${_dx}+${_dy}" -composite "$2" ;;
+  esac
+}
+
+# stderr is NOT suppressed here. It was, and combined with the old lack of
+# `set -e` a vips failure produced a missing slice and a zero exit -- the
+# silent-success path the fail-loud rule forbids. Now a failure aborts and
+# carries vips's own message.
+#
+# The background is black regardless of WALLPAPER_SLICER_BG, which magick does
+# honour; `vips black` takes no colour.
+render_vips() {   # src dst ow oh
+  if [ "$_case" = empty ]; then
+    vips black "$2" "$3" "$4" >/dev/null
+    return 0
+  fi
+  _tmp=$(mktemp --suffix=.png)
+  vips extract_area "$1" "$_tmp" "$_sx" "$_sy" "$_sw" "$_sh" >/dev/null
+  if [ "$_case" = covered ]; then
+    vips thumbnail "$_tmp" "$2" "$3" --height "$4" --size force >/dev/null
+  else
+    _tmp2=$(mktemp --suffix=.png)
+    vips thumbnail "$_tmp" "$_tmp2" "$_dw" --height "$_dh" --size force \
+      >/dev/null
+    vips embed "$_tmp2" "$2" "$_dx" "$_dy" "$3" "$4" --extend background \
+      >/dev/null
+    rm -f "$_tmp2"
+  fi
+  rm -f "$_tmp"
+}
+
+make_slice() {
+  slice_rects "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}"
   case "$img_tool" in
-    magick|convert)
-      case $_case in
-        empty)
-          "$img_tool" -size "${_ow}x${_oh}" "xc:$bg" "$_d" ;;
-        covered)
-          "$img_tool" "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
-            -resize "${_ow}x${_oh}!" "$_d" ;;
-        padded)
-          # The crop is resized to the OVERLAP size, then composited at its
-          # offset on a background canvas the size of the output -- which is
-          # what containment means, and what clamping never did.
-          "$img_tool" -size "${_ow}x${_oh}" "xc:$bg" \
-            \( "$_s" -crop "${_sw}x${_sh}+${_sx}+${_sy}" +repage \
-               -resize "${_dw}x${_dh}!" \) \
-            -geometry "+${_dx}+${_dy}" -composite "$_d" ;;
-      esac
-      ;;
-    vips)
-      # stderr is NOT suppressed here any more. It was, and combined with the
-      # old lack of `set -e` a vips failure produced a missing slice and a
-      # zero exit -- the silent-success path the fail-loud rule forbids. Now a
-      # failure aborts, carrying vips's own message. (UNVERIFIED: no vips on
-      # either box, so this path is reasoned, not run. The background is black
-      # here regardless of WALLPAPER_SLICER_BG, which magick does honour.)
-      case $_case in
-        empty)
-          vips black "$_d" "$_ow" "$_oh" >/dev/null ;;
-        *)
-          _tmp=$(mktemp --suffix=.png)
-          vips extract_area "$_s" "$_tmp" "$_sx" "$_sy" "$_sw" "$_sh" \
-            >/dev/null
-          if [ "$_case" = covered ]; then
-            vips thumbnail "$_tmp" "$_d" "$_ow" --height "$_oh" \
-              --size force >/dev/null
-          else
-            _tmp2=$(mktemp --suffix=.png)
-            vips thumbnail "$_tmp" "$_tmp2" "$_dw" --height "$_dh" \
-              --size force >/dev/null
-            vips embed "$_tmp2" "$_d" "$_dx" "$_dy" "$_ow" "$_oh" \
-              --extend background >/dev/null
-            rm -f "$_tmp2"
-          fi
-          rm -f "$_tmp" ;;
-      esac
-      ;;
+    magick|convert) render_magick "$1" "$2" "$9" "${10}" ;;
+    vips)           render_vips   "$1" "$2" "$9" "${10}" ;;
   esac
 }
 
@@ -299,7 +317,8 @@ src_stat=$(stat -c '%Y:%s' "$src") \
   || { log "cannot stat source: '$src'"; exit 1; }
 # $bg is in here because `fit` PAINTS it: change the padding colour and
 # the slices must be recut, or the cache serves the old one forever.
-fp_input="$src|$src_stat|$mode|$bg|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
+fp_input="$src|$src_stat|$mode|$bg|$img_tool"
+fp_input="$fp_input|$cover_w|$cover_h|$cover_x|$cover_y|$geom"
 fp=$(printf '%s' "$fp_input" | cksum | awk '{print $1}')
 fp_file="$outdir/fingerprint"
 

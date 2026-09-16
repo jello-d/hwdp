@@ -45,3 +45,9 @@ harness_init() {   # <name>
 pass() { printf 'ok   %s%s\n' "$TEST_NAME" "${1:+ ($1)}"; }
 fail() { printf 'FAIL %s: %s\n' "$TEST_NAME" "$1" >&2; exit 1; }
 skip() { printf 'skip %s (%s)\n' "$TEST_NAME" "$1"; exit 0; }
+# note: this run covered LESS than the test can, and says which part. Unlike
+# skip() it does not end the test -- it is for partial coverage (a backend not
+# installed, a tier unavailable here) where the rest still ran and still
+# counts. Silence there is the problem: a pass reads as "covered everything"
+# when it was not, which is how an entire unrun code path stays invisible.
+note() { printf 'note %s: %s\n' "$TEST_NAME" "$1"; }
