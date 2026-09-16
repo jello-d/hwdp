@@ -98,8 +98,16 @@ EOF
 chmod +x "$T/bin/hwdp"
 
 # --- filters map to gamescope flags, and an unknown one is REFUSED ----------
+# This block asserts the MAPPING; the block at the end of the file asserts the
+# real gamescope accepts the result. Both are needed, and this one alone is
+# what let `-n` live: it asserted our own belief about the flag, the stub
+# echoed it back, and nothing ever asked gamescope. There is no -n -- `Super+N`
+# is a runtime toggle, not an option -- so --filter=nearest was always dead.
 _o=$(run --filter=nearest /usr/bin/true)
-case $_o in *" -n "*) ;; *) fail "--filter=nearest should pass -n: $_o" ;; esac
+case $_o in
+  *"-F nearest"*) ;;
+  *) fail "--filter=nearest should pass '-F nearest': $_o" ;;
+esac
 _o=$(run --filter=fsr /usr/bin/true)
 case $_o in
   *"-F fsr"*) ;;
@@ -287,4 +295,63 @@ case $_o in
 esac
 _o=$(run --bogus-flag /usr/bin/true) && fail "an unknown flag was accepted"
 
-pass "argv assembly, fullscreen box, filters, toolkit hints"
+# --- the argv must be one REAL gamescope accepts -----------------------------
+# Everything above checks the argv against our own expectations, which is
+# exactly how `-n` survived: run-scaled emitted it for --filter=nearest, the
+# stub echoed it back, every assertion passed, and gamescope had never had an
+# opinion. gamescope has no -n at all -- `Super + N` is a runtime toggle, not a
+# command-line option -- so --filter=nearest was dead on arrival.
+#
+# It failed invisibly, too. run-scaled EXECs, so the rejection surfaced after
+# the launcher was gone: "the app just did not start", with the reason on a
+# stderr nobody was reading.
+#
+# THIS CAN BE CHECKED WITHOUT A GPU, which is the part worth knowing. gamescope
+# parses its arguments BEFORE it creates a backend, so on a box (or VM) with
+# only software Vulkan it still reaches "Failed to create backend" -- and
+# reaching that failure is proof the arguments were ACCEPTED. An argument error
+# stops earlier and says so. That turns "run-scaled has never been near a real
+# gamescope" into a contract test that runs anywhere.
+_gs=$(command -v gamescope 2>/dev/null || true)
+for _d in /usr/games /usr/local/bin; do
+  [ -n "$_gs" ] && break
+  [ -x "$_d/gamescope" ] && _gs=$_d/gamescope
+done
+if [ -z "$_gs" ]; then
+  note "gamescope absent: the argv is unvalidated against the real binary"
+else
+  # Software Vulkan on purpose: this must not depend on the box having a GPU,
+  # and the backend is expected to fail either way.
+  _lvp=/usr/share/vulkan/icd.d/lvp_icd.json
+  _icd=; [ -r "$_lvp" ] && _icd=$_lvp
+
+  # <label> <run-scaled args...>: assemble the argv, strip the child command,
+  # and feed the gamescope options to the real binary.
+  _accepts() {
+    _lbl=$1; shift
+    _argv=$(PATH="$T/bin:$PATH" "$RS" "$@" xterm 2>/dev/null) \
+      || fail "$_lbl: run-scaled itself failed"
+    _argv=${_argv#ARGV: }
+    _opts=${_argv%% -- *}          # drop `-- env ... xterm`
+    # shellcheck disable=SC2086  # the options must word-split into argv
+    _out=$(env ${_icd:+VK_ICD_FILENAMES=$_icd} "$_gs" --backend headless \
+      $_opts -- true 2>&1 | grep -viE 'scriptmgr|Loading|Running|version' \
+      | tail -3)
+    case $_out in
+      *"Failed to create backend"*|*"physical_device_drm"*) ;;   # args were OK
+      *"unrecognized option"*|*"invalid option"*|*"invalid value"*)
+        fail "$_lbl: gamescope REJECTED the argv ($_opts): $_out" ;;
+      *) ;;   # some other stop (a GPU box may get further); not an arg error
+    esac
+  }
+
+  _accepts "default"      --native=640x480 --scale=2
+  _accepts "nearest"      --native=640x480 --scale=2 --filter=nearest
+  _accepts "integer"      --native=640x480 --scale=2 --filter=integer
+  _accepts "fsr"          --native=640x480 --scale=2 --filter=fsr
+  _accepts "nis"          --native=640x480 --scale=2 --filter=nis
+  _accepts "wayland-app"  --native=800x600 --scale=2 --wayland-app
+  _accepts "sized"        --size=1280x800 --scale=2
+fi
+
+pass "argv, box, filters, hints; real gamescope accepts every form"
