@@ -44,6 +44,10 @@ UI_CURSOR_LODPI=${UI_CURSOR_LODPI:-32}   # shrink on a small panel
 UI_MAGNIFY_HIDPI=${UI_MAGNIFY_HIDPI:-3}  # 640x480 -> 1920x1440, fits 1800 tall
 UI_MAGNIFY_LODPI=${UI_MAGNIFY_LODPI:-2}  # 640x480 -> 1280x960, fits 1080 tall
 LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
+# The midpoint between the two calibrations (lodpi ~92ppi, hidpi ~244ppi), used
+# only when HWDP_TARGET_PPI is set: it decides which calibrated set the target
+# is nearer to.
+LODPI_MAX_PPI=${LODPI_MAX_PPI:-168}
 
 # With NO display at all, say so and emit nothing. Every consumer reads these
 # keys with its own default behind them, so silence leaves them correct -- where
@@ -56,51 +60,73 @@ if [ -z "$_sh" ]; then
   exit 3
 fi
 
-# MIXED DPI IS NOT SUPPORTED, and this is where that gets said out loud.
+# WHICH DENSITY to size for. Two models, and this must agree with `hwdp
+# layout`, which keys off the SAME variable -- they were inconsistent once and
+# that is what produced 244ppi fonts on a 92ppi panel.
+#
+# HWDP_TARGET_PPI SET: layout has scaled every output so its LOGICAL density
+# lands near the target, so the target IS the density to size for and no panel
+# needs inspecting. This is the arrangement that makes MIXED densities work:
+# one set of numbers is correct everywhere because every output now has the
+# same logical density.
+#
+# The buckets are calibrated samples rather than a formula: lodpi is tuned for
+# ~92ppi (a 1920 panel at 530mm) and hidpi for ~244ppi (manifold, 2880 at
+# 300mm). So pick whichever calibration the target is nearer.
+_mixed_warn=1
+if [ -n "${HWDP_TARGET_PPI:-}" ]; then
+  _mixed_warn=0
+  if [ "${HWDP_TARGET_PPI:-0}" -lt "${LODPI_MAX_PPI:-168}" ] 2>/dev/null; then
+    _rw=0                 # below the midpoint: the lodpi calibration
+  else
+    _rw=$LODPI_MAX_W      # at or above: the hidpi calibration
+  fi
+fi
+
+# NO TARGET: every output is at scale 1, so physical density differences are
+# real and unhandled. Say so.
 #
 # Every key below is ONE number for the whole session, because every consumer
-# has one global config: kitty has one font_size, pixdecor one title_font
+# has one global config: kitty one font_size, pixdecor one title_font
 # (compositor-wide), mako one font. So on panels of different physical density
 # there is no right answer to emit -- not a gap in the code, a property of the
-# consumers. Equalising density with per-output scale was built and measured
-# (a 92ppi panel beside a 165ppi one), then dropped: it renders a 27" 4K as a
-# 2194x1234 desktop to match a 1080p monitor, which is an average imposed on
-# both rather than support for either.
+# consumers. Set HWDP_TARGET_PPI to actually fix it; short of that, warn, name
+# the panels, and pick DELIBERATELY.
 #
-# So: warn, name the panels, and pick DELIBERATELY. Sizing for the DENSEST
-# panel is the safer of two wrong answers -- its numbers come out oversized on
-# a coarser panel, which is clumsy but readable, where sizing for the coarsest
-# comes out microscopic on a dense one. Previously this was `head -1`, i.e.
-# whatever the probe listed first, which is the same compromise chosen by
-# accident and silently.
+# Sizing for the DENSEST is the safer of two wrong answers: its numbers come
+# out oversized on a coarser panel, which is clumsy but readable, where sizing
+# for the coarsest is microscopic on a dense one. This used to be `head -1` --
+# the same compromise, chosen by accident and in silence.
 #
 # Needs a session: the panels probe (DRM sysfs) carries no millimetre size, so
 # headless there is nothing to compare and nothing to warn about.
-_dens=$(outputs 2>/dev/null | awk -F"$TAB" '
-  $3 + 0 > 0 && $5 + 0 > 0 { printf "%d\t%d\t%s\n", $3 / ($5 / 25.4), $3, $1 }
-' | sort -rn)
-_rw=
-if [ "$(printf '%s\n' "$_dens" | grep -c .)" -gt 1 ]; then
-  _hi=$(printf '%s\n' "$_dens" | head -1 | cut -f1)
-  _lo=$(printf '%s\n' "$_dens" | tail -1 | cut -f1)
-  # 25% apart is the line: identical panels vary a little through EDID
-  # rounding, genuinely different ones are far further apart than this.
-  if awk -v h="$_hi" -v l="$_lo" 'BEGIN { exit !(l > 0 && h / l > 1.25) }'; then
-    echo "hwdp ui: MIXED DPI is not supported -- these panels differ in" \
-      "physical density:" >&2
-    printf '%s\n' "$_dens" | while IFS="$(printf '\t')" read -r _p _w _n; do
-      echo "hwdp ui:   ${_n:-?} ${_w}px wide, ${_p} ppi" >&2
-    done
-    echo "hwdp ui: sizing for the densest; it will be oversized on the rest." \
-      >&2
+if [ "$_mixed_warn" = 1 ]; then
+  _dens=$(outputs 2>/dev/null | awk -F"$TAB" '
+    $3 + 0 > 0 && $5 + 0 > 0 { printf "%d\t%d\t%s\n", $3 / ($5 / 25.4), $3, $1 }
+  ' | sort -rn)
+  if [ "$(printf '%s\n' "$_dens" | grep -c .)" -gt 1 ]; then
+    _hi=$(printf '%s\n' "$_dens" | head -1 | cut -f1)
+    _lo=$(printf '%s\n' "$_dens" | tail -1 | cut -f1)
+    # 25% apart is the line: two of the same model vary a little through EDID
+    # rounding, and a warning that cries wolf gets ignored when it matters.
+    _far='BEGIN { exit !(l > 0 && h / l > 1.25) }'
+    if awk -v h="$_hi" -v l="$_lo" "$_far"; then
+      echo "hwdp ui: MIXED DPI -- these panels differ in physical density:" >&2
+      printf '%s\n' "$_dens" | while IFS="$(printf '\t')" read -r _p _w _n; do
+        echo "hwdp ui:   ${_n:-?} ${_w}px wide, ${_p} ppi" >&2
+      done
+      echo "hwdp ui: sizing for the densest; it will be oversized on the" \
+        "rest. Set HWDP_TARGET_PPI to scale them to one logical density" \
+        "instead." >&2
+    fi
+    _rw=$(printf '%s\n' "$_dens" | head -1 | cut -f2)
   fi
-  _rw=$(printf '%s\n' "$_dens" | head -1 | cut -f2)
 fi
 
 # An unknown width (a connector the kernel listed no modes for) falls to hidpi,
 # which mirrors the static configs and is the harmless answer when we cannot
 # tell.
-[ -n "$_rw" ] || _rw=$(panel_width)
+[ -n "${_rw:-}" ] || _rw=$(panel_width)
 if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
   _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
   _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI

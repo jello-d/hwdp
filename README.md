@@ -26,18 +26,24 @@ hwdp watch      supervise the layout; fire display-change hooks
 a greeter) because they ask the kernel about panels when no compositor is
 there to ask. The rest need a session and say so when they do not have one.
 
-**Mixed DPI is not supported.** One panel, or several of the *same* physical
-density. `hwdp ui` emits one value per key because each consumer has one global
-config: kitty has a single `font_size`, pixdecor a single compositor-wide
-`title_font`, mako a single font. On panels of different density there is no
-value that is right for both, and that is a property of those consumers rather
-than a gap here. Scaling outputs to a common *logical* density was built and
-measured, then dropped: it renders a 27" 4K as a 2194x1234 desktop to match a
-1080p monitor, imposing an average on both rather than supporting either. When
-`hwdp ui` sees panels more than 25% apart in density it says so on stderr,
-names them, and sizes for the **densest** one -- oversized on a coarse panel is
-clumsy but readable, where the reverse is microscopic. It still emits a full
-set of keys and exits 0, so nothing downstream breaks.
+**Mixed DPI needs `HWDP_TARGET_PPI`.** `hwdp ui` emits one value per key
+because each consumer has one global config: kitty a single `font_size`,
+pixdecor a single compositor-wide `title_font`, mako a single font. On panels
+of different physical density there is nowhere to put a per-output value, so
+the only fix is to remove the difference: set `HWDP_TARGET_PPI=<n>` and
+`hwdp layout` scales each output (from its EDID millimetre size) so every one
+lands near that logical density. One set of numbers is then correct everywhere,
+and `hwdp ui` sizes for the target rather than for any one panel.
+
+It costs logical desktop area, not sharpness: with
+`wp_fractional_scale_manager_v1` a 4K at 1.75 still draws text at 1.75x device
+pixels. What shrinks is the logical desktop, 3840x2160 down to 2194x1234.
+
+Left unset, every output stays at scale 1 and density is absorbed by the UI
+numbers instead -- exact for one panel or a wall of identical ones. If it then
+sees panels more than 25% apart, `hwdp ui` names them with their ppi on stderr,
+sizes for the **densest** (oversized on a coarse panel is clumsy but readable;
+the reverse is microscopic), still emits a full set of keys and still exits 0.
 
 `layout`, `capture` and `watch` are the kanshi adapter and make no apology for
 naming it; everything below them is compositor-agnostic.

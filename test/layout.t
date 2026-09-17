@@ -280,16 +280,28 @@ grep -q 'scale 1.00' "$_o" || fail "the default scale model is not 1.00"
 grep -qE 'scale [02-9]' "$_o" \
   && fail "the default model emitted a non-1 scale" || :
 
-# There is deliberately NO knob to scale outputs to a common logical density.
-# It was built and measured (a 92ppi panel beside a 165ppi one needs the dense
-# one at 1.75) and then removed: equalising density renders a 27" 4K as a
-# 2194x1234 desktop to match a 1080p monitor, which imposes an average on both
-# rather than supporting either. Mixed DPI is unsupported and SAID so by
-# `hwdp ui`, not papered over here.
+# HWDP_TARGET_PPI scales each output so its LOGICAL density lands near the
+# target. That is what makes MIXED densities work, and it is the only thing
+# that can: every consumer of `hwdp ui` has one global config, so there is
+# nowhere to put a per-output value -- equalising the logical density instead
+# makes one set correct on every panel.
+#
+# The stub panels are 3840x2160 over 590mm = 165 ppi. At a 96 ppi target that
+# is 165/96 = 1.72, snapped to quarter steps -> 1.75. Cross-checked against the
+# hardware this was derived on: a Dell AW2725Q measured 1.75, and an HP E243
+# (1920 over 530mm = 92 ppi) measured 1.00.
 rm -f "$T/sticky"
-_o=$(HWDP_TARGET_PPI=96 run layout) || fail "layout failed"
-grep -qE 'scale [02-9]' "$_o" \
-  && fail "a target-ppi knob is back; scaling is not how this is solved" || :
+_o=$(HWDP_TARGET_PPI=96 run layout) || fail "layout failed with a target ppi"
+grep -q 'scale 1.75' "$_o" \
+  || fail "a 165ppi panel at a 96ppi target should scale 1.75"
+
+# A target ABOVE the panel's density must not scale it below 1 to get there:
+# that is the never-downscale rule, and the compositor floors it anyway (a
+# wayfire-mods patch, which also guards a wlroots assert on scale 0).
+rm -f "$T/sticky"
+_o=$(HWDP_TARGET_PPI=300 run layout) || fail "layout failed at a high target"
+grep -q 'scale 1.00' "$_o" \
+  || fail "a target above the panel density must clamp to 1, not downscale"
 
 # --- a sub-1 scale is CLAMPED and ANNOUNCED ---------------------------------
 # Live on manifestor: a 0.65 left in the sticky file by the retired downscale
@@ -353,7 +365,7 @@ chmod +x "$T/bin/wlr-randr"
 _out=$(run ui 2>"$T/mixed.err"); _rc=$?
 [ "$_rc" -eq 0 ] \
   || fail "mixed DPI exited $_rc; it must not break the session"
-grep -qi 'mixed dpi is not supported' "$T/mixed.err" \
+grep -qi 'mixed dpi' "$T/mixed.err" \
   || fail "mixed DPI was not announced: $(cat "$T/mixed.err")"
 grep -q '165 ppi' "$T/mixed.err" \
   || fail "the warning does not name the dense panel's density"
@@ -361,6 +373,8 @@ grep -q '92 ppi' "$T/mixed.err" \
   || fail "the warning does not name the coarse panel's density"
 grep -q 'AW2725Q' "$T/mixed.err" \
   || fail "the warning does not name the panels"
+grep -q 'HWDP_TARGET_PPI' "$T/mixed.err" \
+  || fail "the warning does not point at the thing that fixes it"
 
 # A FULL set of keys, so no consumer is left without a value.
 for _k in KITTY_FONT TITLE_FONT MAKO_FONT LOCK_RADIUS CURSOR_SIZE MAGNIFY; do
@@ -372,6 +386,22 @@ done
 # empty KITTY_FONT (kitty.conf's own stands) and the hidpi cursor.
 printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
   || fail "mixed DPI did not size for the densest panel: $_out"
+
+# --- with a TARGET, the same pair is SUPPORTED, so no warning ----------------
+# layout has equalised their logical density, so there is nothing to warn about
+# and the numbers come from the TARGET rather than from any one panel. `ui` and
+# `layout` key off the same variable precisely so they cannot disagree -- they
+# did once, and that is what put 244ppi fonts on a 92ppi panel.
+_out=$(HWDP_TARGET_PPI=96 run ui 2>"$T/tgt.err") \
+  || fail "ui failed with a target"
+grep -qi 'mixed dpi' "$T/tgt.err" \
+  && fail "warned about mixed DPI when scaling had already handled it" || :
+printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=32' \
+  || fail "a 96ppi target should use the lodpi calibration: $_out"
+_out=$(HWDP_TARGET_PPI=240 run ui 2>/dev/null) \
+  || fail "ui failed at a high target"
+printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
+  || fail "a 240ppi target should use the hidpi calibration: $_out"
 
 # IDENTICAL panels must NOT warn -- EDID rounding makes two of the same model
 # differ slightly, and a warning that cries wolf gets ignored when it matters.
