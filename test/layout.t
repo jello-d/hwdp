@@ -280,26 +280,16 @@ grep -q 'scale 1.00' "$_o" || fail "the default scale model is not 1.00"
 grep -qE 'scale [02-9]' "$_o" \
   && fail "the default model emitted a non-1 scale" || :
 
-# HWDP_TARGET_PPI opts into per-output scaling, the ONLY arrangement that works
-# for MIXED densities: with everything at scale 1 a single global font size
-# (kitty has one font_size, pixdecor one title_font) cannot be right on two
-# panels of different physical density.
-#
-# The stub panels are 3840x2160 over 590mm = 165 ppi. At a 96 ppi target that
-# is 165/96 = 1.72, snapped to quarter steps -> 1.75. Cross-checked against the
-# real hardware this was derived on: a Dell AW2725Q measured 1.75, and an HP
-# E243 (1920 over 530mm = 92 ppi) measured 1.00.
+# There is deliberately NO knob to scale outputs to a common logical density.
+# It was built and measured (a 92ppi panel beside a 165ppi one needs the dense
+# one at 1.75) and then removed: equalising density renders a 27" 4K as a
+# 2194x1234 desktop to match a 1080p monitor, which imposes an average on both
+# rather than supporting either. Mixed DPI is unsupported and SAID so by
+# `hwdp ui`, not papered over here.
 rm -f "$T/sticky"
-_o=$(HWDP_TARGET_PPI=96 run layout) || fail "layout failed with a target ppi"
-grep -q 'scale 1.75' "$_o" \
-  || fail "a 165ppi panel at a 96ppi target should scale 1.75"
-
-# A target ABOVE the panel's density must not scale it below 1 to get there:
-# that is the never-downscale rule, and the compositor floors it anyway.
-rm -f "$T/sticky"
-_o=$(HWDP_TARGET_PPI=300 run layout) || fail "layout failed at a high target"
-grep -q 'scale 1.00' "$_o" \
-  || fail "a target above the panel density must clamp to 1, not downscale"
+_o=$(HWDP_TARGET_PPI=96 run layout) || fail "layout failed"
+grep -qE 'scale [02-9]' "$_o" \
+  && fail "a target-ppi knob is back; scaling is not how this is solved" || :
 
 # --- a sub-1 scale is CLAMPED and ANNOUNCED ---------------------------------
 # Live on manifestor: a 0.65 left in the sticky file by the retired downscale
@@ -316,5 +306,105 @@ grep -q 'scale 0.65' "$_o" && fail "a sub-1 scale reached kanshi's config" || :
 grep -q 'scale 1.00' "$_o" || fail "the clamp did not fall back to 1.00"
 grep -q 'cannot' "$T/scale.err" \
   || fail "the clamp was silent; it must say the scale cannot render"
+
+# --- MIXED DPI: loud, but the setup still WORKS -----------------------------
+# The rule agreed with the user: fail loud, and do not break the session. So a
+# mixed pair must (a) say clearly that it is unsupported, (b) still emit a full
+# set of keys so no consumer is left guessing, (c) exit 0, and (d) size for the
+# DENSEST panel -- oversized on a coarse panel is clumsy but readable, whereas
+# sizing for the coarse one is microscopic on a dense one.
+#
+# The stub mirrors the real pair this was found on, because that is what makes
+# the assertion discriminate: the density bucket keys on WIDTH, so two panels
+# of the SAME width land in the same bucket no matter which one is picked, and
+# a test built that way cannot tell "densest" from "coarsest" at all (mine
+# could not, until this stub changed).
+#   HP E243      1920 over 530mm =  92 ppi  -> lodpi bucket
+#   Dell AW2725Q 3840 over 590mm = 165 ppi  -> hidpi bucket
+cat > "$T/bin/wlr-randr" <<'EOF'
+#!/bin/sh
+cat <<'BLK'
+DP-1 "HP Inc. HP E243 CNK010312W (DP-1)"
+  Make: HP Inc.
+  Model: HP E243
+  Serial: CNK010312W
+  Physical size: 530x300 mm
+  Enabled: yes
+  Modes:
+    1920x1080 px, 60.000000 Hz (current)
+  Position: 0,0
+  Transform: normal
+  Scale: 1.000000
+DP-2 "Dell Inc. AW2725Q HDX05B4 (DP-2)"
+  Make: Dell Inc.
+  Model: AW2725Q
+  Serial: HDX05B4
+  Physical size: 590x330 mm
+  Enabled: yes
+  Modes:
+    3840x2160 px, 60.000000 Hz (current)
+  Position: 1920,0
+  Transform: normal
+  Scale: 1.000000
+BLK
+EOF
+chmod +x "$T/bin/wlr-randr"
+
+_out=$(run ui 2>"$T/mixed.err"); _rc=$?
+[ "$_rc" -eq 0 ] \
+  || fail "mixed DPI exited $_rc; it must not break the session"
+grep -qi 'mixed dpi is not supported' "$T/mixed.err" \
+  || fail "mixed DPI was not announced: $(cat "$T/mixed.err")"
+grep -q '165 ppi' "$T/mixed.err" \
+  || fail "the warning does not name the dense panel's density"
+grep -q '92 ppi' "$T/mixed.err" \
+  || fail "the warning does not name the coarse panel's density"
+grep -q 'AW2725Q' "$T/mixed.err" \
+  || fail "the warning does not name the panels"
+
+# A FULL set of keys, so no consumer is left without a value.
+for _k in KITTY_FONT TITLE_FONT MAKO_FONT LOCK_RADIUS CURSOR_SIZE MAGNIFY; do
+  printf '%s\n' "$_out" | grep -q "^$_k=" \
+    || fail "mixed DPI dropped the $_k key"
+done
+
+# Sized for the DENSEST panel: 3840 wide is well over LODPI_MAX_W, so hidpi --
+# empty KITTY_FONT (kitty.conf's own stands) and the hidpi cursor.
+printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
+  || fail "mixed DPI did not size for the densest panel: $_out"
+
+# IDENTICAL panels must NOT warn -- EDID rounding makes two of the same model
+# differ slightly, and a warning that cries wolf gets ignored when it matters.
+cat > "$T/bin/wlr-randr" <<'EOF'
+#!/bin/sh
+cat <<'BLK'
+DP-1 "Dell Inc. SAME AAA111 (DP-1)"
+  Make: Dell Inc.
+  Model: SAME
+  Serial: AAA111
+  Physical size: 590x330 mm
+  Enabled: yes
+  Modes:
+    3840x2160 px, 60.000000 Hz (current)
+  Position: 0,0
+  Transform: normal
+  Scale: 1.000000
+DP-2 "Dell Inc. SAME BBB222 (DP-2)"
+  Make: Dell Inc.
+  Model: SAME
+  Serial: BBB222
+  Physical size: 597x334 mm
+  Enabled: yes
+  Modes:
+    3840x2160 px, 60.000000 Hz (current)
+  Position: 3840,0
+  Transform: normal
+  Scale: 1.000000
+BLK
+EOF
+chmod +x "$T/bin/wlr-randr"
+run ui 2>"$T/same.err" >/dev/null || fail "matched panels failed"
+grep -qi 'mixed dpi' "$T/same.err" \
+  && fail "two panels of the same density warned: $(cat "$T/same.err")" || :
 
 pass

@@ -56,10 +56,51 @@ if [ -z "$_sh" ]; then
   exit 3
 fi
 
+# MIXED DPI IS NOT SUPPORTED, and this is where that gets said out loud.
+#
+# Every key below is ONE number for the whole session, because every consumer
+# has one global config: kitty has one font_size, pixdecor one title_font
+# (compositor-wide), mako one font. So on panels of different physical density
+# there is no right answer to emit -- not a gap in the code, a property of the
+# consumers. Equalising density with per-output scale was built and measured
+# (a 92ppi panel beside a 165ppi one), then dropped: it renders a 27" 4K as a
+# 2194x1234 desktop to match a 1080p monitor, which is an average imposed on
+# both rather than support for either.
+#
+# So: warn, name the panels, and pick DELIBERATELY. Sizing for the DENSEST
+# panel is the safer of two wrong answers -- its numbers come out oversized on
+# a coarser panel, which is clumsy but readable, where sizing for the coarsest
+# comes out microscopic on a dense one. Previously this was `head -1`, i.e.
+# whatever the probe listed first, which is the same compromise chosen by
+# accident and silently.
+#
+# Needs a session: the panels probe (DRM sysfs) carries no millimetre size, so
+# headless there is nothing to compare and nothing to warn about.
+_dens=$(outputs 2>/dev/null | awk -F"$TAB" '
+  $3 + 0 > 0 && $5 + 0 > 0 { printf "%d\t%d\t%s\n", $3 / ($5 / 25.4), $3, $1 }
+' | sort -rn)
+_rw=
+if [ "$(printf '%s\n' "$_dens" | grep -c .)" -gt 1 ]; then
+  _hi=$(printf '%s\n' "$_dens" | head -1 | cut -f1)
+  _lo=$(printf '%s\n' "$_dens" | tail -1 | cut -f1)
+  # 25% apart is the line: identical panels vary a little through EDID
+  # rounding, genuinely different ones are far further apart than this.
+  if awk -v h="$_hi" -v l="$_lo" 'BEGIN { exit !(l > 0 && h / l > 1.25) }'; then
+    echo "hwdp ui: MIXED DPI is not supported -- these panels differ in" \
+      "physical density:" >&2
+    printf '%s\n' "$_dens" | while IFS="$(printf '\t')" read -r _p _w _n; do
+      echo "hwdp ui:   ${_n:-?} ${_w}px wide, ${_p} ppi" >&2
+    done
+    echo "hwdp ui: sizing for the densest; it will be oversized on the rest." \
+      >&2
+  fi
+  _rw=$(printf '%s\n' "$_dens" | head -1 | cut -f2)
+fi
+
 # An unknown width (a connector the kernel listed no modes for) falls to hidpi,
 # which mirrors the static configs and is the harmless answer when we cannot
 # tell.
-_rw=$(panel_width)
+[ -n "$_rw" ] || _rw=$(panel_width)
 if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
   _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
   _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI

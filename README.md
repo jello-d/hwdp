@@ -26,6 +26,19 @@ hwdp watch      supervise the layout; fire display-change hooks
 a greeter) because they ask the kernel about panels when no compositor is
 there to ask. The rest need a session and say so when they do not have one.
 
+**Mixed DPI is not supported.** One panel, or several of the *same* physical
+density. `hwdp ui` emits one value per key because each consumer has one global
+config: kitty has a single `font_size`, pixdecor a single compositor-wide
+`title_font`, mako a single font. On panels of different density there is no
+value that is right for both, and that is a property of those consumers rather
+than a gap here. Scaling outputs to a common *logical* density was built and
+measured, then dropped: it renders a 27" 4K as a 2194x1234 desktop to match a
+1080p monitor, imposing an average on both rather than supporting either. When
+`hwdp ui` sees panels more than 25% apart in density it says so on stderr,
+names them, and sizes for the **densest** one -- oversized on a coarse panel is
+clumsy but readable, where the reverse is microscopic. It still emits a full
+set of keys and exits 0, so nothing downstream breaks.
+
 `layout`, `capture` and `watch` are the kanshi adapter and make no apology for
 naming it; everything below them is compositor-agnostic.
 

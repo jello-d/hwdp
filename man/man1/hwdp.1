@@ -66,6 +66,23 @@ so an integrator wires the reactions; it knows nothing of any specific
 compositor tool. Hook roots:
 .BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
 (default /etc/hwdp/hooks).
+.SH MIXED DPI
+NOT SUPPORTED: one panel, or several of the SAME physical density.
+.B hwdp ui
+emits one value per key because each consumer has one global config \(em kitty
+a single font_size, pixdecor a single compositor-wide title_font, mako a single
+font \(em so on panels of different density there is no value correct for both.
+That is a property of those consumers, not a gap here. Scaling outputs to a
+common LOGICAL density was built, measured and dropped: it renders a 27" 4K as
+a 2194x1234 desktop to match a 1080p monitor, an average imposed on both rather
+than support for either.
+.PP
+When it sees panels more than 25% apart in density,
+.B hwdp ui
+says so on stderr, names them with their ppi, and sizes for the DENSEST
+\(em oversized on a coarse panel is clumsy but readable, the reverse is
+microscopic. A full set of keys is still emitted and the exit status is still
+0, so no consumer is left guessing and nothing downstream breaks.
 .SH CLIENTS
 Two further commands ship alongside
 .BR hwdp ,

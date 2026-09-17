@@ -24,50 +24,27 @@
 # a note, rather than written into a config that would lie about the session.
 # (Older model: scale = min(1, sqrt(area/design_area)) -- retired, it blurred.)
 #
-# Above 1 is a different operation entirely and is the standard crisp HiDPI
-# path, so it is allowed -- but only when asked for. Two modes:
+# Above 1 is NOT used either, and that is a deliberate product decision rather
+# than a limitation. Scaling outputs to a common LOGICAL density is the only
+# way one global font size can fit panels of different physical density, and it
+# was built and measured here (a 92ppi HP beside a 165ppi Dell needs the Dell
+# at 1.75) -- then removed, because what it actually does is impose an average
+# on every panel: it renders a 27" 4K as a 2194x1234 desktop to match a 1080p
+# monitor, discarding the density that panel was bought for.
 #
-#   HWDP_TARGET_PPI unset (DEFAULT)  every output stays at 1.00, and physical
-#     density is absorbed by the UI NUMBERS instead (see `hwdp ui`: a denser
-#     panel gets bigger fonts). This is exact for ONE panel or a wall of
-#     IDENTICAL panels, and it is what every existing box does.
-#
-#   HWDP_TARGET_PPI=<n>              each output is scaled so its LOGICAL
-#     density lands near <n>, making one set of UI numbers correct on all of
-#     them. This is the only arrangement that works for MIXED densities: with
-#     every output at scale 1, a single global font size (kitty has one
-#     font_size, pixdecor one title_font) cannot be right on two panels of
-#     different physical density. Measured on manifestor: a 92ppi HP beside a
-#     165ppi Dell needs the Dell at 1.75 (-> 94 logical ppi) before one font
-#     set fits both.
-#
-# It is OPT-IN because the two models want different UI numbers: the numbers
-# are calibrated against whatever logical density the box runs at, so flipping
-# the scale model without recalibrating them changes every font on the machine.
+# So MIXED DPI IS NOT SUPPORTED. One panel, or several of the SAME density.
+# `hwdp ui` says so out loud when it sees otherwise rather than quietly sizing
+# for one of them. The honest reason it cannot be supported properly: every
+# consumer of `hwdp ui` has ONE global config -- kitty one font_size, pixdecor
+# one title_font (compositor-wide), mako one font -- so there is no per-output
+# value to hand them even if we computed one.
 set -eu
 . "$HWDP_LIBEXEC/displayset.sh"
 
-# scale_for <res_w> <res_h> <mm_w> <mm_h>: the computed scale for one output.
-#
-# Physical density comes from the EDID's millimetre size, which is the only
-# thing that distinguishes a 27" 4K panel from a 13" one at the same
-# resolution -- resolution alone cannot answer this.
-#
-# Snapped to quarter steps because a compositor renders 1.25/1.5/1.75/2 well
-# and an arbitrary 1.7213 buys nothing; capped at 3 so a bogus EDID (some
-# panels report 0mm, some lie) cannot produce an absurd logical size. A
-# missing or zero size falls back to 1.00 rather than guessing.
-scale_for() {   # -> a scale >= 1.00, two decimals
-  [ -n "${HWDP_TARGET_PPI:-}" ] || { printf '1.00'; return 0; }
-  awk -v rw="${1:-0}" -v mmw="${3:-0}" -v target="$HWDP_TARGET_PPI" 'BEGIN {
-    if (rw <= 0 || mmw <= 0 || target <= 0) { printf "1.00"; exit }
-    ppi = rw / (mmw / 25.4)
-    s   = ppi / target
-    s   = int(s * 4 + 0.5) / 4          # quarter steps
-    if (s < 1) s = 1                    # never downscale
-    if (s > 3) s = 3                    # a lying EDID cannot run away with it
-    printf "%.2f", s
-  }'
+# scale_for: native, always. Args kept for the sticky signature and for a
+# hand-edited >= 1 override, which resolve() still honours.
+scale_for() {
+  printf '1.00'
 }
 
 # resolve <edid> <signature> <computed>: the sticky scale for this output. Keep
@@ -142,8 +119,7 @@ TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp_id).conf}
 _map=$(mktemp)
 trap 'rm -f "$_map"' EXIT INT TERM
 outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
-  _sc=$(resolve "$edid" "${rw}x${rh}@${mmw}x${mmh}" \
-    "$(scale_for "$rw" "$rh" "$mmw" "$mmh")")
+  _sc=$(resolve "$edid" "${rw}x${rh}@${mmw}x${mmh}" "$(scale_for "$rw" "$rh")")
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$edid" "$_sc" "$name" "$rw" "$rh" "$rate" "$tr" >>"$_map"
 done
