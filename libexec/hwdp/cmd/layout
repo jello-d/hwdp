@@ -16,20 +16,58 @@
 # signature changes (a panel swap). A hand edit sticks until then -- detection
 # is smart but never clobbers an override.
 #
-# SCALE MODEL: native, always 1.0. We never downscale -- a scale < 1 enlarges
-# the logical space past the panel and the compositor downsamples to soft,
-# bit-mashed text. Every output renders at scale 1 (crisp), and a fixed-pixel
-# UI's overflow on a small panel is absorbed by templating the bar per panel,
-# not by shrinking the whole output. The compositor hard-floors output scale at
-# 1 too, so a stale or hand-edited scale < 1 can never actually render. (Older
-# model: scale = min(1, sqrt(area/design_area)) -- retired, it caused the blur.)
+# SCALE MODEL. We NEVER downscale: a scale < 1 enlarges the logical space past
+# the panel and the compositor downsamples to soft, bit-mashed text. The
+# compositor hard-floors output scale at 1 anyway, so a scale < 1 can never
+# actually render -- measured, `wlr-randr --scale 0.65` exits 0 and does
+# nothing while 1.25 applies. Anything below 1 is therefore CLAMPED here, with
+# a note, rather than written into a config that would lie about the session.
+# (Older model: scale = min(1, sqrt(area/design_area)) -- retired, it blurred.)
+#
+# Above 1 is a different operation entirely and is the standard crisp HiDPI
+# path, so it is allowed -- but only when asked for. Two modes:
+#
+#   HWDP_TARGET_PPI unset (DEFAULT)  every output stays at 1.00, and physical
+#     density is absorbed by the UI NUMBERS instead (see `hwdp ui`: a denser
+#     panel gets bigger fonts). This is exact for ONE panel or a wall of
+#     IDENTICAL panels, and it is what every existing box does.
+#
+#   HWDP_TARGET_PPI=<n>              each output is scaled so its LOGICAL
+#     density lands near <n>, making one set of UI numbers correct on all of
+#     them. This is the only arrangement that works for MIXED densities: with
+#     every output at scale 1, a single global font size (kitty has one
+#     font_size, pixdecor one title_font) cannot be right on two panels of
+#     different physical density. Measured on manifestor: a 92ppi HP beside a
+#     165ppi Dell needs the Dell at 1.75 (-> 94 logical ppi) before one font
+#     set fits both.
+#
+# It is OPT-IN because the two models want different UI numbers: the numbers
+# are calibrated against whatever logical density the box runs at, so flipping
+# the scale model without recalibrating them changes every font on the machine.
 set -eu
 . "$HWDP_LIBEXEC/displayset.sh"
 
-# scale_for <res_w> <res_h>: the declared half of the never-downscale policy.
-# Args are unused now, kept for the sticky signature and a future >=1 override.
-scale_for() {
-  printf '1.00'   # native, always
+# scale_for <res_w> <res_h> <mm_w> <mm_h>: the computed scale for one output.
+#
+# Physical density comes from the EDID's millimetre size, which is the only
+# thing that distinguishes a 27" 4K panel from a 13" one at the same
+# resolution -- resolution alone cannot answer this.
+#
+# Snapped to quarter steps because a compositor renders 1.25/1.5/1.75/2 well
+# and an arbitrary 1.7213 buys nothing; capped at 3 so a bogus EDID (some
+# panels report 0mm, some lie) cannot produce an absurd logical size. A
+# missing or zero size falls back to 1.00 rather than guessing.
+scale_for() {   # -> a scale >= 1.00, two decimals
+  [ -n "${HWDP_TARGET_PPI:-}" ] || { printf '1.00'; return 0; }
+  awk -v rw="${1:-0}" -v mmw="${3:-0}" -v target="$HWDP_TARGET_PPI" 'BEGIN {
+    if (rw <= 0 || mmw <= 0 || target <= 0) { printf "1.00"; exit }
+    ppi = rw / (mmw / 25.4)
+    s   = ppi / target
+    s   = int(s * 4 + 0.5) / 4          # quarter steps
+    if (s < 1) s = 1                    # never downscale
+    if (s > 3) s = 3                    # a lying EDID cannot run away with it
+    printf "%.2f", s
+  }'
 }
 
 # resolve <edid> <signature> <computed>: the sticky scale for this output. Keep
@@ -43,6 +81,16 @@ resolve() {
     if [ -n "$_line" ] && [ "$_cur" = "$_sig" ]; then
       _scale=$(printf '%s' "$_line" | cut -f2)
     fi
+  fi
+  # CLAMP a sub-1 scale, wherever it came from -- a stale entry left by the
+  # retired downscale model, or a hand edit. It cannot render (the compositor
+  # floors at 1), so writing it into kanshi's config produces a file that
+  # claims a scale the session will never have. Say so once, per output:
+  # silently "honouring" an override that does nothing is the worse failure.
+  if awk -v s="$_scale" 'BEGIN { exit !(s + 0 < 1) }' 2>/dev/null; then
+    echo "hwdp layout: scale $_scale for '$_edid' is below 1 and cannot" \
+      "render (the compositor floors it); using 1.00" >&2
+    _scale=1.00
   fi
   # The temp goes BESIDE $STICKY, not in /tmp. A bare `mktemp` lands on
   # whatever /tmp is -- usually tmpfs -- and a `mv` from there to ~/.config
@@ -94,7 +142,8 @@ TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp_id).conf}
 _map=$(mktemp)
 trap 'rm -f "$_map"' EXIT INT TERM
 outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
-  _sc=$(resolve "$edid" "${rw}x${rh}@${mmw}x${mmh}" "$(scale_for "$rw" "$rh")")
+  _sc=$(resolve "$edid" "${rw}x${rh}@${mmw}x${mmh}" \
+    "$(scale_for "$rw" "$rh" "$mmw" "$mmh")")
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$edid" "$_sc" "$name" "$rw" "$rh" "$rate" "$tr" >>"$_map"
 done

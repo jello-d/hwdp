@@ -87,6 +87,7 @@ run() {
     KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
     KANSHI_OUT="$T/out" HWDP_DRM="$T/drm" \
     ${STUB3:+STUB3="$STUB3"} ${LODPI_MAX_W:+LODPI_MAX_W="$LODPI_MAX_W"} \
+    ${HWDP_TARGET_PPI:+HWDP_TARGET_PPI="$HWDP_TARGET_PPI"} \
     sh "$KA" "$@"
 }
 
@@ -268,5 +269,52 @@ uphas '^TITLE_FONT=Custom Face 12$' \
   || fail "uiprofile: HWDP override TITLE_FONT (spaces) not read literally"
 uphas '^MAKO_FONT=..*' || fail "uiprofile: override dropped the MAKO default"
 rm -f "$T/profiles/$hwdp.ui"
+
+# --- SCALE MODEL ------------------------------------------------------------
+# Default: 1.00 for every output, whatever its density. Physical differences
+# are absorbed by the UI NUMBERS instead (see `hwdp ui`), which is exact for one
+# panel or a wall of identical ones -- and is what every existing box does, so
+# it must not change unless asked for.
+_o=$(run layout) || fail "layout failed"
+grep -q 'scale 1.00' "$_o" || fail "the default scale model is not 1.00"
+grep -qE 'scale [02-9]' "$_o" \
+  && fail "the default model emitted a non-1 scale" || :
+
+# HWDP_TARGET_PPI opts into per-output scaling, the ONLY arrangement that works
+# for MIXED densities: with everything at scale 1 a single global font size
+# (kitty has one font_size, pixdecor one title_font) cannot be right on two
+# panels of different physical density.
+#
+# The stub panels are 3840x2160 over 590mm = 165 ppi. At a 96 ppi target that
+# is 165/96 = 1.72, snapped to quarter steps -> 1.75. Cross-checked against the
+# real hardware this was derived on: a Dell AW2725Q measured 1.75, and an HP
+# E243 (1920 over 530mm = 92 ppi) measured 1.00.
+rm -f "$T/sticky"
+_o=$(HWDP_TARGET_PPI=96 run layout) || fail "layout failed with a target ppi"
+grep -q 'scale 1.75' "$_o" \
+  || fail "a 165ppi panel at a 96ppi target should scale 1.75"
+
+# A target ABOVE the panel's density must not scale it below 1 to get there:
+# that is the never-downscale rule, and the compositor floors it anyway.
+rm -f "$T/sticky"
+_o=$(HWDP_TARGET_PPI=300 run layout) || fail "layout failed at a high target"
+grep -q 'scale 1.00' "$_o" \
+  || fail "a target above the panel density must clamp to 1, not downscale"
+
+# --- a sub-1 scale is CLAMPED and ANNOUNCED ---------------------------------
+# Live on manifestor: a 0.65 left in the sticky file by the retired downscale
+# model, faithfully re-emitted into kanshi's config on every run. Measured:
+# `wlr-randr --scale 0.65` exits 0 and does NOTHING, while 1.25 applies. So the
+# config claimed a scale the session never had. Honouring an override that
+# cannot take effect is worse than refusing it.
+rm -f "$T/sticky"
+run layout >/dev/null
+awk -F"\t" -v OFS="\t" 'NR==1{$2="0.65"}{print}' "$T/sticky" > "$T/sticky.n"
+mv "$T/sticky.n" "$T/sticky"
+_o=$(run layout 2>"$T/scale.err") || fail "layout failed on a sub-1 sticky"
+grep -q 'scale 0.65' "$_o" && fail "a sub-1 scale reached kanshi's config" || :
+grep -q 'scale 1.00' "$_o" || fail "the clamp did not fall back to 1.00"
+grep -q 'cannot' "$T/scale.err" \
+  || fail "the clamp was silent; it must say the scale cannot render"
 
 pass
