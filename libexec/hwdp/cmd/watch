@@ -26,6 +26,11 @@
 # kernel when the supervisor dies) -- no PID matching, no duplicate daemons.
 
 set -u
+# For probe_panels, used by the hotplug poller below. probe.sh defines
+# functions and provider roots and runs nothing on its own, so sourcing it is
+# free; using it rather than reading DRM sysfs here keeps ONE answer to "what
+# panels exist" and keeps the poller honouring a stubbed provider root.
+. "$HWDP_LIBEXEC/probe.sh"
 
 cfg="${WAYFIRE_CONFIG_FILE:-$HOME/.config/wayfire/wayfire.ini}"
 lock="${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.lock"
@@ -117,10 +122,12 @@ fi
 # started. Disarm first to avoid re-entry when exit fires after a signal.
 kanshi_pid=""
 inotify_pid=""
+hotplug_pid=""
 watchdog_pid=""
 cleanup() {
   trap - INT TERM HUP EXIT
   [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null
+  [ -n "${hotplug_pid:-}" ]  && kill "$hotplug_pid"  2>/dev/null
   [ -n "${inotify_pid:-}" ]  && kill "$inotify_pid"  2>/dev/null
   [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
   # Dropping the token stands down any settle still sleeping; it is detached,
@@ -291,18 +298,67 @@ fi
 # running, so a cancelled settle was not fully cancelled. The token is re-read
 # AFTER the sleep and BEFORE any hook runs, so a superseded settle stands down
 # having done nothing. A missing token (teardown removed it) reads as cancelled.
-schedule_settle() {
+schedule_settle() {   # [relayout]
   settle_gen=$((settle_gen + 1))
   printf '%s' "$settle_gen" >"$settle_token"
   _g=$settle_gen
+  _re=${1:-}
   ( ( sleep 0.3
       [ "$(cat "$settle_token" 2>/dev/null)" = "$_g" ] || exit 0
+      # Regenerate BEFORE the hooks and the HUP: a hook asking `hwdp geometry`
+      # or reading the runtime config must see the new layout, and kanshi must
+      # reload a file that already describes the new set.
+      [ -n "$_re" ] && "$HWDP_LIBEXEC/cmd/layout" >/dev/null 2>&1
       run_hooks changed
       pkill -HUP -x kanshi 2>/dev/null || true ) & )
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
 cancel_settle() { rm -f "$settle_token"; }
+
+# --- display hotplug: the SECOND writer to the event FIFO -------------------
+# Until this existed `watch` reacted to the compositor CONFIG changing and to
+# nothing else: it generated kanshi's config once at startup and never again.
+# So plugging a monitor in left kanshi matching profiles for the OLD set, the
+# new panel wherever the compositor had put it, and the `changed` hooks
+# unfired. Seen live on a real box -- a 4K arrived and the runtime config still
+# described the 1080p panel it replaced, four days stale, with `watch` up the
+# whole time.
+#
+# The fingerprint is `probe_panels`, which is the SAME source `hwdp id` hashes.
+# That is the point: the thing that changes the display-profile id is exactly
+# the thing that must trigger a re-layout, so the two can never disagree about
+# what counts as a different rig. It also picks up a monitor SWAPPED on one
+# connector, which watching connector status alone would miss.
+#
+# It writes into the existing FIFO rather than growing a second mechanism, so a
+# hotplug coalesces through the same settle as a config change -- which matters
+# here more than there: DisplayPort link training flaps connect/disconnect
+# several times, and each flap simply re-arms the generation token.
+#
+# The poller exits when inotifywait does, so BOTH writers die together and the
+# outer loop's "writer gone -> re-arm fresh" recovery keeps working. A poller
+# that outlived it would hold the FIFO open and the loop would never re-arm.
+: "${HWDP_HOTPLUG_POLL:=4}"     # seconds; 0 disables the poll entirely
+HOTPLUG_MARK=__hwdp_hotplug__
+
+panel_fingerprint() {
+  # cksum keeps it to one number, and sort makes it independent of the order
+  # providers happen to list connectors in.
+  probe_panels 2>/dev/null | sort | cksum
+}
+
+hotplug_poll() {   # <inotify pid>: emit a marker when the connected SET changes
+  _watch_pid=$1
+  _prev=$(panel_fingerprint)
+  while kill -0 "$_watch_pid" 2>/dev/null; do
+    sleep "$HWDP_HOTPLUG_POLL"
+    _now=$(panel_fingerprint)
+    [ "$_now" = "$_prev" ] && continue
+    _prev=$_now
+    printf '%s\n' "$HOTPLUG_MARK"
+  done
+}
 
 cfgdir=$(dirname "$cfg")
 events="close_write,move_self,delete_self,moved_to,create"
@@ -318,18 +374,35 @@ while true; do
   inotifywait -qm -e "$events" "$cfg" "$cfgdir" >"$fifo" 2>/dev/null &
   inotify_pid=$!
 
+  hotplug_pid=""
+  if [ "${HWDP_HOTPLUG_POLL:-0}" != 0 ]; then
+    hotplug_poll "$inotify_pid" >"$fifo" 2>/dev/null &
+    hotplug_pid=$!
+  fi
+
   # Reading the FIFO blocks until the writer opens it, so this rendezvous needs
   # no sleep. The loop ends only when inotifywait (the writer) is gone.
-  while IFS= read -r _ <"$fifo"; do
+  while IFS= read -r _ev <"$fifo"; do
     if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
       echo "hwdp watch: kanshi gone, restarting" >&2
       start_kanshi
     fi
-    schedule_settle
+    # A DISPLAY change needs the kanshi config REGENERATED, not just reloaded:
+    # its profiles describe the outputs that existed when it was written, so a
+    # HUP alone would re-read a file that does not mention the new panel. A
+    # config change needs no regeneration and does not pay for one.
+    case $_ev in
+      "$HOTPLUG_MARK")
+        echo "hwdp watch: display set changed, re-generating the layout" >&2
+        schedule_settle relayout ;;
+      *) schedule_settle ;;
+    esac
   done
 
-  # Writer gone: drop any pending nudge, back off, let the loop re-arm fresh.
+  # Writers gone: drop any pending nudge, back off, let the loop re-arm fresh.
   cancel_settle
+  [ -n "${hotplug_pid:-}" ] && kill "$hotplug_pid" 2>/dev/null
+  hotplug_pid=""
   inotify_pid=""
   sleep 1
 done

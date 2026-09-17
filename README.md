@@ -77,7 +77,12 @@ integrator happens to call it. Needs one of `magick`, `convert` or `vips`.
 
 hwdp ships mechanisms, not policy. An integrator wires the specifics:
 
-- **Display-change hooks.** `hwdp watch` runs every executable in
+- **Display-change hooks.** `hwdp watch` polls the connected panel set (the
+  same probe `hwdp id` hashes, so anything that changes the id counts) and, on
+  a change, regenerates the kanshi config, fires the hooks and reloads kanshi.
+  It also watches the compositor config file. Interval is
+  `HWDP_HOTPLUG_POLL` seconds, default 4; `0` disables the poll. It runs every
+  executable in
   `$HWDP_HOOK_ROOT/<edge>.d/*` (default `~/.config/hwdp/hooks`) and a machine
   root `$HWDP_MACHINE_HOOKS/<edge>.d/*` (default `/etc/hwdp/hooks`), machine
   first then user, fail-soft. Edges: `pre` (before kanshi starts, backgrounded)

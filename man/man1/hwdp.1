@@ -63,7 +63,18 @@ regenerate the config through
 and re-apply on compositor-config changes. It fires display-change HOOKS from
 .IR <root>/<edge>.d/* " (edges: " pre ", " changed )
 so an integrator wires the reactions; it knows nothing of any specific
-compositor tool. Hook roots:
+compositor tool.
+.PP
+It reacts to the DISPLAY SET changing as well as to the compositor config: the
+connected panels are polled every
+.B HWDP_HOTPLUG_POLL
+seconds (default 4, 0 disables), and on a change the kanshi config is
+REGENERATED before the hooks run and kanshi reloads \(em its profiles describe
+the outputs that existed when it was written, so a reload alone would re-read a
+file that does not mention the new panel. The fingerprint is the same probe
+.B hwdp id
+hashes, so a monitor swapped on one connector counts even though that connector
+never leaves `connected'. Hook roots:
 .BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
 (default /etc/hwdp/hooks).
 .SH MIXED DPI
