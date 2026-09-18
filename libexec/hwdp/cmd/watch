@@ -33,6 +33,21 @@ set -u
 . "$HWDP_LIBEXEC/probe.sh"
 
 cfg="${WAYFIRE_CONFIG_FILE:-$HOME/.config/wayfire/wayfire.ini}"
+
+# Where the DETACHED supervisor's own diagnostics go.
+#
+# It used to daemonize with `>/dev/null 2>&1`, which threw away everything it
+# says: "display set changed", "kanshi gone, restarting", a hook that failed.
+# For a process whose entire job is to react to things, in the background,
+# unobserved, that is the wrong default -- the only way anyone ever read those
+# lines was to start it by hand with a redirect. A supervisor that reports
+# nothing cannot be debugged after the fact, and display problems are almost
+# always after the fact.
+#
+# In $XDG_RUNTIME_DIR so it is per-session, tmpfs-cheap and gone on reboot;
+# truncated per supervisor, since a new one means a new session. Set it to
+# /dev/null to opt out.
+watch_log="${HWDP_WATCH_LOG:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
 lock="${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.lock"
 
 # FIFO carrying the persistent monitor's event stream back to the supervisor,
@@ -100,7 +115,9 @@ if [ "${HWDP_WATCH_DAEMONIZED:-}" != 1 ]; then
   if exec 9>"$lock" && flock -n 9; then
     flock -u 9            # release; the re-exec'd child will retake it
     exec 9>&-
-    HWDP_WATCH_DAEMONIZED=1 setsid -f "$0" "$@" </dev/null >/dev/null 2>&1
+    : > "$watch_log" 2>/dev/null || watch_log=/dev/null
+    HWDP_WATCH_DAEMONIZED=1 setsid -f "$0" "$@" \
+      </dev/null >>"$watch_log" 2>&1
     exit 0
   else
     nudge

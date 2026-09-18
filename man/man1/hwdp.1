@@ -88,6 +88,14 @@ hashes, so a monitor swapped on one connector counts even though that connector
 never leaves `connected'. Hook roots:
 .BR HWDP_HOOK_ROOT " (default ~/.config/hwdp/hooks), " HWDP_MACHINE_HOOKS
 (default /etc/hwdp/hooks).
+.PP
+The supervisor DETACHES, so its own diagnostics go to
+.BR HWDP_WATCH_LOG ,
+default $XDG_RUNTIME_DIR/hwdp-watch.log, truncated per supervisor and gone on
+reboot. Set it to /dev/null to opt out. It is where the hotplug announcements,
+"kanshi gone, restarting" and any failing hook are recorded \(em a background
+process that reports nothing cannot be debugged after the fact, and display
+faults almost always are.
 .SH MIXED DPI
 Panels of different physical density need
 .BR HWDP_TARGET_PPI .

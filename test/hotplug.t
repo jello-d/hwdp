@@ -162,4 +162,36 @@ _z=$(ps -eo ppid=,state= 2>/dev/null \
 [ "$_z" -eq 0 ] || fail "supervisor left $_z zombie child(ren)"
 
 kill "$_mgr" 2>/dev/null
-pass "hotplug: in, out, swapped, and quiet when nothing moves"
+# --- the detached supervisor must LOG, not discard ---------------------------
+# It daemonizes, so its stdout/stderr used to go to /dev/null and everything it
+# reports -- the hotplug announcements above, "kanshi gone, restarting", a
+# failing hook -- was unreachable. A supervisor whose whole job is reacting in
+# the background, unobserved, has to leave a record or it cannot be debugged
+# after the fact, and display faults are almost always after the fact.
+#
+# This test runs with HWDP_WATCH_DAEMONIZED=1 (no re-exec), so it checks the
+# knob and the default path rather than the redirect itself: that the log
+# variable resolves under $XDG_RUNTIME_DIR and that the value is honoured.
+_lg=$(HWDP_WATCH_LOG=/tmp/custom.log sh -c '
+  . /dev/stdin <<INNER
+watch_log="\${HWDP_WATCH_LOG:-\${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
+echo "\$watch_log"
+INNER')
+[ "$_lg" = /tmp/custom.log ] || fail "HWDP_WATCH_LOG not honoured (got $_lg)"
+_lg=$(env -u HWDP_WATCH_LOG XDG_RUNTIME_DIR=/run/user/999 sh -c '
+  . /dev/stdin <<INNER
+watch_log="\${HWDP_WATCH_LOG:-\${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
+echo "\$watch_log"
+INNER')
+[ "$_lg" = /run/user/999/hwdp-watch.log ] \
+  || fail "the default log is not under XDG_RUNTIME_DIR (got $_lg)"
+grep -q 'watch_log' "$HERE/libexec/hwdp/cmd/watch" \
+  || fail "the supervisor has no log at all"
+# Scoped to the DAEMONIZE line: >/dev/null is legitimate elsewhere (silencing
+# inotifywait, pkill), so a bare grep for it would always fire.
+grep -q 'setsid[^|]*>/dev/null' "$HERE/libexec/hwdp/cmd/watch" \
+  && fail "the daemonize still discards the supervisor's output" || :
+grep -q 'setsid.*watch_log\|>>"\$watch_log"' "$HERE/libexec/hwdp/cmd/watch" \
+  || fail "the daemonize does not redirect into the log"
+
+pass "hotplug: in, out, swapped, quiet when still, and the supervisor logs"
