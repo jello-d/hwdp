@@ -79,13 +79,31 @@ wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 HWDP_HOOK_ROOT=${HWDP_HOOK_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/hwdp/hooks}
 HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 
+# Hooks run with fd 9 CLOSED, and that is load-bearing rather than tidiness.
+#
+# fd 9 holds the supervisor's flock, and a file descriptor survives exec -- so
+# every hook, and everything a hook spawns, inherits it. A hook that starts a
+# LONG-LIVED process therefore hands that process a share of the lock, and the
+# lock then outlives the supervisor: when the supervisor dies, waybar (started
+# via the bars hook) still holds fd 9, `flock -n` keeps failing, and every
+# subsequent `hwdp watch` silently takes the NUDGE path. Display management can
+# never restart, and it reports success while doing nothing.
+#
+# Seen exactly that way: a box with no supervisor, no kanshi, and `fuser` on the
+# lockfile naming two waybar processes. The bug was always latent -- it needed a
+# hook that outlives its own invocation, and the bars hook is the first.
+#
+# kanshi and inotifywait get the same treatment below: they are torn down with
+# the supervisor so they cannot strand the lock, but a descendant of theirs
+# could, and there is no reason for either to hold it.
 run_hooks() {   # <edge>
   _edge=$1
   for _root in "$HWDP_MACHINE_HOOKS" "$HWDP_HOOK_ROOT"; do
     [ -d "$_root/$_edge.d" ] || continue
     for _h in "$_root/$_edge.d"/*; do
       [ -f "$_h" ] && [ -x "$_h" ] || continue
-      "$_h" || echo "hwdp watch: hook $_edge.d/$(basename "$_h") failed" >&2
+      "$_h" 9>&- \
+        || echo "hwdp watch: hook $_edge.d/$(basename "$_h") failed" >&2
     done
   done
 }
@@ -159,13 +177,20 @@ trap cleanup INT TERM EXIT
 # cleanup runs -- killing kanshi and releasing the lock. Runs as a tracked child
 # in the same process group; we kill it explicitly in cleanup. Check is cheap
 # (a stat) so a 1s cadence is plenty responsive without busy-looping.
+#
+# fd 9 CLOSED here too, and for a subtler reason than the hooks: cleanup kills
+# the watchdog SUBSHELL, but the `sleep` that subshell spawned is a separate
+# process and survives it -- carrying fd 9, and with it the lock, for up to a
+# second after the supervisor is gone. A restart landing in that window sees
+# the lock held, takes the nudge path, and does nothing. Measured exactly that
+# way: after teardown, `fuser` on the lockfile named a lone `sleep`.
 sup_pid=$$
 (
   while [ -S "$wl_sock" ]; do
     sleep 1
   done
   kill -TERM "$sup_pid" 2>/dev/null
-) &
+) 9>&- &
 watchdog_pid=$!
 
 # A crashed daemon lingers as a <defunct> zombie -- still named, still passing
@@ -216,9 +241,9 @@ start_kanshi() {
   i=0
   while [ "$i" -lt 40 ]; do          # up to ~10s, but exits as soon as it's up
     if [ -n "$_kcfg" ]; then
-      kanshi --config "$_kcfg" &
+      kanshi --config "$_kcfg" 9>&- &
     else
-      kanshi &
+      kanshi 9>&- &
     fi
     kanshi_pid=$!
     sleep 0.25
@@ -388,7 +413,7 @@ while true; do
   rm -f "$fifo"
   mkfifo "$fifo" 2>/dev/null || { sleep 1; continue; }
 
-  inotifywait -qm -e "$events" "$cfg" "$cfgdir" >"$fifo" 2>/dev/null &
+  inotifywait -qm -e "$events" "$cfg" "$cfgdir" >"$fifo" 2>/dev/null 9>&- &
   inotify_pid=$!
 
   hotplug_pid=""
