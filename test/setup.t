@@ -139,7 +139,14 @@ sys install >/dev/null || fail "re-install errored"
   || fail "copy mode left a symlink, not a real file"
 [ -f "$C/libexec/hwdp/probe.sh" ] && [ ! -L "$C/libexec/hwdp" ] \
   || fail "copy mode did not copy the libexec tree"
-[ "$("$C/bin/hwdp" help | grep -c '^  hwdp ')" -eq 7 ] \
+# Against the SOURCE dispatcher's own advertised list, not a literal count: a
+# hardcoded 7 here meant adding a subcommand failed this test with "cannot
+# resolve its own libexec", which is a real message pointing at the wrong thing.
+# What is actually under test is that the COPY renders the same help the source
+# does, so compare the two.
+_want=$(sed -n 's/^#   hwdp .*/x/p' "$HERE/bin/hwdp" | wc -l)
+[ "$_want" -gt 0 ] || fail "could not read the dispatcher's subcommand list"
+[ "$("$C/bin/hwdp" help | grep -c '^  hwdp ')" -eq "$_want" ] \
   || fail "the copied hwdp cannot resolve its own libexec"
 
 printf 'hwdp\nrun-scaled\ndeparted\n' > "$C/libexec/.hwdp-installed"

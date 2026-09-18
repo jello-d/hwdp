@@ -69,44 +69,17 @@ wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 # hwdp watch hardcodes NO downstream tool. Everything that must react to the
 # display layout coming up or changing -- re-asserting a compositor's runtime
 # state, moving notifications, checking a greeter stamp -- is a HOOK the
-# integrator drops in; a bare `hwdp watch` just supervises kanshi. Two edges:
-#   pre       fired once, backgrounded, BEFORE kanshi starts (so "on created"
-#             window rules can land before autostart apps map their first
-#             window)
-#   changed   fired after kanshi is up AND after every config-change burst
-# Hooks live in <root>/<edge>.d/* (executable), machine root first then user,
-# each sorted by name, fail-soft. The package ships none (the vigilance model).
-HWDP_HOOK_ROOT=${HWDP_HOOK_ROOT:-${XDG_CONFIG_HOME:-$HOME/.config}/hwdp/hooks}
-HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
-
-# Hooks run with fd 9 CLOSED, and that is load-bearing rather than tidiness.
+# integrator drops in; a bare `hwdp watch` just supervises kanshi.
 #
-# fd 9 holds the supervisor's flock, and a file descriptor survives exec -- so
-# every hook, and everything a hook spawns, inherits it. A hook that starts a
-# LONG-LIVED process therefore hands that process a share of the lock, and the
-# lock then outlives the supervisor: when the supervisor dies, waybar (started
-# via the bars hook) still holds fd 9, `flock -n` keeps failing, and every
-# subsequent `hwdp watch` silently takes the NUDGE path. Display management can
-# never restart, and it reports success while doing nothing.
-#
-# Seen exactly that way: a box with no supervisor, no kanshi, and `fuser` on the
-# lockfile naming two waybar processes. The bug was always latent -- it needed a
-# hook that outlives its own invocation, and the bars hook is the first.
-#
-# kanshi and inotifywait get the same treatment below: they are torn down with
-# the supervisor so they cannot strand the lock, but a descendant of theirs
-# could, and there is no reason for either to hold it.
-run_hooks() {   # <edge>
-  _edge=$1
-  for _root in "$HWDP_MACHINE_HOOKS" "$HWDP_HOOK_ROOT"; do
-    [ -d "$_root/$_edge.d" ] || continue
-    for _h in "$_root/$_edge.d"/*; do
-      [ -f "$_h" ] && [ -x "$_h" ] || continue
-      "$_h" 9>&- \
-        || echo "hwdp watch: hook $_edge.d/$(basename "$_h") failed" >&2
-    done
-  done
-}
+# The edges, the hook roots and run_hooks itself live in hooks.sh, shared with
+# `hwdp apply`, which fires the same `changed` edge on demand. ONE copy because
+# the fd-9 rule there is invisible at the call site, and a second copy would
+# sooner or later be written without it. kanshi and inotifywait get that same fd
+# treatment below: they are torn down with the supervisor so they cannot strand
+# the lock, but a descendant of theirs could, and there is no reason for either
+# to hold it.
+HWDP_HOOK_TAG='hwdp watch'
+. "$HWDP_LIBEXEC/hooks.sh"
 
 # A reset can land slightly AFTER the event we reacted to. Wayfire's
 # auto_reload reconfigures outputs a beat after the file's close_write, and an

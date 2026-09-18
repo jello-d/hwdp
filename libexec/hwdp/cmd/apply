@@ -1,0 +1,73 @@
+#!/bin/sh
+# hwdp apply -- fire the `changed` edge NOW, so the live session catches up with
+# what hwdp currently reports.
+#
+# WHY THIS EXISTS. Every other path into the hooks is driven by a DISPLAY event:
+# `hwdp watch` fires `changed` when the layout comes up, when the connected set
+# changes, and after a compositor-config burst. But the answers hwdp gives are
+# not a function of the displays alone -- a per-rig `<id>.ui` override, or the
+# calibrated sizing itself, can change with no display event anywhere. Nothing
+# watches those, so the hooks never run, and a consumer that CACHES its answer
+# keeps serving the old one indefinitely.
+#
+# That is not hypothetical. Deleting a `<id>.ui` override left mako rendering at
+# the old font for over an hour (the placement file a hook regenerates is an
+# `include`, so mako kept reading the stale copy) while `hwdp ui` had reported
+# the new answer the whole time. Most consumers re-read at the point of use and
+# are self-correcting; the ones that cache to a file are not, and there is no
+# way to tell from here which is which. Firing the edge fixes both.
+#
+# WHAT IT DOES NOT DO. It does not regenerate the kanshi config, HUP kanshi, or
+# touch the layout: that is the supervisor's job and doing it from a second
+# process invites two owners of one file. This re-runs the REACTIONS only. Use
+# `hwdp layout` to regenerate, or `hwdp watch` to nudge a running supervisor.
+#
+# `changed` ONLY, deliberately. `pre` is an ORDERING edge -- it exists to land
+# window rules before autostart apps map their first window -- so firing it at
+# an arbitrary moment asserts a startup-only invariant with nothing to order
+# against. `changed` is the re-assert edge, and the one every hook is already
+# written to be idempotent on.
+#
+# Exit status is the hooks': fail-soft per hook (a failing hook is reported and
+# the rest still run, as on every other edge), and non-zero overall if any hook
+# failed, so a caller wiring this into a provisioning run learns about it.
+set -eu
+
+HWDP_HOOK_TAG='hwdp apply'
+. "$HWDP_LIBEXEC/hooks.sh"
+
+_quiet=
+case "${1:-}" in
+  -q|--quiet) _quiet=1; shift ;;
+  -h|--help)
+    echo "usage: hwdp apply [-q]"
+    echo
+    echo "  Fire the 'changed' display-change hooks now, so a change that"
+    echo "  produced no display event (a <id>.ui override, retuned sizing)"
+    echo "  reaches the live session. Hooks are expected idempotent."
+    echo
+    echo "  -q  say nothing on success (for a provisioning run)"
+    exit 0 ;;
+  '') ;;
+  *) echo "hwdp apply: unexpected argument '$1'" >&2; exit 2 ;;
+esac
+
+_n=$(count_hooks changed)
+if [ "$_n" -eq 0 ]; then
+  # A legitimate state, not an error: the package ships no hooks, so an
+  # integrator that has wired none has nothing to actuate. Say so rather than
+  # exiting silently, because "apply did nothing" and "apply found nothing to
+  # do" look identical from the outside and only one of them is a problem.
+  [ -n "$_quiet" ] || echo "hwdp apply: no changed hooks wired; nothing to do"
+  exit 0
+fi
+
+run_hooks changed
+if [ "${HWDP_HOOK_FAILURES:-0}" -gt 0 ]; then
+  # Loud, and non-zero: each failure has already named itself on stderr, but a
+  # caller in a provisioning sweep reads the STATUS, and "some of the display
+  # reaction did not happen" must not read as success.
+  echo "hwdp apply: $HWDP_HOOK_FAILURES of $_n changed hook(s) failed" >&2
+  exit 1
+fi
+[ -n "$_quiet" ] || echo "hwdp apply: fired changed ($_n hook(s))"

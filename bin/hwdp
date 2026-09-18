@@ -14,10 +14,17 @@
 #   hwdp layout     emit the runtime kanshi config, print its path
 #   hwdp capture    snapshot the current arrangement into a profile
 #   hwdp watch      supervise the layout; fire display-change hooks
+#   hwdp apply      fire the changed hooks now, so a config change goes live
 #
 # `id`, `shape` and `ui` answer HEADLESS -- from a TTY, over ssh, at boot, at
 # the greeter -- because they ask the kernel about panels when no compositor is
-# there to ask. The rest need a session, and say so when they do not have one.
+# there to ask. `geometry`, `layout`, `capture` and `watch` need a session, and
+# say so when they do not have one.
+#
+# `apply` is neither: it runs the integrator's hooks and holds no opinion about
+# what they need. Whether a session must exist first is a property of the hooks
+# wired in, so the caller decides when to fire it -- keeping this side pure
+# mechanism, as with everything else about the hook layer.
 #
 # run-scaled is the package's OTHER command and deliberately not a subcommand
 # here: everything above reads or manages display state and returns, where it
@@ -53,7 +60,7 @@ esac
 # doing nothing, which for a tool other scripts call is the difference between
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
-  id|shape|ui|geometry|layout|capture|watch) ;;
+  id|shape|ui|geometry|layout|capture|watch|apply) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;

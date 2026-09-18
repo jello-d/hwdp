@@ -8,6 +8,8 @@
 #   geometry           one line per enabled output (stable contract)
 #   layout capture     the kanshi adapter: emit the runtime config / snapshot
 #   watch              supervise the layout, fire display-change HOOKS
+#   apply              fire the changed hooks NOW, for a change no display
+#                      event would ever announce (a <id>.ui override edit)
 # The other two commands are hwdp CLIENTS rather than subcommands: each does
 # something TO something else, using `hwdp geometry` the way any consumer would.
 #   run-scaled        wrap an APPLICATION in a nested gamescope window
@@ -246,8 +248,12 @@ do_check() {
     if command -v "$_t" >/dev/null 2>&1; then ok "$_t present"
     else bad "$_t not on PATH"; fi; done
   # Every subcommand the dispatcher advertises must actually be installed --
-  # a missing impl is a command that exists until someone runs it.
-  for _c in id shape ui geometry layout capture watch; do
+  # a missing impl is a command that exists until someone runs it. The list is
+  # READ FROM the dispatcher's own header block, the same lines its `--help`
+  # renders, so this cannot check a stale vocabulary: a hand-kept copy here
+  # went one command out of date the moment `apply` was added, which is the
+  # failure the bin/* loop above was already written to avoid.
+  for _c in $(sed -n 's/^#   hwdp \([a-z][a-z-]*\) .*/\1/p' "$_root/bin/hwdp"); do
     [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
       || bad "cmd $_c missing"; done
   # Drift, not tidiness: a dangling link is a command that exists until it is

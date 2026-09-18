@@ -20,6 +20,7 @@ hwdp geometry   one line per enabled output (a stable contract)
 hwdp layout     emit the runtime kanshi config, print its path
 hwdp capture    snapshot the current arrangement into a profile
 hwdp watch      supervise the layout; fire display-change hooks
+hwdp apply      fire the changed hooks now, so a config change goes live
 ```
 
 `id`, `shape` and `ui` answer **headless** (from a TTY, over ssh, at boot, at
@@ -94,8 +95,16 @@ hwdp ships mechanisms, not policy. An integrator wires the specifics:
   `$HWDP_HOOK_ROOT/<edge>.d/*` (default `~/.config/hwdp/hooks`) and a machine
   root `$HWDP_MACHINE_HOOKS/<edge>.d/*` (default `/etc/hwdp/hooks`), machine
   first then user, fail-soft. Edges: `pre` (before kanshi starts, backgrounded)
-  and `changed` (after kanshi is up and on every config-change burst). The
-  package ships **no** hooks; drop in a `changed.d/10-...` to re-assert
+  and `changed` (after kanshi is up and on every config-change burst).
+
+  `hwdp apply` fires `changed` **on demand**, because every other path into the
+  hooks needs a display event and not everything hwdp reports is a function of
+  the displays: editing a per-rig `<id>.ui` override, or retuning the sizing,
+  changes the answer with no event anywhere. Consumers that re-read at the
+  point of use are self-correcting; one that caches to a file is not, and hwdp
+  cannot tell which is which. Run it after changing anything the resolver reads.
+
+  The package ships **no** hooks; drop in a `changed.d/10-...` to re-assert
   compositor runtime state, move notifications, check a greeter stamp, etc.
 - **Display probes are providers.** Every tool asks one shared probe layer what
   displays exist, and each platform is a drop-in executable rather than a

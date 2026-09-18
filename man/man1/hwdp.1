@@ -66,6 +66,22 @@ side-by-side one when there is none.
 Snapshot the current arrangement (transforms, positions, modes \(em no scale)
 into a profile named by the id, so a rig is onboarded by arranging it once.
 .TP
+.B hwdp apply " [" \-q ]
+Fire the
+.I changed
+hooks now. Every other path into them is driven by a DISPLAY event, but the
+answers this tool gives also depend on things no display event announces \(em a
+per-rig
+.IR <id>.ui " override, or the calibrated sizing itself."
+Nothing watches those, so the hooks never run, and a consumer that CACHES its
+answer keeps serving the stale one. Hooks are expected idempotent, so this is
+safe to run at any time; a failing hook is reported and the rest still run, with
+a non-zero overall status. It does NOT regenerate the config or signal
+.BR kanshi
+\(em that is the supervisor's job \(em it re-runs the REACTIONS only.
+.B \-q
+says nothing on success, for a provisioning run.
+.TP
 .B hwdp watch
 Supervise the layout for a session (supervise-or-nudge via
 .BR flock ),
