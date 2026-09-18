@@ -276,6 +276,33 @@ awk -v n="$_nm" 'BEGIN { exit !(n > 0.05 && n < 0.95) }' \
   || fail "with a sizeless panel it must fall back to LOGICAL halves, giving a
 mixed narrow slice (mean=$_nm)"
 
+# --- the same thing on the VERTICAL axis -----------------------------------
+# The physical-position derivation has two axes and the first version of this
+# file only exercised one: a row. Rows and columns are separate code paths
+# (colw/px against rowh/py), so a horizontal-only test ships the vertical half
+# unverified -- which is exactly what happened, on a desk that is also a row.
+#
+# Same trick turned 90 degrees: identical logical heights, a 2:1 physical
+# ratio, and a source split into thirds top-to-bottom.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+echo "TALL 1000 1000 normal 1 0 0 1000 1000 landscape 300 500"
+echo "SHORT 1000 1000 normal 1 0 1000 1000 1000 landscape 300 250"
+EOF
+chmod +x "$T/bin/hwdp"
+"$_img" -size 600x900 xc:black -fill white -draw "rectangle 0,600 599,899" \
+  "$T/vthirds.png"
+_o=$(PATH="$T/bin:$PATH" "$WS" -o "$T/vert" "$T/vthirds.png" 2>&1) \
+  || fail "vertical physical slice failed: $_o"
+_tm=$(_mean "$T/vert/TALL.png")
+_sm=$(_mean "$T/vert/SHORT.png")
+awk -v t="$_tm" 'BEGIN { exit !(t < 0.05) }' \
+  || fail "the TALL panel should be all black under physical layout (mean=$_tm)"
+awk -v m="$_sm" 'BEGIN { exit !(m > 0.95) }' \
+  || fail "the SHORT panel should be all white; a pixel layout would give it a
+mixed slice (mean=$_sm)"
+
 # --- the backends must AGREE ------------------------------------------------
 # magick, convert and vips are interchangeable BACKENDS, not shared code: each
 # has its own crop/resize/composite calls, so "it works" for one says nothing
