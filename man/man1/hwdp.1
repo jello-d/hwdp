@@ -41,10 +41,21 @@ override wins per key; else a density default. Resolves HEADLESS, and REFUSES
 .B hwdp geometry
 Print one line per enabled output \(em
 .I NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+.I MM_W MM_H
 \(em projected from the shared layout probe. Settles by default (samples until
 the layout holds still);
 .B \-\-now
 prints one snapshot.
+.IP
+MM_W/MM_H are the panel's PHYSICAL size from the EDID, and are 0 when it does
+not report one (some do not, and some lie), so treat 0 as unknown rather than
+as a measurement. They swap with a 90/270 transform, since the EDID describes
+the panel. They matter because logical pixels are not a physical measure: 1920
+of them span 530mm on one panel and 3840 span 590mm on another, so an image
+laid out across the LOGICAL union is continuous in pixels while jumping 1.8x in
+physical size at the bezel. Anything spanning outputs as ONE image needs the
+millimetres. Fields are APPENDED, never inserted, so a consumer's field numbers
+survive.
 .TP
 .B hwdp layout
 Emit the runtime kanshi config for the connected set and print its path: inject

@@ -177,6 +177,13 @@ EOF
        && [ "$_dw" -eq "$7" ] && [ "$_dh" -eq "$8" ]; then _case=covered
   else _case=padded
   fi
+  # The d* rectangle is in the LAYOUT's units (millimetres, when that is the
+  # space). Rescale it to the slice's PIXELS, which is the only place the two
+  # spaces have to meet.
+  if [ "${13:-}" != "" ] && [ "$7" -gt 0 ] && [ "$8" -gt 0 ]; then
+    _dx=$(( _dx * ${13} / $7 )); _dw=$(( _dw * ${13} / $7 ))
+    _dy=$(( _dy * ${14} / $8 )); _dh=$(( _dh * ${14} / $8 ))
+  fi
 }
 
 # One renderer per backend, each reading the rects slice_rects computed. Split
@@ -228,18 +235,53 @@ render_vips() {   # src dst ow oh
   rm -f "$_tmp"
 }
 
+# make_slice <src> <dst> <cover x y w h> <out x y w h> <img w h> <pix w h>
+#
+# The output's RECT (args 7-10) and the slice's PIXEL SIZE (args 13-14) are
+# separate arguments because they are separate things: the rect is measured in
+# whatever space the layout is being done in -- millimetres when every panel
+# reports a size -- while the file must still be written at the output's
+# logical pixel dimensions or the client stretches it. They are equal only when
+# the layout is in logical space.
 make_slice() {
-  slice_rects "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}"
+  slice_rects "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" \
+    "${13:-$9}" "${14:-${10}}"
+  _pw=${13:-$9} _ph=${14:-${10}}
   case "$img_tool" in
-    magick|convert) render_magick "$1" "$2" "$9" "${10}" ;;
-    vips)           render_vips   "$1" "$2" "$9" "${10}" ;;
+    magick|convert) render_magick "$1" "$2" "$_pw" "$_ph" ;;
+    vips)           render_vips   "$1" "$2" "$_pw" "$_ph" ;;
   esac
 }
 
-# Emit: NAME X Y LOGICAL_W LOGICAL_H  (logical = post-transform layout size),
-# straight out of `hwdp geometry`, whose published line is
-#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
-# so this is a projection of fields 1, 6, 7, 8, 9 and nothing more.
+# Emit: NAME X Y W H PIXW PIXH
+#
+# X/Y/W/H are the output's rect in the SPACE WE LAY THE IMAGE OUT IN, and
+# PIXW/PIXH are the pixel size the slice must be written at. Those are two
+# different things the moment panels differ in density, which is the whole
+# point of this function.
+#
+# PHYSICAL SPACE when every panel reports its EDID size, LOGICAL space when any
+# does not. Logical pixels are not a physical measure: 1920 of them span 530mm
+# on one panel and 3840 span 590mm on another, so an image laid out across the
+# LOGICAL union is continuous in pixels while jumping 1.80x in physical size at
+# the bezel -- measured on a real mixed desk, not theorised. Laying it out in
+# MILLIMETRES makes the seam match physically, which is what "one image across
+# the desk" is supposed to mean.
+#
+# On panels of matched density the two spaces are proportional, so this changes
+# nothing there -- the 3-panel wall is three identical AW2725Qs and gets byte
+# identical slices either way.
+#
+# The physical POSITION of an output is not reported by anything, so it is
+# derived: outputs sharing a logical x form a COLUMN, columns are ordered by
+# that x, and each column's physical offset is the total physical width of the
+# columns before it (rows likewise). That is exact for a row, a stack or a
+# grid, and it is the arrangement the logical layout already asserts -- we are
+# only restating it in millimetres. Bezels are ignored; nothing reports them.
+#
+# hwdp geometry's published line is
+#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENT MM_W MM_H
+# so this reads fields 1, 6, 7, 8, 9, 11, 12.
 #
 # This USED to be a fourth wlr-randr parser -- the package already had one in
 # the geometry command, one in the kanshi adapter and one in the magnifier, and
@@ -254,7 +296,44 @@ make_slice() {
 # The default (settling) read is deliberate: slicing during a hotplug would cut
 # against a layout that is still moving.
 read_geometry() {
-  hwdp geometry 2>/dev/null | awk '{ print $1, $6, $7, $8, $9 }'
+  hwdp geometry 2>/dev/null | awk '
+    { n++; name[n]=$1; lx[n]=$6; ly[n]=$7; lw[n]=$8; lh[n]=$9
+      mw[n]=$11 + 0; mh[n]=$12 + 0
+      if (mw[n] <= 0 || mh[n] <= 0) nomm = 1
+      # widest/tallest panel per column/row, so a column is as wide as the
+      # broadest thing in it.
+      if (mw[n] > colw[lx[n]]) colw[lx[n]] = mw[n]
+      if (mh[n] > rowh[ly[n]]) rowh[ly[n]] = mh[n]
+    }
+    END {
+      if (n == 0) exit
+      if (nomm) {                       # a panel with no size: logical space
+        for (i = 1; i <= n; i++)
+          print name[i], lx[i], ly[i], lw[i], lh[i], lw[i], lh[i]
+        exit
+      }
+      # Order the distinct columns/rows and give each a physical offset equal
+      # to the total physical extent of those before it.
+      nc = 0; for (x in colw) cols[++nc] = x + 0
+      nr = 0; for (y in rowh) rows[++nr] = y + 0
+      asort_n(cols, nc); asort_n(rows, nr)
+      acc = 0
+      for (i = 1; i <= nc; i++) { px[cols[i]] = acc; acc += colw[cols[i]] }
+      acc = 0
+      for (i = 1; i <= nr; i++) { py[rows[i]] = acc; acc += rowh[rows[i]] }
+      for (i = 1; i <= n; i++)
+        print name[i], px[lx[i] + 0], py[ly[i] + 0], mw[i], mh[i], lw[i], lh[i]
+    }
+    # POSIX awk has no sort; this is a plain insertion sort over a small list
+    # (one entry per distinct column, so single digits in practice).
+    function asort_n(a, cnt,   i, j, t) {
+      for (i = 2; i <= cnt; i++) {
+        t = a[i]; j = i - 1
+        while (j >= 1 && a[j] > t) { a[j+1] = a[j]; j-- }
+        a[j+1] = t
+      }
+    }
+  '
 }
 
 # ---- main -------------------------------------------------------------------
@@ -325,7 +404,7 @@ fp_file="$outdir/fingerprint"
 cache_valid=0
 if [ -r "$fp_file" ] && [ "$(cat "$fp_file" 2>/dev/null)" = "$fp" ]; then
   cache_valid=1
-  while read -r name x y lw lh; do
+  while read -r name x y lw lh pw ph; do
     [ -z "$name" ] && continue
     [ -f "$outdir/$name.png" ] || cache_valid=0
   done <<EOF
@@ -338,13 +417,13 @@ fi
 # mtime tracks the last LOCK, not the last recut. @home is noatime, so read
 # access leaves no trace; without this a stable wallpaper's crops age out under
 # rm-stale's daily cache sweep and force a needless recut on the next lock.
-while read -r name x y lw lh; do
+while read -r name x y lw lh pw ph; do
   [ -n "$name" ] || continue
   dst="$outdir/$name.png"
   if [ "$cache_valid" -eq 0 ]; then
     make_slice "$src" "$dst" \
       "$cover_x" "$cover_y" "$cover_w" "$cover_h" \
-      "$x" "$y" "$lw" "$lh" "$iw" "$ih"
+      "$x" "$y" "$lw" "$lh" "$iw" "$ih" "$pw" "$ph"
   fi
   touch "$dst" 2>/dev/null || true
   printf '%s\t%s\n' "$name" "$dst"

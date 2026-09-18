@@ -1,13 +1,27 @@
 #!/bin/sh
 # hwdp geometry -- one line per ENABLED output, whitespace separated:
 #
-#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
+#   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION \
+#     MM_W MM_H
 #
 # A STABLE CONTRACT: a consumer sorts by POS_X for left-to-right order and sizes
 # itself from the LOGICAL w/h (the space it actually gets after scale and
 # rotation). TRANSFORM values are wl_output_transform (COUNTER-CLOCKWISE), the
 # kanshi/wlr-randr convention; a sway config `transform` is CLOCKWISE -- 180
 # apart, so shift by 180 (90<->270) to reuse a value across the two.
+#
+# MM_W/MM_H are the panel's PHYSICAL size from the EDID, APPENDED (never
+# inserted) so every existing consumer's field numbers still hold. They are 0
+# when the panel does not report a size -- some do not, and some lie -- so a
+# consumer must treat 0 as "unknown" rather than as a measurement.
+#
+# WHY THEY ARE HERE. Logical pixels are not a physical measure: 1920 of them
+# span 530mm on one panel and 3840 span 590mm on another, so content laid out
+# across the LOGICAL union is continuous in pixels while jumping ~1.8x in
+# physical size at the bezel. Measured on a real mixed desk. Anything that
+# spans outputs as ONE image -- the wallpaper slicer -- needs the millimetres
+# to place it so the seam matches physically, and the layout record has always
+# carried them; only this projection dropped them.
 #
 #   default       settle: sample until the layout stops changing, then print
 #   --now         print the first snapshot immediately (no settle)
@@ -53,8 +67,13 @@ _snapshot() {
       s = ($9 + 0 > 0) ? $9 + 0 : 1
       lw = int(lw/s + 0.5); lh = int(lh/s + 0.5)
       orient = (lh > lw) ? "portrait" : "landscape"
-      printf "%s %d %d %s %g %d %d %d %d %s\n",
-        $2, cw, ch, tx, s, $10, $11, lw, lh, orient
+      # The EDID size describes the PANEL, so it follows the panel through a
+      # rotation exactly as the mode does: swap it for a 90/270 so it stays
+      # aligned with the LOGICAL axes a consumer is working in.
+      mw = $5 + 0; mh = $6 + 0
+      pw = rot ? mh : mw; ph = rot ? mw : mh
+      printf "%s %d %d %s %g %d %d %d %d %s %d %d\n",
+        $2, cw, ch, tx, s, $10, $11, lw, lh, orient, pw, ph
     }
   '
 }

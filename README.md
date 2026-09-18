@@ -69,7 +69,15 @@ wallpaper (swaylock, swaybg, a greeter background) paint the *same* image on
 every output and have no spanned mode. It pre-cuts the source into one crop per
 output, each crop that output's sub-rectangle of the image cover-scaled over
 the whole layout union, so the slices tile and a feature crossing a bezel stays
-continuous. Cutting a wallpaper per output is a function of the panel layout,
+continuous. The union is measured in **millimetres** when every panel reports
+its EDID size, because logical pixels are not a physical measure: laid out by
+pixel, the same content renders ~1.8x larger on a 92ppi panel than a 165ppi one
+and the image visibly jumps size at the seam. Slices are still written at each
+output's logical pixel size. On panels of matched density the two layouts are
+proportional and produce identical slices; if any panel reports no size the
+whole run falls back to pixels.
+
+Cutting a wallpaper per output is a function of the panel layout,
 which is this package's subject, so it lives here rather than in whichever
 integrator happens to call it. Needs one of `magick`, `convert` or `vips`.
 

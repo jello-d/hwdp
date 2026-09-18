@@ -217,6 +217,65 @@ _o=$(PATH="$T/noimg" "$WS" -o "$T/e" "$T/src.png" 2>&1); _s=$?
 [ "$_s" = 1 ] || fail "no image tool should exit 1, got $_s"
 case $_o in *"no image tool"*) ;; *) fail "no-image-tool reason: $_o" ;; esac
 
+# --- PHYSICAL layout: the seam must match in millimetres, not pixels --------
+# Logical pixels are not a physical measure. Two panels with the SAME logical
+# width but different physical widths show a logical-space slice at different
+# physical zooms, so a feature crossing the bezel jumps size -- measured at
+# 1.80x on a real 92ppi/165ppi desk. Laying the image out in MILLIMETRES fixes
+# the seam.
+#
+# The stub makes the two spaces disagree as loudly as possible: identical
+# logical sizes (1000x1000 each) and a 2:1 physical ratio (500mm vs 250mm).
+#   LOGICAL space  -> each panel gets HALF the image
+#   PHYSICAL space -> the wide one gets TWO THIRDS, the narrow one a third
+# A source split black for its first two thirds and white for the last third
+# therefore comes back all-black / all-white under physical layout, and MIXED
+# on the narrow panel under logical layout. One assertion separates them.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+# NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENT MM_W MM_H
+echo "WIDE 1000 1000 normal 1 0 0 1000 1000 landscape 500 300"
+echo "NARROW 1000 1000 normal 1 1000 0 1000 1000 landscape 250 300"
+EOF
+chmod +x "$T/bin/hwdp"
+"$_img" -size 900x600 xc:black -fill white -draw "rectangle 600,0 899,599" \
+  "$T/thirds.png"
+_o=$(PATH="$T/bin:$PATH" "$WS" -o "$T/phys" "$T/thirds.png" 2>&1) \
+  || fail "physical-layout slice failed: $_o"
+
+_wm=$(_mean "$T/phys/WIDE.png")
+_nm=$(_mean "$T/phys/NARROW.png")
+awk -v w="$_wm" 'BEGIN { exit !(w < 0.05) }' \
+  || fail "the WIDE panel should be all black under physical layout (mean=$_wm)"
+awk -v n="$_nm" 'BEGIN { exit !(n > 0.95) }' \
+  || fail "the NARROW panel should be all white under physical layout, not the
+mixed result logical layout gives (mean=$_nm)"
+
+# Slices are still written at the PIXEL size, which is independent of the
+# millimetres -- that separation is the point.
+for _o2 in WIDE NARROW; do
+  _wh=$("$_img" "$T/phys/$_o2.png" -format '%wx%h' info:)
+  [ "$_wh" = 1000x1000 ] \
+    || fail "$_o2 slice is $_wh; pixel size must follow the LOGICAL size"
+done
+
+# A panel that reports NO size falls back to logical space for the whole run --
+# mixing the two would be incoherent, and some panels genuinely report 0.
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+echo "WIDE 1000 1000 normal 1 0 0 1000 1000 landscape 500 300"
+echo "NARROW 1000 1000 normal 1 1000 0 1000 1000 landscape 0 0"
+EOF
+chmod +x "$T/bin/hwdp"
+_o=$(PATH="$T/bin:$PATH" "$WS" -o "$T/nomm" "$T/thirds.png" 2>&1) \
+  || fail "fallback slice failed: $_o"
+_nm=$(_mean "$T/nomm/NARROW.png")
+awk -v n="$_nm" 'BEGIN { exit !(n > 0.05 && n < 0.95) }' \
+  || fail "with a sizeless panel it must fall back to LOGICAL halves, giving a
+mixed narrow slice (mean=$_nm)"
+
 # --- the backends must AGREE ------------------------------------------------
 # magick, convert and vips are interchangeable BACKENDS, not shared code: each
 # has its own crop/resize/composite calls, so "it works" for one says nothing
