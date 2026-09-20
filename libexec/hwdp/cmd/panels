@@ -1,0 +1,53 @@
+#!/bin/sh
+# hwdp panels -- what is ATTACHED, one line per connected panel, HEADLESS.
+#
+#   <connector> <native_w> <native_h>
+#
+# The counterpart to `hwdp geometry`, and the distinction is the load-bearing
+# one this package is built on: `panels` is what the KERNEL sees attached (DRM
+# sysfs, so it answers from a TTY, at boot, at the greeter, over ssh), while
+# `geometry` is how a COMPOSITOR has arranged it and needs a session. Asking
+# geometry headless fails, correctly, with "no layout provider could answer".
+#
+# WHY IT IS PUBLIC. The panels class always resolved headless, but nothing
+# exposed it: `id` hashes it away, `shape` counts it, `ui` buckets it, and none
+# of them will tell a caller how many pixels a panel has. A provisioning layer
+# that must size something rendered BEFORE any session -- a boot menu, a
+# greeter -- had no way to ask, and the alternative is a fifth copy of a DRM
+# parser in somebody else's repo. This package has already killed four.
+#
+# The size is the panel's NATIVE mode, which is the right question for anything
+# drawn outside a session: firmware hands a boot menu the preferred mode, and
+# the compositor's current mode does not exist yet.
+#
+# NOT the EDID hash, deliberately. The provider record carries one as its first
+# field, but that is an id INGREDIENT and `hwdp id` is the published way to ask
+# for identity. Emitting it here would invite a caller to build a second,
+# subtly different id out of it.
+#
+# Empty output with nothing connected, and that is an ANSWER, not an error: a
+# display-less box has no panels. Exit status stays 0 so a caller can tell
+# "nothing attached" from "the probe broke".
+set -eu
+. "$HWDP_LIBEXEC/probe.sh"
+
+case "${1:-}" in
+  -h|--help)
+    echo "usage: hwdp panels"
+    echo
+    echo "  One line per connected panel, HEADLESS (DRM, no session needed):"
+    echo "    <connector> <native_w> <native_h>"
+    echo
+    echo "  See 'hwdp geometry' for how a compositor has ARRANGED them, which"
+    echo "  needs a session."
+    exit 0 ;;
+  '') ;;
+  *) echo "hwdp panels: unexpected argument '$1'" >&2; exit 2 ;;
+esac
+
+# Fields 2..4 of the provider record (hash, name, w, h). Tab-separated in, space
+# separated out, matching `hwdp geometry`'s contract so the two read alike.
+probe_panels | while IFS="$(printf '\t')" read -r _hash _name _w _h _rest; do
+  [ -n "${_name:-}" ] || continue
+  printf '%s %s %s\n' "$_name" "${_w:-0}" "${_h:-0}"
+done

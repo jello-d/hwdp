@@ -57,6 +57,21 @@ physical size at the bezel. Anything spanning outputs as ONE image needs the
 millimetres. Fields are APPENDED, never inserted, so a consumer's field numbers
 survive.
 .TP
+.B hwdp panels
+One line per CONNECTED panel, \fB<connector> <native_w> <native_h>\fR. The
+counterpart to
+.BR geometry ,
+and the split is the one this package is built on: panels is what the KERNEL
+sees attached (DRM sysfs, so it answers from a TTY, at boot, at a greeter, over
+ssh), geometry is how a COMPOSITOR has arranged it and needs a session. Use it
+to size anything drawn BEFORE a session exists \(em a boot menu, a greeter \(em
+where the compositor's current mode does not yet exist and the panel's native
+mode is the right question. The EDID hash the provider carries is deliberately
+NOT emitted;
+.B hwdp id
+is the published way to ask for identity. Nothing connected is empty output at
+status 0, an answer rather than an error.
+.TP
 .B hwdp layout
 Emit the runtime kanshi config for the connected set and print its path: inject
 each output's sticky scale into the profile named by the id, or synthesize a

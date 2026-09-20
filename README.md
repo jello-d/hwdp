@@ -17,15 +17,18 @@ hwdp id         the display-profile id for the connected monitor set
 hwdp shape      the workspace shape: single | triple
 hwdp ui         per-display UI sizing, as shell-sourceable KEY=VALUE
 hwdp geometry   one line per enabled output (a stable contract)
+hwdp panels     one line per ATTACHED panel, headless: name w h
 hwdp layout     emit the runtime kanshi config, print its path
 hwdp capture    snapshot the current arrangement into a profile
 hwdp watch      supervise the layout; fire display-change hooks
 hwdp apply      fire the changed hooks now, so a config change goes live
 ```
 
-`id`, `shape` and `ui` answer **headless** (from a TTY, over ssh, at boot, at
-a greeter) because they ask the kernel about panels when no compositor is
-there to ask. The rest need a session and say so when they do not have one.
+`id`, `shape`, `ui` and `panels` answer **headless** (from a TTY, over ssh,
+at boot, at a greeter) because they ask the kernel what is attached when no
+compositor is there to ask. The rest need a session and say so when they do
+not have one. `panels` vs `geometry` is that split exactly: what is ATTACHED,
+versus how a compositor has ARRANGED it.
 
 **Mixed DPI needs `HWDP_TARGET_PPI`.** `hwdp ui` emits one value per key
 because each consumer has one global config: kitty a single `font_size`,
