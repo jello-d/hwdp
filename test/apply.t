@@ -98,7 +98,13 @@ out=$(HWDP_HOOK_ROOT="$T/empty" HWDP_MACHINE_HOOKS="$T/empty" "$MGR" apply -q)
 [ -z "$out" ] || fail "-q must be silent, got: '$out'"
 pass "no hooks wired is a stated no-op, and -q is silent"
 
-# --- a non-executable hook is skipped, not run and not counted -------------
+# --- a NON-EXECUTABLE hook is REPORTED, never silently skipped -------------
+# Dropping a file in without `chmod +x` is the easiest integration mistake
+# there is, and skipping it quietly makes it indistinguishable from a hook that
+# ran and did nothing: the reaction never happens and nothing says so. An
+# earlier version of this test asserted the SILENT skip -- i.e. it pinned the
+# bug -- which is how the same shape survived elsewhere for ten days in a test
+# that had lost its own mode bit and therefore never ran.
 : > "$T/order"
 rm -f "$T/user/changed.d/20-boom"
 cat > "$T/user/changed.d/40-noexec" <<EOF
@@ -106,8 +112,32 @@ cat > "$T/user/changed.d/40-noexec" <<EOF
 echo NOEXEC-RAN >> "$T/order"
 EOF
 chmod 644 "$T/user/changed.d/40-noexec"
-out=$(run_apply 2>&1) || fail "apply failed: $out"
+if err=$(run_apply 2>&1); then
+  fail "a non-executable hook must make apply non-zero: $err"
+fi
 grep -q NOEXEC-RAN "$T/order" && fail "ran a non-executable hook"
-case $out in *"4 hook"*) ;;
-  *) fail "non-executable hook must not be counted, got: $out" ;; esac
-pass "a non-executable hook is skipped and not counted"
+case $err in *40-noexec*) ;;
+  *) fail "the inert hook was not named: $err" ;; esac
+case $err in *"NOT EXECUTABLE"*) ;;
+  *) fail "the message must say WHY it did not run: $err" ;; esac
+# The other hooks still run: one inert file must not stop the edge.
+order=$(tr '\n' ' ' < "$T/order" | sed 's/ $//')
+[ "$order" = "m10 u10 u90" ] \
+  || fail "an inert hook stopped the others: got '$order'"
+pass "a non-executable hook is named and counted, not silently skipped"
+
+# --- a DOT-prefixed hook is the deliberate way to disable one --------------
+# The glob does not match dotfiles, so this silence is intentional and is what
+# the message above points people at. Without it, the only way to disable a
+# hook would be the one that now reports itself as a mistake.
+rm -f "$T/user/changed.d/40-noexec"
+: > "$T/order"
+cat > "$T/user/changed.d/.50-off" <<EOF
+#!/bin/sh
+echo DISABLED-RAN >> "$T/order"
+EOF
+chmod +x "$T/user/changed.d/.50-off"
+out=$(run_apply 2>&1) || fail "a dot-disabled hook must not fail apply: $out"
+grep -q DISABLED-RAN "$T/order" && fail "ran a dot-disabled hook"
+case $out in *.50-off*) fail "a dot-disabled hook must be SILENT: $out" ;; esac
+pass "a dot-prefixed hook is disabled silently, as documented"

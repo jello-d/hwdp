@@ -67,7 +67,11 @@ if [ "${HWDP_HOOK_FAILURES:-0}" -gt 0 ]; then
   # Loud, and non-zero: each failure has already named itself on stderr, but a
   # caller in a provisioning sweep reads the STATUS, and "some of the display
   # reaction did not happen" must not read as success.
-  echo "hwdp apply: $HWDP_HOOK_FAILURES of $_n changed hook(s) failed" >&2
+  # Not "N of M": M counts the RUNNABLE hooks, and a hook that could not run
+  # for want of +x is not among them, so a ratio would read as nonsense
+  # ("1 of 1 failed" with one hook that ran perfectly well).
+  echo "hwdp apply: $HWDP_HOOK_FAILURES changed hook(s) failed or could not" \
+       "run" >&2
   exit 1
 fi
 [ -n "$_quiet" ] || echo "hwdp apply: fired changed ($_n hook(s))"

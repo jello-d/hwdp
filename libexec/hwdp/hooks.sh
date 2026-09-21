@@ -52,13 +52,35 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 # instead, and a caller that needs to report overall success reads it. The loop
 # deliberately runs in THIS shell (no pipe, no subshell) or the count would be
 # lost on return, which is the classic way a counter like this silently reads 0.
+# A NON-EXECUTABLE HOOK IS REPORTED, NEVER SILENTLY SKIPPED. Dropping a file in
+# without `chmod +x` is the easiest possible integration mistake, and skipping
+# it quietly makes the hook indistinguishable from one that ran and did nothing
+# -- the reaction never happens and nothing anywhere says so. It counts as a
+# FAILURE so a provisioning caller exits non-zero rather than reporting a tidy
+# "fired changed (3 hooks)" while a fourth sits there inert.
+#
+# THE DOCUMENTED WAY TO DISABLE A HOOK IS A LEADING DOT, not clearing +x: the
+# glob below does not match dotfiles, so `.20-mako-placement` is skipped in
+# silence and that silence is deliberate. Clearing the mode bit now says so.
+#
+# This is the same class as a test that stops running when it loses its mode
+# bit, and as a PROVIDER that is merely not executable -- which probe_run skips
+# in silence, making it look like a legitimate abstention. test/contract.t
+# already fails that one; this closes the matching hole on the hook side.
 run_hooks() {   # <edge>; sets HWDP_HOOK_FAILURES
   _edge=$1
   HWDP_HOOK_FAILURES=0
   for _root in "$HWDP_MACHINE_HOOKS" "$HWDP_HOOK_ROOT"; do
     [ -d "$_root/$_edge.d" ] || continue
     for _h in "$_root/$_edge.d"/*; do
-      [ -f "$_h" ] && [ -x "$_h" ] || continue
+      [ -f "$_h" ] || continue
+      if [ ! -x "$_h" ]; then
+        HWDP_HOOK_FAILURES=$((HWDP_HOOK_FAILURES + 1))
+        echo "${HWDP_HOOK_TAG:-hwdp}: hook $_edge.d/$(basename "$_h") is NOT" \
+             "EXECUTABLE -- it did not run (chmod +x, or rename it with a" \
+             "leading dot to disable it deliberately)" >&2
+        continue
+      fi
       "$_h" 9>&- || {
         HWDP_HOOK_FAILURES=$((HWDP_HOOK_FAILURES + 1))
         echo "${HWDP_HOOK_TAG:-hwdp}: hook $_edge.d/$(basename "$_h")" \
