@@ -244,9 +244,27 @@ do_check() {
   # Derived from what is SHIPPED, not a hand-kept list: adding a command to
   # bin/ should not also require remembering to name it here, which is how a
   # check comes to pass while a tool it never looked at is missing.
+  # TWO questions, not one, because they have different OWNERS. Whether the
+  # command was INSTALLED where we said is ours and is a failure. Whether that
+  # location is on the caller's PATH is the caller's and is a warning: an
+  # integrator running this from a non-login context (an ssh command, a cron,
+  # an agent) has no ~/.local/bin on PATH by construction, so failing there is
+  # a false finding it cannot clear. Seen 2026-09-24, where a remote check
+  # reported it against a box whose own provision had just verified clean.
+  #
+  # `command -v` alone could not tell the two apart, so a missing install and
+  # a short PATH produced the same message and the same verdict.
+  # AND IT MAY NOT BE IN OUR OWN PREFIX. An integrator may PUBLISH a command
+  # system-wide (/usr/local/bin -> /opt/<pkg>) and delete the ~/.local copy so
+  # only ONE lands on PATH; tackup does exactly that for `hwdp` itself. So look
+  # in both places before concluding anything is missing -- an earlier version
+  # of this loop checked only $_bin and reported the published command as "not
+  # installed", which is the same false-finding class it was written to fix.
   for _t in $(for _b in "$_root"/bin/*; do basename "$_b"; done); do
     if command -v "$_t" >/dev/null 2>&1; then ok "$_t present"
-    else bad "$_t not on PATH"; fi; done
+    elif [ -e "$_bin/$_t" ] || [ -e "/usr/local/bin/$_t" ]; then
+      warn "$_t installed but not on THIS shell's PATH"
+    else bad "$_t not installed ($_bin/$_t)"; fi; done
   # Every subcommand the dispatcher advertises must actually be installed --
   # a missing impl is a command that exists until someone runs it. The list is
   # READ FROM the dispatcher's own header block, the same lines its `--help`
