@@ -16,7 +16,7 @@ _skip=0
 # not: an intermittent failure was seen three times and every post-mortem had
 # only "hwdp tests FAILED" to go on, because the run printed no FAIL line and
 # the next run passed. A test can exit non-zero WITHOUT printing -- `set -eu`
-# kills a script silently on any unguarded command -- so the status is the only
+# kills a script silently on any unguarded command, so the status is the only
 # reliable signal and it was being thrown away.
 _failed=
 for _t in "$_dir"/*.t; do

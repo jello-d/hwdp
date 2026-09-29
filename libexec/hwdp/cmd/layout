@@ -1,5 +1,5 @@
 #!/bin/sh
-# hwdp layout -- emit the runtime kanshi config for the connected set and print
+# hwdp layout: emit the runtime kanshi config for the connected set and print
 # its path. `hwdp watch` runs this at supervisor start and points kanshi at it.
 #
 # This is the kanshi ADAPTER: the probe layer above it is compositor-agnostic,
@@ -13,16 +13,16 @@
 #
 # The scale is STICKY and hand-editable: it lives in $STICKY keyed by the
 # output's EDID with a per-output SIGNATURE, and is recomputed only when that
-# signature changes (a panel swap). A hand edit sticks until then -- detection
+# signature changes (a panel swap). A hand edit sticks until then, detection
 # is smart but never clobbers an override.
 #
 # SCALE MODEL. We NEVER downscale: a scale < 1 enlarges the logical space past
 # the panel and the compositor downsamples to soft, bit-mashed text. The
 # compositor hard-floors output scale at 1 anyway, so a scale < 1 can never
-# actually render -- measured, `wlr-randr --scale 0.65` exits 0 and does
+# actually render: measured, `wlr-randr --scale 0.65` exits 0 and does
 # nothing while 1.25 applies. Anything below 1 is therefore CLAMPED here, with
 # a note, rather than written into a config that would lie about the session.
-# (Older model: scale = min(1, sqrt(area/design_area)) -- retired, it blurred.)
+# (Older model: scale = min(1, sqrt(area/design_area)), retired, it blurred.)
 #
 # Above 1 IS used, but only when asked for, via HWDP_TARGET_PPI.
 #
@@ -37,7 +37,7 @@
 #     so there is nowhere to put a per-output value. Equalising the LOGICAL
 #     density instead makes one set correct on every panel.
 #
-# It costs LOGICAL REAL ESTATE, not sharpness -- a point worth stating because
+# It costs LOGICAL REAL ESTATE, not sharpness, a point worth stating because
 # it was got wrong once here. The compositor advertises
 # wp_fractional_scale_manager_v1 and wp_viewporter, so a client that supports
 # them renders at the fractional device scale: a 4K at 1.75 draws text at 1.75x
@@ -54,7 +54,7 @@ set -eu
 #
 # Physical density comes from the EDID's millimetre size, which is the only
 # thing that distinguishes a 27" 4K panel from a 13" one at the same
-# resolution -- resolution alone cannot answer this.
+# resolution, because resolution alone cannot answer this.
 #
 # Snapped to quarter steps because a compositor renders 1.25/1.5/1.75/2 well
 # and an arbitrary 1.7213 buys nothing; capped at 3 so a bogus EDID (some
@@ -85,7 +85,7 @@ resolve() {
       _scale=$(printf '%s' "$_line" | cut -f2)
     fi
   fi
-  # CLAMP a sub-1 scale, wherever it came from -- a stale entry left by the
+  # CLAMP a sub-1 scale, wherever it came from: a stale entry left by the
   # retired downscale model, or a hand edit. It cannot render (the compositor
   # floors at 1), so writing it into kanshi's config produces a file that
   # claims a scale the session will never have. Say so once, per output:
@@ -96,7 +96,7 @@ resolve() {
     _scale=1.00
   fi
   # The temp goes BESIDE $STICKY, not in /tmp. A bare `mktemp` lands on
-  # whatever /tmp is -- usually tmpfs -- and a `mv` from there to ~/.config
+  # whatever /tmp is (usually tmpfs) and a `mv` from there to ~/.config
   # crosses filesystems, where mv degrades to copy-then-delete and stops being
   # atomic. That defeats the entire point of writing through a temp: an abort
   # mid-copy leaves a HALF-WRITTEN sticky file, and this one holds every

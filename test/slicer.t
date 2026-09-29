@@ -40,7 +40,7 @@ _crops() { awk 'END { print NR }' "$T/crops"; }
 
 # Two 1000x1000 outputs side by side: a 2000x1000 union, so a 2000x1000 source
 # needs no scaling and each slice is exactly one half. Round numbers on purpose
-# -- a tiling bug should show as a wrong OFFSET, not as a rounding artefact.
+# A tiling bug should show as a wrong OFFSET, not as a rounding artefact.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh
 [ "$1" = geometry ] || exit 1
@@ -143,7 +143,7 @@ esac
 # A 1000x2000 source over the 2000x1000 union: contained, it scales to 500x1000
 # and centres, so the image occupies global x 750..1250 ONLY. DP-1 (x 0..1000)
 # therefore shows background across its left 750px and image in its right
-# 250px; DP-2 is the mirror. Round numbers on purpose -- the boundary lands on
+# 250px; DP-2 is the mirror. Round numbers on purpose: the boundary lands on
 # an exact pixel, so a fractional error shows up rather than hiding in rounding.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh
@@ -220,7 +220,7 @@ case $_o in *"no image tool"*) ;; *) fail "no-image-tool reason: $_o" ;; esac
 # --- PHYSICAL layout: the seam must match in millimetres, not pixels --------
 # Logical pixels are not a physical measure. Two panels with the SAME logical
 # width but different physical widths show a logical-space slice at different
-# physical zooms, so a feature crossing the bezel jumps size -- measured at
+# physical zooms, so a feature crossing the bezel jumps size, measured at
 # 1.80x on a real 92ppi/165ppi desk. Laying the image out in MILLIMETRES fixes
 # the seam.
 #
@@ -253,7 +253,7 @@ awk -v n="$_nm" 'BEGIN { exit !(n > 0.95) }' \
 mixed result logical layout gives (mean=$_nm)"
 
 # Slices are still written at the PIXEL size, which is independent of the
-# millimetres -- that separation is the point.
+# millimetres, and that separation is the point.
 for _o2 in WIDE NARROW; do
   _wh=$("$_img" "$T/phys/$_o2.png" -format '%wx%h' info:)
   [ "$_wh" = 1000x1000 ] \
@@ -280,7 +280,7 @@ mixed narrow slice (mean=$_nm)"
 # The physical-position derivation has two axes and the first version of this
 # file only exercised one: a row. Rows and columns are separate code paths
 # (colw/px against rowh/py), so a horizontal-only test ships the vertical half
-# unverified -- which is exactly what happened, on a desk that is also a row.
+# unverified, which is exactly what happened, on a desk that is also a row.
 #
 # Same trick turned 90 degrees: identical logical heights, a 2:1 physical
 # ratio, and a source split into thirds top-to-bottom.
@@ -307,7 +307,7 @@ mixed slice (mean=$_sm)"
 # magick, convert and vips are interchangeable BACKENDS, not shared code: each
 # has its own crop/resize/composite calls, so "it works" for one says nothing
 # about the others. Until WALLPAPER_SLICER_TOOL existed there was no way to
-# reach a non-default one, and on every box here magick wins the probe -- so
+# reach a non-default one, and on every box here magick wins the probe, so
 # the vips branch had never executed at all.
 #
 # Two independent implementations producing the same pixels is a far stronger
@@ -316,7 +316,7 @@ mixed slice (mean=$_sm)"
 #
 # HOW STRONG this is depends on which backends exist. magick and convert share
 # render_magick, so agreeing proves the two ImageMagick binaries behave alike
-# -- worth something, but not much. vips is the one with its own code path
+# Worth something, but not much. vips is the one with its own code path
 # (extract_area/thumbnail/embed rather than crop/resize/composite), so it is
 # vips-vs-ImageMagick that actually cross-checks the ALGORITHM. Until vips is
 # installed somewhere this block is a portability check, not a correctness

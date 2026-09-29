@@ -1,14 +1,14 @@
 #!/bin/sh
-# hwdp ui -- the per-display UI sizing profile, as shell-sourceable KEY=VALUE.
+# hwdp ui: the per-display UI sizing profile, as shell-sourceable KEY=VALUE.
 #
 # For apps whose font or size is a single GLOBAL config (kitty, the pixdecor
 # titlebar, mako, the lock ring) and so cannot self-scale per output the way a
 # bar can. ONE resolver, so every consumer gets the same answer; resolved
 # specific-first:
 #   1. an optional HWDP override file $PROFILES/<id>.ui (the same KEY=VALUE
-#      lines) wins PER KEY -- hand-authored for a rig that wants exact sizes;
+#      lines) wins PER KEY, hand-authored for a rig that wants exact sizes;
 #   2. else a DENSITY default: a low-res SINGLE panel (< LODPI_MAX_W wide) is
-#      `lodpi` (shrink); everything else -- a hi-res single or a >=3 wall -- is
+#      `lodpi` (shrink); everything else (a hi-res single or a >=3 wall) is
 #      `hidpi`, which MIRRORS the static configs, so a hi-res display is a
 #      strict no-op.
 #
@@ -50,7 +50,7 @@ LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
 LODPI_MAX_PPI=${LODPI_MAX_PPI:-168}
 
 # With NO display at all, say so and emit nothing. Every consumer reads these
-# keys with its own default behind them, so silence leaves them correct -- where
+# keys with its own default behind them, so silence leaves them correct, where
 # a confident wrong answer did not. This is the bug that started the split: the
 # density test used to ask a LAYOUT probe a PANEL question, get nothing at a
 # greeter, and fall through to hidpi, handing a 1920x1080 panel a 48px cursor.
@@ -89,7 +89,7 @@ fi
 # Every key below is ONE number for the whole session, because every consumer
 # has one global config: kitty one font_size, pixdecor one title_font
 # (compositor-wide), mako one font. So on panels of different physical density
-# there is no right answer to emit -- not a gap in the code, a property of the
+# there is no right answer to emit: not a gap in the code, a property of the
 # consumers. Set HWDP_TARGET_PPI to actually fix it; short of that, warn, name
 # the panels, and pick DELIBERATELY.
 #

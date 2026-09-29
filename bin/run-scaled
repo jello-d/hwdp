@@ -11,7 +11,7 @@
 # toward the app's natural size if that happens.
 #
 # BASH ON PURPOSE, and the only file here that is (wallpaper-slicer was bash by
-# accident and is now POSIX sh). This assembles someone else's ARGV -- the
+# accident and is now POSIX sh). This assembles someone else's ARGV, and the
 # gamescope options, then the env prefix, then the caller's own command and its
 # arguments, any of which may contain spaces. An ARRAY is the only way to carry
 # that without quoting it through a string and `eval`-ing it back, which is how
@@ -26,7 +26,7 @@
 # because the opposite is widely assumed (it was assumed here, and three of
 # them were needlessly rewritten as `if` before the assumption was tested).
 # `set -e` is ignored for any command of an AND-OR list except the last, so a
-# false test on the LEFT of `&&` does not exit -- verified under both bash and
+# false test on the LEFT of `&&` does not exit, verified under both bash and
 # dash. What DOES exit silently is an assignment from a failing command
 # substitution, `x=$(cmd)`; there are none here that are not guarded.
 set -eu
@@ -102,7 +102,7 @@ if [ $# -eq 0 ]; then echo "No application given!" >&2; exit 2; fi
 # HOW MUCH to magnify is a property of the DISPLAY, not of the caller. A
 # 640x480 program is unusable on a 2880x1800 panel and merely small on
 # 1920x1080, so a launcher that hardcodes a factor is tuned for whichever
-# machine its author was sitting at -- and 3x a 640x480 app is a 1920x1440
+# machine its author was sitting at, and 3x a 640x480 app is a 1920x1440
 # window, which fits one of this pair of boxes and overflows the other.
 #
 # `hwdp ui` already resolves per-display sizing for fonts, the cursor and the
@@ -183,8 +183,8 @@ fi
 # Windowed: the box is --size. Fullscreen: detect the output mode so the
 # render/upscale ratio matches the panel (-f fills the real display anyway).
 if [ "$FULLSCREEN" -eq 1 ]; then
-    # Ask `hwdp geometry` -- the PUBLIC interface, the same one wb and term
-    # use -- rather than reaching into the package's libexec. Fields 2 and 3
+    # Ask `hwdp geometry` (the PUBLIC interface, the same one wb and term
+    # use) rather than reaching into the package's libexec. Fields 2 and 3
     # are the current MODE, which is what gamescope's -W/-H want.
     #
     # This used to be a third display parser living right here: wlr-randr
@@ -219,7 +219,7 @@ INT_H=$(bc <<<"$BOX_H / $SCALE")
 # WARN, not fail: plenty of apps are happy in a small canvas, and refusing
 # would be this tool deciding it knows better. But silence here is how a
 # 426x266 canvas reached tuxtype, which wants 640x480, clipped two menu items
-# and half its title off the edges, and then magnified the crop -- reported,
+# and half its title off the edges, and then magnified the crop, reported,
 # reasonably, as "the window is fighting the scale".
 if [ "${INT_W:-0}" -lt "${MIN_CANVAS%x*}" ] \
    || [ "${INT_H:-0}" -lt "${MIN_CANVAS#*x}" ]; then
@@ -238,9 +238,9 @@ case $FILTER in
     linear)  ;;
     # `-F nearest`, NOT `-n`. gamescope has no -n: the short form was
     # `Super + N` as a runtime TOGGLE, never a command-line option, and
-    # gamescope 3.16 rejects it outright with "invalid option -- 'n'". So
+    # gamescope 3.16 rejects it outright with "invalid option 'n'". So
     # --filter=nearest never worked, and failed at the point where run-scaled
-    # has already EXECd -- which is why it read as "the app just did not
+    # has already EXECd, which is why it read as "the app just did not
     # start" rather than as a bad flag.
     nearest) GS+=(-F nearest) ;;
     integer) GS+=(-S integer) ;;

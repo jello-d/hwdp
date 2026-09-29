@@ -21,7 +21,7 @@
 #   ./setup.sh test        run the in-repo test suite (test/run)
 #   ./setup.sh version     the packaged version
 #   ./setup.sh system-tools which commands are SHARED (one per line, possibly
-#                          none) -- an integrator asks THIS rather than reading
+#                          none), so an integrator asks THIS rather than reading
 #                          what is already on disk, since an install artifact
 #                          can be stale while this answer cannot
 #
@@ -56,7 +56,7 @@ _man=$_shr/man
 _lib=$PREFIX/libexec
 # What we last placed in $_bin. In COPY mode an installed file carries no
 # marker pointing home, so a departed tool cannot be recognised from its target
-# the way a dangling symlink can -- and at a ROOT prefix that would strand a
+# the way a dangling symlink can, and at a ROOT prefix that would strand a
 # root-owned binary nobody can account for. Kept BESIDE the libexec tree, since
 # a copying install rm -rf's the tree itself.
 _manifest=$_lib/.$PKG-installed
@@ -65,7 +65,7 @@ _manifest=$_lib/.$PKG-installed
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
 DEPS_SOFT="inotifywait gamescope xrandr bc"
 # wallpaper-slicer needs ONE of these, not all of them, which a flat list
-# cannot say -- hence its own check below.
+# cannot say, hence its own check below.
 DEPS_IMAGE="magick convert vips"
 RC=0
 
@@ -77,7 +77,7 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 else _G=; _R=; _Y=; _O=; fi
 # "$*", not "$1": these are called with the message split across continuation
 # lines, which passes SEPARATE arguments. Using $1 printed the first fragment
-# and silently dropped the rest -- the soft-dep warning had been ending
+# and silently dropped the rest, and the soft-dep warning had been ending
 # mid-sentence, without even its closing paren, for as long as it has existed.
 # $* joins them with a space, which is what the wrapped call sites intend.
 ok()   { printf '  %s[OK]%s   %s\n' "$_G" "$_O" "$*"; }
@@ -89,7 +89,7 @@ _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
 
 # WHICH commands belong at a SHARED prefix. Classification is PER COMMAND and
 # never per package: the greeter runs `hwdp` for the display id and the
-# per-panel sizing, and nothing root-side runs `run-scaled` -- that is a
+# per-panel sizing, and nothing root-side runs `run-scaled`, which is a
 # session launcher, invoked from a keybind or a menu by the person sitting
 # there. Installing it system-side would put a second copy of a user-only tool
 # on PATH, which is precisely the shadow the single-copy rule forbids.
@@ -108,7 +108,7 @@ _wanted_at_prefix() {
 #
 # Copy mode is what a SHARED/SYSTEM prefix needs. The clone this installs from
 # lives under a user's home (0750, and ~/.cache is 0700), so a symlink from
-# /usr/local into it is unreadable by any other account -- a greeter following
+# /usr/local into it is unreadable by any other account, and a greeter following
 # one gets nothing. A copy can drift from the clone, so a copying install
 # RE-COPIES every run; the install sweep runs on every provision.
 #
@@ -118,7 +118,7 @@ _wanted_at_prefix() {
 # THE CHOWN IS NOT OPTIONAL, and this is vigilance's hard-won lesson rather than
 # ours: `cp -a` implies --preserve=all, which carries the SOURCE's ownership
 # across even when the copy runs as root. Installing from a clone in a user's
-# home therefore produced a system binary owned by the LOGIN USER -- one the
+# home therefore produced a system binary owned by the LOGIN USER, one the
 # greeter executes and the unprivileged account can rewrite at will. When root
 # is installing, root owns the result.
 _place() {
@@ -143,7 +143,7 @@ _unplace() {
 
 # Reclaim links THIS package left behind. `install` only ever created links for
 # the tools that exist now, so a tool that departed in a later version left its
-# link on PATH forever, dangling -- five of them survived the collapse to a
+# link on PATH forever, dangling, and five of them survived the collapse to a
 # single `hwdp` command, and a stale `hwprofile` link would have SHADOWED the
 # real one had ~/.local/bin sorted before ~/bin. Scoped to symlinks that point
 # into our own bin/, so another package's binary can never be touched.
@@ -231,7 +231,7 @@ do_uninstall() {
   elif [ -d "$_lib/$PKG" ] && [ -f "$_manifest" ]; then
     # A REAL tree where a symlink belongs: an earlier COPY install at this same
     # prefix. Left behind, it is exactly the crumb a mode switch is supposed
-    # not to leave -- and worse, the next symlinking install would nest its
+    # not to leave, and worse, the next symlinking install would nest its
     # link INSIDE it. The manifest beside it is what says this prefix is ours;
     # without that signal we would be rm -rf'ing a directory we never made.
     rm -rf "$_lib/$PKG"
@@ -262,7 +262,8 @@ do_check() {
   # AND IT MAY NOT BE IN OUR OWN PREFIX. An integrator may PUBLISH a command
   # system-wide (/usr/local/bin -> /opt/<pkg>) and delete the ~/.local copy so
   # only ONE lands on PATH; tackup does exactly that for `hwdp` itself. So look
-  # in both places before concluding anything is missing -- an earlier version
+  # in both places before concluding anything is missing, because an earlier
+  # version
   # of this loop checked only $_bin and reported the published command as "not
   # installed", which is the same false-finding class it was written to fix.
   for _t in $(for _b in "$_root"/bin/*; do basename "$_b"; done); do
@@ -292,7 +293,7 @@ do_check() {
     || bad "stale links from an older version:$_stale (re-run install)"
   # The shared probe and its providers: the tools resolve libexec from their own
   # real path, so a missing library is a broken install, while a missing PREFIX
-  # symlink is only an inconvenience -- hence bad vs warn.
+  # symlink is only an inconvenience, hence bad vs warn.
   [ -f "$_root/libexec/$PKG/probe_lib" ] && ok "libexec/probe_lib present" \
     || bad "libexec/probe_lib missing"
   [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
@@ -325,8 +326,8 @@ do_check() {
 # never FAIL: an override is a deliberate human choice, `install` cannot fix
 # one, and a check that reports what apply can never clear goes permanently red.
 #
-# Resolved by asking `hwdp ui` TWICE -- once normally, once with the profile
-# dir pointed at nothing -- so the comparison uses the package's own resolver
+# Resolved by asking `hwdp ui` TWICE: once normally, once with the profile
+# dir pointed at nothing, so the comparison uses the package's own resolver
 # rather than a second copy of the density rules that could disagree with it.
 _check_override() {
   command -v "$_root/bin/$PKG" >/dev/null 2>&1 || return 0
@@ -349,7 +350,7 @@ _check_override() {
     [ -n "$_pin" ] || continue          # absent, or empty (which is ignored)
     _cal=$(printf '%s\n' "$_bare" | sed -n "s/^$_k=//p" | head -1)
     # A pin EQUAL to the calibrated value changes nothing today and freezes the
-    # key against a future retune -- the worst kind, because nothing ever looks
+    # key against a future retune, the worst kind, because nothing ever looks
     # wrong enough to catch it. TITLE_FONT was exactly this.
     [ "$_pin" = "$_cal" ] && _noop="$_noop $_k"
     # KITTY_FONT, MAKO_FONT and LOCK_RADIUS are SHRINK-ONLY: empty is their

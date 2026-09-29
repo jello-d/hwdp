@@ -5,7 +5,7 @@
 # The bug, found live on manifestor at its greeter: `uiprofile` asked a LAYOUT
 # question (wlr-randr) to decide a PANEL fact (how big is this screen), got
 # nothing because no compositor was up, and fell silently through to its hidpi
-# else -- reporting CURSOR_SIZE=48 for a 1920x1080 panel whose answer is 32.
+# else: reporting CURSOR_SIZE=48 for a 1920x1080 panel whose answer is 32.
 . "$(dirname "$0")/harness_lib"
 harness_init probe
 
@@ -41,7 +41,7 @@ _cs=$(printf '%s\n' "$_ui" | sed -n 's/^CURSOR_SIZE=//p')
 [ "$_cs" = 32 ] \
   || fail "headless uiprofile sized for hidpi (CURSOR_SIZE=$_cs, want 32)"
 
-# The HWDP id resolves headless too -- this is the probe the greeter is chosen
+# The HWDP id resolves headless too, and this is the probe the greeter is chosen
 # by, at provision time from a TTY, so it must never need a session.
 case "$(run id)" in
   [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;

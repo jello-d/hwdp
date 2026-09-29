@@ -1,5 +1,5 @@
 #!/bin/sh
-# hwdp panels -- what is ATTACHED, one line per connected panel, HEADLESS.
+# hwdp panels: what is ATTACHED, one line per connected panel, HEADLESS.
 #
 #   <connector> <native_w> <native_h>
 #
@@ -12,8 +12,8 @@
 # WHY IT IS PUBLIC. The panels class always resolved headless, but nothing
 # exposed it: `id` hashes it away, `shape` counts it, `ui` buckets it, and none
 # of them will tell a caller how many pixels a panel has. A provisioning layer
-# that must size something rendered BEFORE any session -- a boot menu, a
-# greeter -- had no way to ask, and the alternative is a fifth copy of a DRM
+# that must size something rendered BEFORE any session (a boot menu, a
+# greeter) had no way to ask, and the alternative is a fifth copy of a DRM
 # parser in somebody else's repo. This package has already killed four.
 #
 # The size is the panel's NATIVE mode, which is the right question for anything

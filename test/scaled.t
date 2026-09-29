@@ -3,7 +3,7 @@
 #
 # The last shipped command without a test, and the one reported as misbehaving.
 # It cannot be tested by running it -- it EXECs gamescope and becomes the child
-# process -- so the thing to assert is the argv it assembles. A stub gamescope
+# process, so the thing to assert is the argv it assembles. A stub gamescope
 # that prints its own arguments turns an unrunnable exec into a readable value.
 #
 # What that covers, all of it reported or plausible misbehaviour:
@@ -25,7 +25,7 @@ cat > "$T/bin/gamescope" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*"
 EOF
-# hwdp, answering only `geometry` -- the fullscreen box comes from field 2/3.
+# hwdp, answering only `geometry`: the fullscreen box comes from field 2/3.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh
 [ "$1" = geometry ] || exit 1
@@ -101,8 +101,9 @@ chmod +x "$T/bin/hwdp"
 # This block asserts the MAPPING; the block at the end of the file asserts the
 # real gamescope accepts the result. Both are needed, and this one alone is
 # what let `-n` live: it asserted our own belief about the flag, the stub
-# echoed it back, and nothing ever asked gamescope. There is no -n -- `Super+N`
-# is a runtime toggle, not an option -- so --filter=nearest was always dead.
+# echoed it back, and nothing ever asked gamescope. There is no -n, because
+# `Super+N`
+# is a runtime toggle, not an option, so --filter=nearest was always dead.
 _o=$(run --filter=nearest /usr/bin/true)
 case $_o in
   *"-F nearest"*) ;;
@@ -179,7 +180,7 @@ case $_o in
   *) fail "--native did not make the window native*scale: $_o" ;;
 esac
 # The canvas comes back out as EXACTLY the native size, which is the whole
-# point -- an off-by-rounding here would clip the app again, quietly.
+# point: an off-by-rounding here would clip the app again, quietly.
 _o=$(run --native=800x600 --scale=2 /usr/bin/true)
 case $_o in
   *"-w 800 -h 600 -W 1600 -H 1200"*) ;;
@@ -224,7 +225,7 @@ _o=$(run --native=bogus /usr/bin/true) && fail "--native=bogus was accepted"
 # The factor belongs to the panel, not the caller: 3x a 640x480 app is a
 # 1920x1440 window, which fits a 1800-tall screen and overflows a 1080-tall
 # one. A launcher hardcoding it is tuned for whichever machine its author sat
-# at -- which is exactly what happened.
+# at, which is exactly what happened.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh
 [ "$1" = ui ] && echo "MAGNIFY=${STUB_MAGNIFY:-3}"
@@ -266,7 +267,7 @@ esac
 # alone made "works when I type it, fails from the menu" the same install.
 mkdir -p "$T/games"
 mv "$T/bin/gamescope" "$T/games/gamescope"
-# A LAUNCHER's PATH, not this shell's -- the developer's interactive PATH has
+# A LAUNCHER's PATH, not this shell's, and the developer's interactive PATH has
 # /usr/games in it and would quietly find the REAL gamescope, which is both a
 # false pass and a window on someone's screen.
 _lp=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -299,8 +300,9 @@ _o=$(run --bogus-flag /usr/bin/true) && fail "an unknown flag was accepted"
 # Everything above checks the argv against our own expectations, which is
 # exactly how `-n` survived: run-scaled emitted it for --filter=nearest, the
 # stub echoed it back, every assertion passed, and gamescope had never had an
-# opinion. gamescope has no -n at all -- `Super + N` is a runtime toggle, not a
-# command-line option -- so --filter=nearest was dead on arrival.
+# opinion. gamescope has no -n at all, because `Super + N` is a runtime toggle,
+# not a
+# command-line option, so --filter=nearest was dead on arrival.
 #
 # It failed invisibly, too. run-scaled EXECs, so the rejection surfaced after
 # the launcher was gone: "the app just did not start", with the reason on a
@@ -308,7 +310,7 @@ _o=$(run --bogus-flag /usr/bin/true) && fail "an unknown flag was accepted"
 #
 # THIS CAN BE CHECKED WITHOUT A GPU, which is the part worth knowing. gamescope
 # parses its arguments BEFORE it creates a backend, so on a box (or VM) with
-# only software Vulkan it still reaches "Failed to create backend" -- and
+# only software Vulkan it still reaches "Failed to create backend", and
 # reaching that failure is proof the arguments were ACCEPTED. An argument error
 # stops earlier and says so. That turns "run-scaled has never been near a real
 # gamescope" into a contract test that runs anywhere.

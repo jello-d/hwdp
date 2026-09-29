@@ -6,14 +6,14 @@
 # for an EDID. That answers "does the logic do what we mean". It cannot answer
 # "does this work against a kernel", and every assumption the fake encodes --
 # that `status` says exactly `connected`, that `edid` reads back despite a
-# stat size of 0, that `modes` line 1 is the native mode -- is unverified.
+# stat size of 0, that `modes` line 1 is the native mode, is unverified.
 #
 # QEMU's virtio-vga SYNTHESIZES AN EDID (edid=on,xres=,yres=), so a guest gets
 # a real DRM connector carrying a real EDID at a resolution we choose. That is
 # the whole reason this harness is worth having for hwdp specifically: the id
 # is a hash OF THAT EDID and the UI sizing is a function of that panel's width,
 # so booting the same code against two different panels tests the actual
-# contract -- a different panel is a different id, and a narrow one is lodpi.
+# contract: a different panel is a different id, and a narrow one is lodpi.
 #
 # Heavy and manual, like bootique's render harness: it needs KVM and downloads
 # a cloud image once. `test/run` stays the fast tier and this is not part of it.
@@ -70,7 +70,7 @@ runcmd:
   - |
     {
       # cloud-init's runcmd has NO HOME, and a PATH built from "$HOME/.local/
-      # bin" silently becomes "/.local/bin" without one -- a harness bug that
+      # bin" silently becomes "/.local/bin" without one, a harness bug that
       # reads exactly like the product being uninstalled.
       HOME=/root; export HOME
       mkdir -p /mnt/repo /root/hwdp
@@ -87,7 +87,7 @@ runcmd:
         # emptiness on `status` and NEVER on `[ -s edid ]`, because sysfs
         # reports a stat size of 0 for that attribute even when a read returns
         # 256 bytes. That claim is load-bearing and was never verified against
-        # a real kernel -- only against a fake tree where we chose both.
+        # a real kernel, only against a fake tree where we chose both.
         printf '  %s status=%s modes1=%s edidread=%s edidstat=%s\n' \
           "$(basename "$c")" "$(cat "$c/status" 2>/dev/null)" \
           "$(head -1 "$c/modes" 2>/dev/null)" \
@@ -134,7 +134,7 @@ EOF
 # The verdict comes from the SERIAL LOG, never qemu's exit status, and qemu is
 # bounded by a timeout: a guest that wedges must not hang the harness or leak a
 # VM. cloud-init runs once per instance-id, so both the overlay and the id are
-# fresh per boot -- a reused overlay would skip the whole test and look green.
+# fresh per boot: a reused overlay would skip the whole test and look green.
 boot_panel() {   # <xres> <yres> <console>
   _x=$1; _y=$2; _console=$3
   cat > "$_seed/meta-data" <<META

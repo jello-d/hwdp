@@ -2,14 +2,14 @@
 # lockfd.t - a hook must not inherit the supervisor's LOCK.
 #
 # `hwdp watch` guarantees a single supervisor with an flock on fd 9. File
-# descriptors survive exec, so every hook -- and everything a hook spawns --
+# descriptors survive exec, so every hook (and everything a hook spawns)
 # inherits that fd and with it a share of the lock. A hook that starts a
 # LONG-LIVED process therefore leaves the lock HELD after the supervisor is
 # gone: `flock -n` keeps failing, every later `hwdp watch` silently takes the
 # NUDGE path, and display management can never restart while reporting success.
 #
 # Found on a live box: no supervisor, no kanshi, and `fuser` on the lockfile
-# naming two waybar processes as the holders. The bug was always latent -- it
+# naming two waybar processes as the holders. The bug was always latent, and it
 # needed a hook that outlives its own invocation, and the bars hook (wb, which
 # leaves waybar running) is the first one to do that.
 #
@@ -89,7 +89,7 @@ if ( flock -n 9 ) 9>"$T/run/hwdp-watch.lock"; then
   pass "a hook's orphan does not inherit the supervisor's lock"
 else
   # Name the holder: the first version of this failed with the ORPHAN clean and
-  # a lone `sleep` holding it -- the watchdog's, which outlives the subshell
+  # a lone `sleep` holding it, the watchdog's, which outlives the subshell
   # cleanup kills. Without this the failure says "a hook inherited it" and
   # sends you after the wrong process.
   echo "--- holders:" >&2

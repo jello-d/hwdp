@@ -1,5 +1,5 @@
 #!/bin/sh
-# wallpaper-slicer -- slice one image into per-output crops that tile across a
+# wallpaper-slicer: slice one image into per-output crops that tile across a
 # multi-output Wayland layout.
 #
 # An hwdp CLIENT, like run-scaled: it asks `hwdp geometry` where the outputs
@@ -9,7 +9,7 @@
 #
 # Wayland clients that draw a wallpaper (swaylock, swaybg, a greeter background)
 # draw the SAME image on every output independently; there is no spanned mode.
-# To fake a span we PRE-SLICE the source into one crop per output -- each crop
+# To fake a span we PRE-SLICE the source into one crop per output, each crop
 # being that output's logical sub-rectangle of the image after the image is
 # cover-scaled (fill) or contained (fit) over the WHOLE output-layout union --
 # and let the caller hand each output its own slice. Every slice comes from one
@@ -21,7 +21,7 @@
 # plain logical (landscape) orientation; the compositor rotates them onto the
 # portrait panels. Pre-rotating here would double-rotate. We work entirely in
 # logical coordinates and never touch transform. (So a slice image is already
-# in logical space -- do not infer a panel's rotation from it; read the live
+# in logical space, so do not infer a panel's rotation from it; read the live
 # output transform instead.)
 #
 # Slices are cached and only recut when inputs change: the cache key is a
@@ -50,7 +50,7 @@
 # POSIX sh under `set -eu`, per the house rule. It was bash only by accident of
 # where it was written: the bashisms were `local`, `<<<` and `read < <(...)`,
 # all convenience rather than necessity. (run-scaled is bash for a REAL reason
-# -- it builds gamescope's argv in an array -- and says so.)
+# (it builds gamescope's argv in an array) and says so.)
 #
 # `set -e` here is not cosmetic, and what it does and does NOT catch was
 # measured rather than assumed. It catches an assignment from a failing command
@@ -60,8 +60,9 @@
 # case would have died before reaching its own error message). Both are
 # rewritten below.
 #
-# It does NOT catch a false test on the left of `&&` -- `set -e` is ignored for
-# any command of an AND-OR list except the last -- so the `[ ... ] && ...`
+# It does NOT catch a false test on the left of `&&`, because `set -e` is
+# ignored for
+# any command of an AND-OR list except the last, so the `[ ... ] && ...`
 # lines here are safe as written, under dash and bash alike. Believing
 # otherwise costs a pile of needless `if` rewrites.
 set -eu
@@ -99,7 +100,7 @@ if [ ! -r "$src" ]; then log "source not readable: '$src'"; exit 1; fi
 # WALLPAPER_SLICER_TOOL pins one instead of taking the first found. It exists
 # because the backends are INTERCHANGEABLE but not identical code, and without
 # a way to select one the vips branch was unreachable on any box that also has
-# ImageMagick -- which is every box here, so it went unexecuted entirely. The
+# ImageMagick, which is every box here, so it went unexecuted entirely. The
 # test uses it to run the same assertions against each backend present and to
 # check they agree.
 img_tool=${WALLPAPER_SLICER_TOOL:-}
@@ -137,10 +138,11 @@ fi
 # all and a distorted aspect, measured at 1:4 into 1:1 on a 1000x2000 source
 # over a 2000x1000 union. In `fill` the image covers the output completely, so
 # the intersection IS the output rect and this reduces to exactly the old
-# single crop+resize -- the hot path is unchanged.
+# single crop+resize, so the hot path is unchanged.
 #
 # POSIX sh has no `local`, so the working names are underscore-prefixed to keep
-# them clear of the caller's -- $iw/$ih in particular are globals this is also
+# them clear of the caller's, since $iw/$ih in particular are globals this is
+# also
 # PASSED, and an unprefixed assignment would write straight through them.
 # slice_rects: the geometry, and nothing else. Sets _sx.._sh (the source region
 # to take) and _dx.._dh (where it lands inside the output), plus _case naming
@@ -209,7 +211,7 @@ render_magick() {   # src dst ow oh
 }
 
 # stderr is NOT suppressed here. It was, and combined with the old lack of
-# `set -e` a vips failure produced a missing slice and a zero exit -- the
+# `set -e` a vips failure produced a missing slice and a zero exit, the
 # silent-success path the fail-loud rule forbids. Now a failure aborts and
 # carries vips's own message.
 #
@@ -239,8 +241,8 @@ render_vips() {   # src dst ow oh
 #
 # The output's RECT (args 7-10) and the slice's PIXEL SIZE (args 13-14) are
 # separate arguments because they are separate things: the rect is measured in
-# whatever space the layout is being done in -- millimetres when every panel
-# reports a size -- while the file must still be written at the output's
+# whatever space the layout is being done in, millimetres when every panel
+# reports a size, while the file must still be written at the output's
 # logical pixel dimensions or the client stretches it. They are equal only when
 # the layout is in logical space.
 make_slice() {
@@ -264,26 +266,26 @@ make_slice() {
 # does not. Logical pixels are not a physical measure: 1920 of them span 530mm
 # on one panel and 3840 span 590mm on another, so an image laid out across the
 # LOGICAL union is continuous in pixels while jumping 1.80x in physical size at
-# the bezel -- measured on a real mixed desk, not theorised. Laying it out in
+# the bezel, measured on a real mixed desk, not theorised. Laying it out in
 # MILLIMETRES makes the seam match physically, which is what "one image across
 # the desk" is supposed to mean.
 #
 # On panels of matched density the two spaces are proportional, so this changes
-# nothing there -- the 3-panel wall is three identical AW2725Qs and gets byte
+# nothing there: the 3-panel wall is three identical AW2725Qs and gets byte
 # identical slices either way.
 #
 # The physical POSITION of an output is not reported by anything, so it is
 # derived: outputs sharing a logical x form a COLUMN, columns are ordered by
 # that x, and each column's physical offset is the total physical width of the
 # columns before it (rows likewise). That is exact for a row, a stack or a
-# grid, and it is the arrangement the logical layout already asserts -- we are
+# grid, and it is the arrangement the logical layout already asserts,- we are
 # only restating it in millimetres. Bezels are ignored; nothing reports them.
 #
 # hwdp geometry's published line is
 #   NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENT MM_W MM_H
 # so this reads fields 1, 6, 7, 8, 9, 11, 12.
 #
-# This USED to be a fourth wlr-randr parser -- the package already had one in
+# This USED to be a fourth wlr-randr parser, and the package already had one in
 # the geometry command, one in the kanshi adapter and one in the magnifier, and
 # each had to learn the same gotchas separately (a mode line can read
 # "(preferred, current)", so a bare /\(current\)/ match silently sees nothing).
@@ -433,7 +435,7 @@ EOF
 
 [ "$cache_valid" -eq 0 ] && printf '%s' "$fp" > "$fp_file"
 # The sweep keys on the DIR's mtime (a top-level ~/.cache entry), which a file
-# touch does not bump -- so bump the dir itself.
+# touch does not bump, so bump the dir itself.
 touch "$outdir" 2>/dev/null || true
 
 exit 0

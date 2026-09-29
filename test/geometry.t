@@ -19,8 +19,8 @@ export HWDP_MACHINE_PROVIDERS="$T/no-machine-providers"
 #
 # The line ends with the panel's PHYSICAL size, 600x340mm here, straight from
 # the provider record's mm fields. It is APPENDED rather than inserted so every
-# existing consumer's field numbers still hold -- wb reads 1/6/8/9, run-scaled
-# 2/3, the slicer 1/6/7/8/9 -- and a consumer wanting millimetres reads 11/12.
+# existing consumer's field numbers still hold: wb reads 1/6/8/9, run-scaled
+# 2/3, the slicer 1/6/7/8/9, and a consumer wanting millimetres reads 11/12.
 mkdir -p "$T/bin"
 cat > "$T/bin/mybackend" <<'EOF'
 #!/bin/sh
@@ -33,7 +33,7 @@ _out=$(HWDP_GEOM_BACKEND="$T/bin/mybackend" "$DG" geometry --now 2>&1)
 
 # 2) the built-in wlr-randr backend parses a rotated output (separate preferred
 # + current lines), a COMBINED-flag output (one mode that is "(preferred,
-# current)" -- the real wlr-randr form when the current mode is also preferred,
+# current)", the real wlr-randr form when the current mode is also preferred,
 # which a bare /\(current\)/ match missed), and a disabled output (dropped).
 cat > "$T/bin/wlr-randr" <<'EOF'
 #!/bin/sh

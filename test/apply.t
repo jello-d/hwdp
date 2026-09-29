@@ -9,14 +9,14 @@
 #
 # What is pinned here:
 #   1. it runs the changed hooks, machine root BEFORE user root;
-#   2. it does NOT run `pre` -- that is a startup ORDERING edge, and firing it
+#   2. it does NOT run `pre`, which is a startup ORDERING edge, and firing it
 #      at an arbitrary moment asserts an invariant with nothing to order
 #      against;
 #   3. a failing hook does not stop the others (fail-soft, as on every edge)
 #      but DOES make the overall status non-zero, so a provisioning run that
 #      wires this in cannot read a half-done reaction as success;
 #   4. no hooks wired is a legitimate no-op that SAYS so, rather than exiting
-#      silently -- "did nothing" and "found nothing to do" look identical from
+#      silently: "did nothing" and "found nothing to do" look identical from
 #      outside and only one is a problem;
 #   5. hooks run with fd 9 CLOSED, the same rule the supervisor needs. apply
 #      holds no lock, so this is about the SHARED runner keeping one behaviour:
@@ -103,7 +103,7 @@ pass "no hooks wired is a stated no-op, and -q is silent"
 # there is, and skipping it quietly makes it indistinguishable from a hook that
 # ran and did nothing: the reaction never happens and nothing says so. An
 # earlier version of this test asserted the SILENT skip -- i.e. it pinned the
-# bug -- which is how the same shape survived elsewhere for ten days in a test
+# bug, which is how the same shape survived elsewhere for ten days in a test
 # that had lost its own mode bit and therefore never ran.
 : > "$T/order"
 rm -f "$T/user/changed.d/20-boom"

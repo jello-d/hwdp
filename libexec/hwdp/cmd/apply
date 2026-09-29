@@ -1,11 +1,12 @@
 #!/bin/sh
-# hwdp apply -- fire the `changed` edge NOW, so the live session catches up with
+# hwdp apply: fire the `changed` edge NOW, so the live session catches up with
 # what hwdp currently reports.
 #
 # WHY THIS EXISTS. Every other path into the hooks is driven by a DISPLAY event:
 # `hwdp watch` fires `changed` when the layout comes up, when the connected set
 # changes, and after a compositor-config burst. But the answers hwdp gives are
-# not a function of the displays alone -- a per-rig `<id>.ui` override, or the
+# not a function of the displays alone, because a per-rig `<id>.ui` override, or
+# the
 # calibrated sizing itself, can change with no display event anywhere. Nothing
 # watches those, so the hooks never run, and a consumer that CACHES its answer
 # keeps serving the old one indefinitely.
@@ -22,8 +23,8 @@
 # process invites two owners of one file. This re-runs the REACTIONS only. Use
 # `hwdp layout` to regenerate, or `hwdp watch` to nudge a running supervisor.
 #
-# `changed` ONLY, deliberately. `pre` is an ORDERING edge -- it exists to land
-# window rules before autostart apps map their first window -- so firing it at
+# `changed` ONLY, deliberately. `pre` is an ORDERING edge: it exists to land
+# window rules before autostart apps map their first window, so firing it at
 # an arbitrary moment asserts a startup-only invariant with nothing to order
 # against. `changed` is the re-assert edge, and the one every hook is already
 # written to be idempotent on.

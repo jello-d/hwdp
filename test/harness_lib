@@ -12,7 +12,7 @@
 # That is not belt and braces. mgr.t stubbed a binary on PATH and relied on the
 # stub to keep the code under test away from the real config; then `watch`
 # changed to call its sibling IN PROCESS, the stub went dead, and the run
-# reached the developer's actual ~/.config -- about to write a sticky scale
+# reached the developer's actual ~/.config, about to write a sticky scale
 # into it. The test had not changed; the code's path to $HOME had. Pinning the
 # environment here is the only version of this that cannot rot, because a new
 # test gets it without knowing it needs it.
@@ -36,7 +36,7 @@ harness_init() {   # <name>
   export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR
 
   # The machine roots are absolute and outside $T by definition, so they cannot
-  # be relocated -- only pointed somewhere harmless. A provider or hook dropped
+  # be relocated, only pointed somewhere harmless. A provider or hook dropped
   # into /etc on the developer's box must never decide a test run.
   HWDP_MACHINE_PROVIDERS=$T/no-machine-providers
   HWDP_MACHINE_HOOKS=$T/no-machine-hooks

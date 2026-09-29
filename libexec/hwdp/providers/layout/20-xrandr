@@ -5,7 +5,7 @@
 # and no refresh rate. The reported geometry already reflects any active
 # rotation, so logical w/h come out right; what is missing is what these tools
 # do not need on X11. A rotated or fractionally scaled X11 head that ever DOES
-# need exact values is a reason to write a richer provider and drop it in -- not
+# need exact values is a reason to write a richer provider and drop it in, not
 # a reason to complicate this one.
 set -u
 [ -n "${DISPLAY:-}" ] || exit 1

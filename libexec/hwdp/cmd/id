@@ -1,5 +1,5 @@
 #!/bin/sh
-# hwdp id -- the HWDP (hardware display profile id) for the CONNECTED set.
+# hwdp id: the HWDP (hardware display profile id) for the CONNECTED set.
 #
 # A compound id over the connected connectors' EDIDs, so it names the MONITOR
 # SET regardless of order or which connector each panel sits on. Empty, not the

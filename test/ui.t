@@ -113,7 +113,7 @@ pass "an override wins per key and leaves the rest on the set"
 
 # --- AN EMPTY OVERRIDE VALUE IS THE SAME AS AN ABSENT ONE ------------------
 # Each key is applied only when non-empty, so `KEY=` cannot force an empty
-# answer -- it is simply ignored. Worth pinning because it reads like the
+# answer: it is simply ignored. Worth pinning because it reads like the
 # obvious way to say "use the consumer's own default", and silently is not.
 set_panel 1920
 printf 'LOCK_RADIUS=\nCURSOR_SIZE=\n' > "$T/profiles/$_id.ui"
@@ -130,7 +130,7 @@ pass "an empty override value is ignored, not honoured as empty"
 # --- HWDP_TARGET_PPI selects the SET outright, ignoring panel width --------
 # With a target set, every output is scaled toward one logical density, so the
 # width of any one panel stops being the question. Below LODPI_MAX_PPI takes
-# the lodpi calibration, at or above takes hidpi -- on the SAME panel.
+# the lodpi calibration, at or above takes hidpi, on the SAME panel.
 set_panel 1920
 _t_hi=$(HWDP_TARGET_PPI=200 run ui) || fail "ui failed with a hi target"
 [ "$(val "$_t_hi" CURSOR_SIZE)" = 48 ] \

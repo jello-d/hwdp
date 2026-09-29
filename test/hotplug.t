@@ -5,7 +5,7 @@
 # The gap this closes was found on real hardware: `watch` inotified wayfire.ini
 # and nothing else, generated kanshi's config once at startup and never again.
 # A monitor was plugged in and the runtime config still described the panel it
-# replaced -- four days stale, with `watch` up the whole time. kanshi therefore
+# replaced, four days stale, with `watch` up the whole time. kanshi therefore
 # had no profile matching the new arrangement, the new panel kept whatever the
 # compositor gave it, and the `changed` hooks never fired.
 #
@@ -32,7 +32,7 @@ done
 # A wlr-randr stub that DERIVES from the same fake DRM tree, so the layout side
 # and the panels side cannot disagree about what is plugged in. Without this
 # the layout provider answers nothing, cmd/layout writes no config, and the
-# "was it regenerated?" assertion degrades to none-vs-something -- true by
+# "was it regenerated?" assertion degrades to none-vs-something, true by
 # accident rather than because a regeneration happened.
 cat > "$T/bin/wlr-randr" <<EOF
 #!/bin/sh
@@ -114,7 +114,7 @@ kill -0 "$_mgr" 2>/dev/null \
 # --- quiet means QUIET ------------------------------------------------------
 # The poller must fire on a CHANGE, not on every tick. A poller that nudged
 # each interval would restart kanshi and re-run every hook a few times a
-# minute, forever -- worse than the gap it closes.
+# minute, forever, which is worse than the gap it closes.
 _before=$(_runs)
 sleep 3                      # three poll intervals with nothing changing
 [ "$(_runs)" -eq "$_before" ] \
@@ -155,7 +155,7 @@ printf '%s' edid-replacement > "$T/drm/card0-DP-1/edid"
 _wait_runs $((_before + 1)) 15 \
   || fail "swapping the monitor on a connector fired no changed pass"
 
-# The supervisor must still own no zombies -- the poller is a tracked child and
+# The supervisor must still own no zombies: the poller is a tracked child and
 # a mis-handled one would be reaped nowhere (mgr.t's lesson, same shape).
 _z=$(ps -eo ppid=,state= 2>/dev/null \
      | awk -v p="$_mgr" '$1 == p && $2 ~ /^Z/' | wc -l)
@@ -164,8 +164,8 @@ _z=$(ps -eo ppid=,state= 2>/dev/null \
 kill "$_mgr" 2>/dev/null
 # --- the detached supervisor must LOG, not discard ---------------------------
 # It daemonizes, so its stdout/stderr used to go to /dev/null and everything it
-# reports -- the hotplug announcements above, "kanshi gone, restarting", a
-# failing hook -- was unreachable. A supervisor whose whole job is reacting in
+# reports (the hotplug announcements above, "kanshi gone, restarting", a
+# failing hook) was unreachable. A supervisor whose whole job is reacting in
 # the background, unobserved, has to leave a record or it cannot be debugged
 # after the fact, and display faults are almost always after the fact.
 #

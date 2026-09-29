@@ -1,5 +1,5 @@
 #!/bin/sh
-# hwdp capture -- snapshot the CURRENT arrangement into a profile named by the
+# hwdp capture: snapshot the CURRENT arrangement into a profile named by the
 # connected set's id, so a rig is onboarded by "arrange it once, then capture"
 # instead of hand-editing a config. Writes $PROFILES/<id>.conf, prints its path.
 #
@@ -30,7 +30,7 @@ _dst=$PROFILES/$_id.conf
 mkdir -p "$PROFILES"
 
 # Clean up the temp on ANY exit, including the `set -e` aborts that the writes
-# below can trigger -- a stray .tmp beside the profiles is confusing litter.
+# below can trigger, and a stray .tmp beside the profiles is confusing litter.
 _tmp=$(mktemp "$PROFILES/.$_id.conf.XXXXXX")
 trap 'rm -f "$_tmp"' EXIT HUP INT TERM
 {

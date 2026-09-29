@@ -21,13 +21,13 @@
 # (virtio-gpu venus), not a better software stack.
 #
 # What this base IS still good for: running those apps DIRECTLY at a hostile
-# resolution, which answers "how bad is this app on a 2880x1800 panel" -- the
+# resolution, which answers "how bad is this app on a 2880x1800 panel",- the
 # question that motivates magnifying it in the first place. The gamescope
 # probe stays because a Mesa or gamescope release could change the answer, and
 # a one-line report beats re-deriving this.
 #
 # The apps are the ones a launcher here actually magnifies: tuxtype, tipp10 and
-# nlkt are packaged, fixed-layout X11 programs -- which is exactly why they are
+# nlkt are packaged, fixed-layout X11 programs, which is exactly why they are
 # hostile on a hi-res panel and why they get wrapped in the first place.
 #
 #   sh test/vm/scaled-base          # ~10-20 min, once per suite
@@ -97,7 +97,7 @@ runcmd:
 
       echo "=== does gamescope initialise with no GPU? ==="
       # /usr/games is where Debian puts gamescope and is NOT on a non-login
-      # PATH -- the same gap that made run-scaled fail from a launcher.
+      # PATH, the same gap that made run-scaled fail from a launcher.
       export PATH="/usr/games:$PATH"
       # Headless on purpose: this asks whether gamescope can come up at all,
       # not whether it can drive a display yet.

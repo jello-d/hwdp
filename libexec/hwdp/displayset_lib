@@ -1,10 +1,10 @@
-# libexec/hwdp/displayset_lib -- the DISPLAY SET view, shared by the subcommands
+# libexec/hwdp/displayset_lib: the DISPLAY SET view, shared by the subcommands
 # that reason about "the monitors on this box" rather than about one output.
 # Sourced after (or instead of) probe_lib, which it pulls in itself.
 #
 # probe_lib answers what the hardware and the compositor report. This file is
 # the layer above: where this box keeps its per-display-set state, and the
-# two coarsenings every consumer asks for -- the output list in the shape
+# two coarsenings every consumer asks for: the output list in the shape
 # kanshi needs, and the panel COUNT bucketed into a workspace shape.
 #
 # Everything density- or layout-specific stays in the subcommand that owns it
@@ -30,7 +30,7 @@ TAB=$(printf '\t')
 # provider's: an output is keyed by its EDID "Make Model Serial" and its sticky
 # scale is signed with its physical size, so one missing either is not one we
 # can place. The `enabled` test used to be implicit -- a disabled output has no
-# current mode, so it fell out by accident -- and is explicit here.
+# current mode, so it fell out by accident, and is explicit here.
 outputs() {
   probe_layout | awk -F"$TAB" -v OFS="$TAB" '
     $1 != "" && $12 == 1 && $3 + 0 > 0 && $5 + 0 > 0 {
@@ -38,7 +38,7 @@ outputs() {
     }'
 }
 
-# shape: the workspace SHAPE for the connected set -- a COARSENING of the HWDP
+# shape: the workspace SHAPE for the connected set, a COARSENING of the HWDP
 # id to just the panel COUNT, since the grid, names, window rules and wallpaper
 # are a function of HOW MANY panels, not which ones. A wall (>=3) is `triple`,
 # anything less is `single` (the same >=3 threshold mako uses). Empty with no
@@ -63,7 +63,7 @@ shape() {
 # panel_width: the width in px of the first display, for density decisions.
 # Layout first then panels, exactly as shape does. Prints nothing when no
 # display answers, or when the kernel lists a connector with no modes (width 0
-# means UNKNOWN, not tiny -- a caller must not read it as a small panel).
+# means UNKNOWN, not tiny, and a caller must not read it as a small panel).
 panel_width() {
   _pw=$(outputs | head -1 | cut -f3)
   [ -n "$_pw" ] || _pw=$(probe_panels | head -1 | cut -f3)

@@ -1,7 +1,7 @@
 #!/bin/sh
 # hwdp PANELS provider: the kernel's DRM view, $HWDP_DRM/<connector>/.
 #
-# HEADLESS by design and by requirement -- this is the probe that has to answer
+# HEADLESS by design and by requirement: this is the probe that has to answer
 # from a TTY, over ssh, at boot and at the greeter, before any compositor
 # exists. It is why the greeter can be chosen by hardware at provision time.
 #
@@ -20,7 +20,7 @@ for _c in "$DRM"/*-*/; do
   _h=$(sha256sum < "$_c/edid" 2>/dev/null | cut -d' ' -f1)
   [ -n "$_h" ] && [ "$_h" != "$_EMPTY_SHA" ] || continue
   # The connector's first listed mode is its preferred (native) one. Absent --
-  # a connector the kernel has not probed a mode list for -- report 0 rather
+  # a connector the kernel has not probed a mode list for, so report 0 rather
   # than guess; a consumer sizing UI from it can then tell it does not know.
   _m=$(head -1 "$_c/modes" 2>/dev/null)
   case $_m in

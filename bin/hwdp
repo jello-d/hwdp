@@ -1,5 +1,5 @@
 #!/bin/sh
-# hwdp -- hardware display profile: recognise which monitors are present, lay
+# hwdp: hardware display profile, recognise which monitors are present, lay
 # out and size the workspace for them, keyed on the HARDWARE (an EDID-derived
 # id) and never on a hostname.
 #
@@ -17,15 +17,15 @@
 #   hwdp watch      supervise the layout; fire display-change hooks
 #   hwdp apply      fire the changed hooks now, so a config change goes live
 #
-# `id`, `shape`, `ui` and `panels` answer HEADLESS -- from a TTY, over ssh, at
-# boot, at the greeter -- because they ask the kernel what is attached when no
+# `id`, `shape`, `ui` and `panels` answer HEADLESS, from a TTY, over ssh, at
+# boot, at the greeter, because they ask the kernel what is attached when no
 # compositor is there to ask. `geometry`, `layout`, `capture` and `watch` need
 # a session, and say so when they do not have one. `panels` vs `geometry` is
 # that split exactly: what is ATTACHED, versus how it has been ARRANGED.
 #
 # `apply` is neither: it runs the integrator's hooks and holds no opinion about
 # what they need. Whether a session must exist first is a property of the hooks
-# wired in, so the caller decides when to fire it -- keeping this side pure
+# wired in, so the caller decides when to fire it, keeping this side pure
 # mechanism, as with everything else about the hook layer.
 #
 # run-scaled is the package's OTHER command and deliberately not a subcommand

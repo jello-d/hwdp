@@ -27,7 +27,7 @@ done
 
 # check runs against the sandbox: put the sandbox bin FIRST on PATH so
 # `command -v` resolves the just-linked tools, not whatever the box has. Deps
-# may be absent here, so do not gate on RC -- only that it reports the tools.
+# may be absent here, so do not gate on RC, only that it reports the tools.
 PATH="$XDG_BIN_HOME:$PATH" sh "$HERE/setup.sh" check >"$T/check.out" 2>&1 \
   || true
 grep -q '\[OK\].*hwdp present' "$T/check.out" \
@@ -51,7 +51,7 @@ rm -f "$XDG_BIN_HOME/theirs"
 # and both placement commands NEST rather than replace against one: `cp -a`
 # puts the tree a level down, and `ln -sfn` buries the link at
 # libexec/hwdp/hwdp. The symlink branch used to miss this, so the stale tree
-# went on resolving in front of the new link -- silently, because the tools
+# went on resolving in front of the new link, silently, because the tools
 # find their libexec from their own real path and kept working. Found on a live
 # box by check's WARN; pinned here so it cannot come back.
 rm -rf "$PREFIX/libexec/hwdp"
@@ -87,7 +87,7 @@ sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
 # COPY mode: what a SHARED/SYSTEM prefix needs, because the clone lives under a
 # 0750 home and a symlink from /usr/local into it is unreadable by the greeter
 # account that has to follow it. The copy must be a REAL FILE, must resolve its
-# own libexec from its new home, and must still prune a departed tool -- which
+# own libexec from its new home, and must still prune a departed tool, which
 # a copy cannot advertise the way a dangling symlink does, hence the manifest.
 # XDG_BIN_HOME/XDG_DATA_HOME are set above and OVERRIDE PREFIX for those dirs,
 # so relocating an install means overriding all three. Worth knowing before
@@ -98,7 +98,7 @@ sys() { env HWDP_INSTALL_COPY=1 PREFIX="$C" XDG_BIN_HOME="$C/bin" \
 sys install >/dev/null || fail "copy-mode install errored"
 
 # PER COMMAND, not per package: a shared prefix gets only what something
-# root-side actually runs. `run-scaled` is a session launcher -- publishing it
+# root-side actually runs. `run-scaled` is a session launcher, so publishing it
 # system-side would put a second copy of a user-only tool on PATH, which is the
 # shadow the single-copy rule exists to forbid.
 [ -e "$C/bin/hwdp" ] || fail "the shared command was not installed"
@@ -114,7 +114,7 @@ grep -qx run-scaled "$C/libexec/.hwdp-installed" \
 # each goes, and the only honest source is the package. Reading an install
 # ARTIFACT instead (a published link) lets a STALE one outrank the package, so
 # a command reclassified from shared to user-only loses its correct copy to a
-# leftover from the old classification -- which is exactly what happened to
+# leftover from the old classification, which is exactly what happened to
 # run-scaled on both boxes.
 _st=$(sh "$HERE/setup.sh" system-tools) || fail "system-tools exited non-zero"
 [ "$_st" = hwdp ] || fail "system-tools said '$_st', want just hwdp"
@@ -191,7 +191,7 @@ else
 
   # A pin EQUAL to what the set already gives. Changes nothing today and
   # FREEZES the key against a future retune, so nothing ever looks wrong
-  # enough to catch it -- the worst kind, and TITLE_FONT was exactly this.
+  # enough to catch it: the worst kind, and TITLE_FONT was exactly this.
   _cal=$(KANSHI_PROFILES=$T/nope sh "$HERE/bin/hwdp" ui 2>/dev/null \
          | sed -n 's/^TITLE_FONT=//p')
   printf 'TITLE_FONT=%s\n' "$_cal" > "$_prof/$_id.ui"

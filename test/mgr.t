@@ -3,7 +3,7 @@
 #
 # Two properties, both regressions we have actually been bitten by:
 #   1. NO ZOMBIES. The settle used to be a tracked background child cancelled
-#      with `kill`, and POSIX sh reaps a background child only on `wait` -- so
+#      with `kill`, and POSIX sh reaps a background child only on `wait`, so
 #      each burst left a `<defunct>` child and the last settle of a
 #      session was never reaped at all. The settle is now detached, so the
 #      supervisor must own no children in state Z.
@@ -24,7 +24,7 @@ python3 -c 'import socket,sys
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$T/run/wayland-test"
 
 # Stubs. pgrep/pkill are stubbed above all so this test can never adopt -- and
-# then, at teardown, KILL -- a real kanshi on the developer's own box.
+# then, at teardown, KILL, a real kanshi on the developer's own box.
 cat > "$T/bin/kanshi" <<'EOF'
 #!/bin/sh
 exec sleep 300
@@ -54,7 +54,7 @@ chmod +x "$T/hooks/changed.d/10-record"
 
 # HOME and the profile paths are pinned into $T because `watch` brings the
 # layout up through cmd/layout IN PROCESS, not through a PATH lookup a stub
-# could intercept -- so without these the run would write a real sticky scale
+# could intercept, so without these the run would write a real sticky scale
 # into the DEVELOPER's ~/.config/kanshi. DISPLAY is cleared and the provider
 # roots emptied so no probe can answer and the layout is deterministic.
 XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test DISPLAY= \

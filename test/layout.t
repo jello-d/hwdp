@@ -134,8 +134,8 @@ out2=$(run capture)
   || fail "an unchanged re-capture touched the profile"
 [ -e "$out.bak" ] && fail "an unchanged re-capture made a needless backup" || :
 
-# When the file DOES differ from what capture would write -- a hand edit is the
-# case that matters -- the old one is kept and the overwrite is announced.
+# When the file DOES differ from what capture would write (a hand edit is the
+# case that matters) the old one is kept and the overwrite is announced.
 # Editing the file is the direct way to reach that branch; it needs no stub
 # gymnastics, and a hand edit is literally the thing being protected.
 printf '# my own notes\n' >> "$out"
@@ -187,9 +187,9 @@ gen2=$(run layout)
   || fail "a second emit produced different bytes"
 grep -q '^ *output .* scale ' "$gen" || fail "emit did not inject a scale"
 
-# --- emit: the injected scale is ALWAYS 1.00 -- NEVER a downscale. Even with a
-# design area (5760x3600) LARGER than the 4K panel -- where the RETIRED sqrt
-# model gave 0.65 -- scale_for floors at 1, so emit injects 1.00. Proves the
+# --- emit: the injected scale is ALWAYS 1.00, NEVER a downscale. Even with a
+# design area (5760x3600) LARGER than the 4K panel, where the RETIRED sqrt
+# model gave 0.65: scale_for floors at 1, so emit injects 1.00. Proves the
 # downscale path is gone (the floor policy; see the fixed-pixel gotcha).
 scale_of() {   # <file> <serial> -> the scale on that panel's output line
   grep "$2" "$1" | sed -n 's/.* scale \([0-9.]*\).*/\1/p'
@@ -210,7 +210,7 @@ dsgen=$(emit_ds)
 # --- resolve stickiness: a hand-edited sticky value SURVIVES a matching output
 # signature (override honoured, not clobbered), and a CHANGED signature forces a
 # recompute (the panel-swap path). Computed is now 1.00, so a 2.00 override (a
-# HiDPI upscale -- the only kind that means anything under the >=1 floor) is
+# HiDPI upscale, the only kind that means anything under the >=1 floor) is
 # unmistakably distinct from a recompute. --------------------------------------
 tab=$(printf '\t')
 edid='Dell Inc. AW2725Q AAA111'
@@ -239,7 +239,7 @@ grep -qi 'no matching layout profile' "$gen" || fail "emit did not synthesize"
 uphas() { printf '%s\n' "$up" | grep -q "$1"; }
 
 # hidpi: the shrink keys are EMPTY (each app's own config value stands) and
-# TITLE_FONT is the hidpi default -- a strict no-op on a hi-res display.
+# TITLE_FONT is the hidpi default, a strict no-op on a hi-res display.
 up=$(run ui)
 uphas '^KITTY_FONT=$'  || fail "uiprofile hidpi: KITTY_FONT should be empty"
 uphas '^MAKO_FONT=$'   || fail "uiprofile hidpi: MAKO_FONT should be empty"
@@ -273,7 +273,7 @@ rm -f "$T/profiles/$hwdp.ui"
 # --- SCALE MODEL ------------------------------------------------------------
 # Default: 1.00 for every output, whatever its density. Physical differences
 # are absorbed by the UI NUMBERS instead (see `hwdp ui`), which is exact for one
-# panel or a wall of identical ones -- and is what every existing box does, so
+# panel or a wall of identical ones, and is what every existing box does, so
 # it must not change unless asked for.
 _o=$(run layout) || fail "layout failed"
 grep -q 'scale 1.00' "$_o" || fail "the default scale model is not 1.00"
@@ -283,7 +283,7 @@ grep -qE 'scale [02-9]' "$_o" \
 # HWDP_TARGET_PPI scales each output so its LOGICAL density lands near the
 # target. That is what makes MIXED densities work, and it is the only thing
 # that can: every consumer of `hwdp ui` has one global config, so there is
-# nowhere to put a per-output value -- equalising the logical density instead
+# nowhere to put a per-output value, so equalising the logical density instead
 # makes one set correct on every panel.
 #
 # The stub panels are 3840x2160 over 590mm = 165 ppi. At a 96 ppi target that
@@ -323,7 +323,7 @@ grep -q 'cannot' "$T/scale.err" \
 # The rule agreed with the user: fail loud, and do not break the session. So a
 # mixed pair must (a) say clearly that it is unsupported, (b) still emit a full
 # set of keys so no consumer is left guessing, (c) exit 0, and (d) size for the
-# DENSEST panel -- oversized on a coarse panel is clumsy but readable, whereas
+# DENSEST panel: oversized on a coarse panel is clumsy but readable, whereas
 # sizing for the coarse one is microscopic on a dense one.
 #
 # The stub mirrors the real pair this was found on, because that is what makes
@@ -390,7 +390,7 @@ printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
 # --- with a TARGET, the same pair is SUPPORTED, so no warning ----------------
 # layout has equalised their logical density, so there is nothing to warn about
 # and the numbers come from the TARGET rather than from any one panel. `ui` and
-# `layout` key off the same variable precisely so they cannot disagree -- they
+# `layout` key off the same variable precisely so they cannot disagree, and they
 # did once, and that is what put 244ppi fonts on a 92ppi panel.
 _out=$(HWDP_TARGET_PPI=96 run ui 2>"$T/tgt.err") \
   || fail "ui failed with a target"
@@ -403,7 +403,8 @@ _out=$(HWDP_TARGET_PPI=240 run ui 2>/dev/null) \
 printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
   || fail "a 240ppi target should use the hidpi calibration: $_out"
 
-# IDENTICAL panels must NOT warn -- EDID rounding makes two of the same model
+# IDENTICAL panels must NOT warn, because EDID rounding makes two of the same
+# model
 # differ slightly, and a warning that cries wolf gets ignored when it matters.
 cat > "$T/bin/wlr-randr" <<'EOF'
 #!/bin/sh

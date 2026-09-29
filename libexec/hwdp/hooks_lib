@@ -1,11 +1,11 @@
-# hooks_lib -- the display-change HOOK layer, shared by the tools that fire it.
+# hooks_lib: the display-change HOOK layer, shared by the tools that fire it.
 #
 # hwdp ships MECHANISM and no policy: it defines the EDGES and runs whatever the
 # integrator drops into them, and it ships no hook itself (the vigilance model).
 # Sourced, never executed. Two consumers today:
 #
 #   cmd/watch   fires `pre` and `changed` as the display layout comes up and
-#               changes -- the normal path, driven by real display events;
+#               changes: the normal path, driven by real display events;
 #   cmd/apply   fires `changed` on demand, for a change that produced no
 #               display event at all (see that file for why one is needed).
 #
@@ -28,7 +28,7 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 
 # Hooks run with fd 9 CLOSED, and that is load-bearing rather than tidiness.
 #
-# fd 9 holds the supervisor's flock, and a file descriptor survives exec -- so
+# fd 9 holds the supervisor's flock, and a file descriptor survives exec, so
 # every hook, and everything a hook spawns, inherits it. A hook that starts a
 # LONG-LIVED process therefore hands that process a share of the lock, and the
 # lock then outlives the supervisor: when the supervisor dies, waybar (started
@@ -37,7 +37,7 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 # never restart, and it reports success while doing nothing.
 #
 # Seen exactly that way: a box with no supervisor, no kanshi, and `fuser` on the
-# lockfile naming two waybar processes. The bug was always latent -- it needed a
+# lockfile naming two waybar processes. The bug was always latent, it needed a
 # hook that outlives its own invocation, and the bars hook is the first.
 #
 # Closing an fd that was never opened is a no-op (verified under dash and sh),
@@ -46,8 +46,9 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 # HWDP_HOOK_TAG names the caller in a failure message, so "which tool ran this
 # hook" survives into the log. It is cosmetic; the fd rule is not.
 #
-# FAIL-SOFT, BUT COUNTED. A failing hook never stops the others -- one broken
-# integration must not take down the rest of the display reaction -- so the
+# FAIL-SOFT, BUT COUNTED. A failing hook never stops the others, since one
+# broken
+# integration must not take down the rest of the display reaction, so the
 # function's own status cannot carry that news. It sets HWDP_HOOK_FAILURES
 # instead, and a caller that needs to report overall success reads it. The loop
 # deliberately runs in THIS shell (no pipe, no subshell) or the count would be
@@ -55,7 +56,7 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 # A NON-EXECUTABLE HOOK IS REPORTED, NEVER SILENTLY SKIPPED. Dropping a file in
 # without `chmod +x` is the easiest possible integration mistake, and skipping
 # it quietly makes the hook indistinguishable from one that ran and did nothing
-# -- the reaction never happens and nothing anywhere says so. It counts as a
+# the reaction never happens and nothing anywhere says so. It counts as a
 # FAILURE so a provisioning caller exits non-zero rather than reporting a tidy
 # "fired changed (3 hooks)" while a fourth sits there inert.
 #
@@ -64,7 +65,7 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 # silence and that silence is deliberate. Clearing the mode bit now says so.
 #
 # This is the same class as a test that stops running when it loses its mode
-# bit, and as a PROVIDER that is merely not executable -- which probe_run skips
+# bit, and as a PROVIDER that is merely not executable, which probe_run skips
 # in silence, making it look like a legitimate abstention. test/contract.t
 # already fails that one; this closes the matching hole on the hook side.
 run_hooks() {   # <edge>; sets HWDP_HOOK_FAILURES

@@ -4,7 +4,7 @@
 # The counterpart to geometry, and the pair is the package's central split:
 # panels asks the KERNEL what is plugged in (so it answers with no compositor),
 # geometry asks a COMPOSITOR how it is arranged (so it cannot). A provisioning
-# layer sizing something drawn BEFORE any session -- a boot menu, a greeter --
+# layer sizing something drawn BEFORE any session (a boot menu, a greeter)
 # needs the first, and until this verb existed it had to either parse DRM itself
 # (a fifth copy of a parser this repo has killed four of) or ask geometry and
 # get a failure.
@@ -12,12 +12,12 @@
 # Pinned here:
 #   1. the record is `<connector> <native_w> <native_h>`, space-separated, one
 #      line per CONNECTED panel, in provider order;
-#   2. it answers with NO session at all -- that is the entire point;
+#   2. it answers with NO session at all, which is the entire point;
 #   3. the EDID hash is NOT emitted. The provider record leads with one, but it
 #      is an id INGREDIENT and `hwdp id` is the published way to ask for
 #      identity; leaking it invites a caller to build a second, subtly
 #      different id from it;
-#   4. nothing connected is EMPTY output at status 0 -- an answer, not an
+#   4. nothing connected is EMPTY output at status 0, an answer, not an
 #      error, so a caller can tell "no panels" from "the probe broke".
 . "$(dirname "$0")/harness_lib"
 harness_init panels
@@ -79,7 +79,7 @@ printf '%s\n' "$out" | while read -r _nm _w _h; do
 done
 pass "no EDID hash in the output, and the sizes are numeric"
 
-# --- geometry, the counterpart, MUST fail here -- that is why panels exists --
+# --- geometry, the counterpart, MUST fail here, which is why panels exists-
 if run_geo=$(env -u WAYLAND_DISPLAY -u DISPLAY HOME="$T/home" \
     HWDP_DRM="$T/drm" HWDP_PROVIDER_ROOT="$T/no-providers" \
     HWDP_MACHINE_PROVIDERS="$T/no-providers" "$MGR" geometry 2>&1); then

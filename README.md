@@ -44,7 +44,7 @@ It costs logical desktop area, not sharpness: with
 pixels. What shrinks is the logical desktop, 3840x2160 down to 2194x1234.
 
 Left unset, every output stays at scale 1 and density is absorbed by the UI
-numbers instead -- exact for one panel or a wall of identical ones. If it then
+numbers instead, exact for one panel or a wall of identical ones. If it then
 sees panels more than 25% apart, `hwdp ui` names them with their ppi on stderr,
 sizes for the **densest** (oversized on a coarse panel is clumsy but readable;
 the reverse is microscopic), still emits a full set of keys and still exits 0.
