@@ -238,7 +238,7 @@ case $FILTER in
     linear)  ;;
     # `-F nearest`, NOT `-n`. gamescope has no -n: the short form was
     # `Super + N` as a runtime TOGGLE, never a command-line option, and
-    # gamescope 3.16 rejects it outright with "invalid option 'n'". So
+    # gamescope 3.16 rejects it outright with "invalid option -- 'n'". So
     # --filter=nearest never worked, and failed at the point where run-scaled
     # has already EXECd, which is why it read as "the app just did not
     # start" rather than as a bad flag.
