@@ -167,3 +167,58 @@ done
 [ -e "$XDG_DATA_HOME/man/man1/hwdp.1" ] && fail "man page not removed" || :
 
 pass "install/check/uninstall roundtrip"
+
+# --- check AUDITS this rig's UI override, and only ever WARNS ----------------
+# Both findings describe a deliberate human choice that `install` cannot fix,
+# so they must not FAIL: a check reporting what apply can never clear goes
+# permanently red, which is a lesson this fleet has already paid for once.
+#
+# They exist because six override keys were once hand-pinned to the lodpi set
+# on a 4K, and every one made something smaller. Two shapes are detectable
+# without knowing the human's intent, and these are they.
+sh "$HERE/setup.sh" install >/dev/null || fail "reinstall for the audit failed"
+_prof=$T/profiles; mkdir -p "$_prof"
+_id=$(sh "$HERE/bin/hwdp" id 2>/dev/null) || _id=
+if [ -z "$_id" ]; then
+  note "no displays here, so the override audit cannot be exercised"
+else
+  aud() { KANSHI_PROFILES="$_prof" sh "$HERE/setup.sh" check 2>&1; }
+
+  # No override: both audits report OK, nothing invented.
+  rm -f "$_prof/$_id.ui"
+  aud | grep -q "no UI override for this rig" \
+    || fail "check did not report the absence of an override"
+
+  # A pin EQUAL to what the set already gives. Changes nothing today and
+  # FREEZES the key against a future retune, so nothing ever looks wrong
+  # enough to catch it -- the worst kind, and TITLE_FONT was exactly this.
+  _cal=$(KANSHI_PROFILES=$T/nope sh "$HERE/bin/hwdp" ui 2>/dev/null \
+         | sed -n 's/^TITLE_FONT=//p')
+  printf 'TITLE_FONT=%s\n' "$_cal" > "$_prof/$_id.ui"
+  aud | grep -q "pins TITLE_FONT to the value the calibrated set" \
+    || fail "check missed a redundant pin (equal to the calibrated value)"
+
+  # A SHRINK-ONLY key pinned where the set says EMPTY. Empty means "keep your
+  # own config value", so pinning one makes that thing SMALLER.
+  _bare=$(KANSHI_PROFILES=$T/nope sh "$HERE/bin/hwdp" ui 2>/dev/null)
+  if [ -z "$(printf '%s\n' "$_bare" | sed -n 's/^KITTY_FONT=//p')" ]; then
+    printf 'KITTY_FONT=10\n' > "$_prof/$_id.ui"
+    aud | grep -q "SHRINK-ONLY" \
+      || fail "check missed a shrink-only key pinned on a hi-res rig"
+    # ...and it is a WARN, so the overall status stays clean.
+    KANSHI_PROFILES="$_prof" sh "$HERE/setup.sh" check >/dev/null 2>&1 \
+      || fail "a shrink-only pin made check FAIL; it must only WARN, or the
+sweep goes permanently red over a choice apply cannot change"
+  else
+    note "this rig resolves lodpi, so the shrink-only case is not applicable"
+  fi
+
+  # A legitimate pin trips neither audit.
+  printf 'CURSOR_SIZE=64\n' > "$_prof/$_id.ui"
+  aud | grep -q "no redundant pins" \
+    || fail "a legitimate pin was reported as redundant"
+  aud | grep -q "pins no shrink-only key" \
+    || fail "a legitimate pin was reported as a shrink-only pin"
+  rm -f "$_prof/$_id.ui"
+  pass "check audits the UI override and only warns"
+fi

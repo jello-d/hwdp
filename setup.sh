@@ -75,9 +75,14 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   _G=$(printf '\033[32m'); _R=$(printf '\033[31m')
   _Y=$(printf '\033[33m'); _O=$(printf '\033[0m')
 else _G=; _R=; _Y=; _O=; fi
-ok()   { printf '  %s[OK]%s   %s\n' "$_G" "$_O" "$1"; }
-bad()  { printf '  %s[FAIL]%s %s\n' "$_R" "$_O" "$1"; RC=1; }
-warn() { printf '  %s[WARN]%s %s\n' "$_Y" "$_O" "$1"; }
+# "$*", not "$1": these are called with the message split across continuation
+# lines, which passes SEPARATE arguments. Using $1 printed the first fragment
+# and silently dropped the rest -- the soft-dep warning had been ending
+# mid-sentence, without even its closing paren, for as long as it has existed.
+# $* joins them with a space, which is what the wrapped call sites intend.
+ok()   { printf '  %s[OK]%s   %s\n' "$_G" "$_O" "$*"; }
+bad()  { printf '  %s[FAIL]%s %s\n' "$_R" "$_O" "$*"; RC=1; }
+warn() { printf '  %s[WARN]%s %s\n' "$_Y" "$_O" "$*"; }
 
 _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
   [ -e "$_m" ] && printf '%s\n' "$_m"; done; }
@@ -313,6 +318,60 @@ do_check() {
     command -v "$_d" >/dev/null 2>&1 && { _img=$_d; break; }; done
   [ -n "$_img" ] && ok "image tool $_img present (wallpaper-slicer)" \
     || warn "no image tool ($DEPS_IMAGE); wallpaper-slicer cannot cut slices"
+  _check_override
+}
+
+# Audit this rig's <id>.ui override, if it has one. Both findings are WARN and
+# never FAIL: an override is a deliberate human choice, `install` cannot fix
+# one, and a check that reports what apply can never clear goes permanently red.
+#
+# Resolved by asking `hwdp ui` TWICE -- once normally, once with the profile
+# dir pointed at nothing -- so the comparison uses the package's own resolver
+# rather than a second copy of the density rules that could disagree with it.
+_check_override() {
+  command -v "$_root/bin/$PKG" >/dev/null 2>&1 || return 0
+  _set=$("$_root/bin/$PKG" ui 2>/dev/null) || return 0   # no displays: nothing
+  _id=$("$_root/bin/$PKG" id 2>/dev/null) || return 0
+  [ -n "$_id" ] || return 0
+  _prof=${KANSHI_PROFILES:-${XDG_CONFIG_HOME:-$HOME/.config}/kanshi/profiles}
+  _ovr=$_prof/$_id.ui
+  [ -f "$_ovr" ] || { ok "no UI override for this rig ($_id)"; return 0; }
+
+  _empty_dir=${TMPDIR:-/var/tmp}/.$PKG-noprofiles.$$
+  mkdir -p "$_empty_dir" || return 0
+  _bare=$(KANSHI_PROFILES="$_empty_dir" "$_root/bin/$PKG" ui 2>/dev/null) || :
+  rmdir "$_empty_dir" 2>/dev/null || :
+  [ -n "$_bare" ] || return 0
+
+  _noop= _shrink=
+  for _k in KITTY_FONT TITLE_FONT MAKO_FONT LOCK_RADIUS CURSOR_SIZE MAGNIFY; do
+    _pin=$(sed -n "s/^$_k=//p" "$_ovr" | head -1)
+    [ -n "$_pin" ] || continue          # absent, or empty (which is ignored)
+    _cal=$(printf '%s\n' "$_bare" | sed -n "s/^$_k=//p" | head -1)
+    # A pin EQUAL to the calibrated value changes nothing today and freezes the
+    # key against a future retune -- the worst kind, because nothing ever looks
+    # wrong enough to catch it. TITLE_FONT was exactly this.
+    [ "$_pin" = "$_cal" ] && _noop="$_noop $_k"
+    # KITTY_FONT, MAKO_FONT and LOCK_RADIUS are SHRINK-ONLY: empty is their
+    # hi-res answer, meaning "keep your own config value". Pinning one where
+    # the set says empty therefore makes that thing SMALLER, which is almost
+    # never what the author of an override intends.
+    case $_k in
+      KITTY_FONT|MAKO_FONT|LOCK_RADIUS)
+        [ -z "$_cal" ] && _shrink="$_shrink $_k" ;;
+    esac
+  done
+
+  [ -z "$_noop" ] \
+    && ok "UI override has no redundant pins ($_id)" \
+    || warn "UI override pins$_noop to the value the calibrated set already" \
+            "gives: a no-op today that FREEZES the key against a future" \
+            "retune. Drop the line to let it track the set."
+  [ -z "$_shrink" ] \
+    && ok "UI override pins no shrink-only key on a hi-res rig" \
+    || warn "UI override pins$_shrink on a rig whose set leaves them EMPTY." \
+            "Those keys are SHRINK-ONLY -- empty means 'keep your own config'" \
+            "-- so pinning one makes that thing SMALLER, not bigger."
 }
 
 _U="usage: setup.sh\
