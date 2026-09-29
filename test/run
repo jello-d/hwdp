@@ -11,10 +11,38 @@ _dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 _rc=0
 _pass=0
 _skip=0
+# A FAILING TEST MUST NAME ITSELF. This used to set _rc and print whatever the
+# test said, which is fine when the test called fail() and useless when it did
+# not: an intermittent failure was seen three times and every post-mortem had
+# only "hwdp tests FAILED" to go on, because the run printed no FAIL line and
+# the next run passed. A test can exit non-zero WITHOUT printing -- `set -eu`
+# kills a script silently on any unguarded command -- so the status is the only
+# reliable signal and it was being thrown away.
+_failed=
 for _t in "$_dir"/*.t; do
   [ -f "$_t" ] || continue
-  _out=$(sh "$_t" 2>&1) || _rc=1
+  # `if`, not `_out=$(...); _trc=$?`: under `set -e` an assignment from a
+  # FAILING command substitution exits the script SILENTLY, and this runner
+  # exists to run things that fail. The old `|| _rc=1` was exempt for the same
+  # reason (an AND-OR list); dropping it to capture the status reintroduced the
+  # trap and killed the runner before it could name anything.
+  if _out=$(sh "$_t" 2>&1); then _trc=0; else _trc=$?; fi
   printf '%s\n' "$_out"
+  if [ "$_trc" -ne 0 ]; then
+    _rc=1
+    _failed="$_failed $(basename "$_t"):$_trc"
+    # Silence with a non-zero status is the `set -e` signature, and worth
+    # calling out by name: it sends you looking for an assertion that was
+    # never reached rather than for the command that actually died.
+    if [ "$(printf '%s\n' "$_out" | grep -c .)" -eq 0 ]; then
+      printf 'FAILED %s: exit %d with NO OUTPUT -- a set -e death, not a\n' \
+        "$(basename "$_t")" "$_trc"
+      printf '       failed assertion. Re-run it alone with `sh -x` to see\n'
+      printf '       which command exited non-zero.\n'
+    else
+      printf 'FAILED %s: exit %d\n' "$(basename "$_t")" "$_trc"
+    fi
+  fi
   case "$(printf '%s\n' "$_out" | tail -n 1)" in
     skip\ *) _skip=$((_skip + 1)) ;;
     ok\ *)   _pass=$((_pass + 1)) ;;
@@ -22,7 +50,9 @@ for _t in "$_dir"/*.t; do
 done
 
 if [ "$_rc" -ne 0 ]; then
-  echo "hwdp tests FAILED"
+  # Name every failure again at the end: the per-test line above scrolls away
+  # behind the output of the tests that ran after it.
+  printf 'hwdp tests FAILED:%s\n' "$_failed"
   exit 1
 fi
 if [ "$_skip" -gt 0 ]; then
