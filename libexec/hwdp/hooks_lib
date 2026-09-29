@@ -1,4 +1,4 @@
-# hooks.sh -- the display-change HOOK layer, shared by the tools that fire it.
+# hooks_lib -- the display-change HOOK layer, shared by the tools that fire it.
 #
 # hwdp ships MECHANISM and no policy: it defines the EDGES and runs whatever the
 # integrator drops into them, and it ships no hook itself (the vigilance model).

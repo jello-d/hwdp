@@ -29,7 +29,7 @@
 # display-less box has no panels. Exit status stays 0 so a caller can tell
 # "nothing attached" from "the probe broke".
 set -eu
-. "$HWDP_LIBEXEC/probe.sh"
+. "$HWDP_LIBEXEC/probe_lib"
 
 case "${1:-}" in
   -h|--help)

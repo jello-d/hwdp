@@ -1,20 +1,20 @@
-# libexec/hwdp/displayset.sh -- the DISPLAY SET view, shared by the subcommands
+# libexec/hwdp/displayset_lib -- the DISPLAY SET view, shared by the subcommands
 # that reason about "the monitors on this box" rather than about one output.
-# Sourced after (or instead of) probe.sh, which it pulls in itself.
+# Sourced after (or instead of) probe_lib, which it pulls in itself.
 #
-# probe.sh answers what the hardware and the compositor report. This file is the
-# layer above: where this box keeps its per-display-set state, and the two
-# coarsenings every consumer asks for -- the output list in the shape kanshi
-# needs, and the panel COUNT bucketed into a workspace shape.
+# probe_lib answers what the hardware and the compositor report. This file is
+# the layer above: where this box keeps its per-display-set state, and the
+# two coarsenings every consumer asks for -- the output list in the shape
+# kanshi needs, and the panel COUNT bucketed into a workspace shape.
 #
 # Everything density- or layout-specific stays in the subcommand that owns it
 # (cmd/ui owns the density policy, cmd/layout owns the sticky scale), so this
 # holds only what more than one of them genuinely needs.
 
-: "${HWDP_LIBEXEC:?displayset.sh: HWDP_LIBEXEC must be set}"
-. "$HWDP_LIBEXEC/probe.sh"
+: "${HWDP_LIBEXEC:?displayset_lib: HWDP_LIBEXEC must be set}"
+. "$HWDP_LIBEXEC/probe_lib"
 
-# ${HOME:-}: see probe.sh. A daemon-invoked probe with no HOME must degrade to
+# ${HOME:-}: see probe_lib. A daemon-invoked probe with no HOME must degrade to
 # "no user-scope profiles", not abort under set -u.
 _cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}/kanshi
 PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}

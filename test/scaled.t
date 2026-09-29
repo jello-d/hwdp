@@ -13,7 +13,7 @@
 #   the child gets X11 toolkit hints unless --wayland-app, which is what keeps
 #     a Qt or GTK app from chasing a nested Wayland the sandbox does not expose
 #   a bad --filter is refused rather than passed through to gamescope
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init scaled
 
 RS=$HERE/bin/run-scaled

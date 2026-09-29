@@ -6,7 +6,7 @@
 # question (wlr-randr) to decide a PANEL fact (how big is this screen), got
 # nothing because no compositor was up, and fell silently through to its hidpi
 # else -- reporting CURSOR_SIZE=48 for a 1920x1080 panel whose answer is 32.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init probe
 
 KA="$HERE/bin/hwdp"

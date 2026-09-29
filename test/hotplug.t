@@ -12,7 +12,7 @@
 # Driven entirely through a fake DRM tree: connectors are directories, so
 # "plugging in a monitor" is `mkdir` and unplugging is `rm -rf`. No compositor,
 # no hardware.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init hotplug
 
 MGR=$HERE/bin/hwdp

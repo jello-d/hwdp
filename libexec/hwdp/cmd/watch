@@ -26,11 +26,11 @@
 # kernel when the supervisor dies) -- no PID matching, no duplicate daemons.
 
 set -u
-# For probe_panels, used by the hotplug poller below. probe.sh defines
+# For probe_panels, used by the hotplug poller below. probe_lib defines
 # functions and provider roots and runs nothing on its own, so sourcing it is
 # free; using it rather than reading DRM sysfs here keeps ONE answer to "what
 # panels exist" and keeps the poller honouring a stubbed provider root.
-. "$HWDP_LIBEXEC/probe.sh"
+. "$HWDP_LIBEXEC/probe_lib"
 
 cfg="${WAYFIRE_CONFIG_FILE:-$HOME/.config/wayfire/wayfire.ini}"
 
@@ -71,7 +71,7 @@ wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 # state, moving notifications, checking a greeter stamp -- is a HOOK the
 # integrator drops in; a bare `hwdp watch` just supervises kanshi.
 #
-# The edges, the hook roots and run_hooks itself live in hooks.sh, shared with
+# The edges, the hook roots and run_hooks itself live in hooks_lib, shared with
 # `hwdp apply`, which fires the same `changed` edge on demand. ONE copy because
 # the fd-9 rule there is invisible at the call site, and a second copy would
 # sooner or later be written without it. kanshi and inotifywait get that same fd
@@ -79,7 +79,7 @@ wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 # the lock, but a descendant of theirs could, and there is no reason for either
 # to hold it.
 HWDP_HOOK_TAG='hwdp watch'
-. "$HWDP_LIBEXEC/hooks.sh"
+. "$HWDP_LIBEXEC/hooks_lib"
 
 # A reset can land slightly AFTER the event we reacted to. Wayfire's
 # auto_reload reconfigures outputs a beat after the file's close_write, and an

@@ -8,7 +8,7 @@
 #      session was never reaped at all. The settle is now detached, so the
 #      supervisor must own no children in state Z.
 #   2. The burst still COALESCES: many events in, exactly one `changed` pass.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init mgr
 
 command -v python3 >/dev/null 2>&1 || skip "needs python3 to make a unix socket"

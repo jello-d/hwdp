@@ -34,7 +34,7 @@
 set -eu
 
 HWDP_HOOK_TAG='hwdp apply'
-. "$HWDP_LIBEXEC/hooks.sh"
+. "$HWDP_LIBEXEC/hooks_lib"
 
 _quiet=
 case "${1:-}" in

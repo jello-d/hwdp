@@ -2,7 +2,7 @@
 # geometry.t - `hwdp geometry` as a projection of the shared layout probe: the
 # HWDP_GEOM_BACKEND seam is tried first, and the shipped wlr-randr provider
 # parses the text into the stable line contract. Stubs only, no compositor.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init geometry
 
 DG="$HERE/bin/hwdp"

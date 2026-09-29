@@ -271,7 +271,8 @@ do_check() {
   # renders, so this cannot check a stale vocabulary: a hand-kept copy here
   # went one command out of date the moment `apply` was added, which is the
   # failure the bin/* loop above was already written to avoid.
-  for _c in $(sed -n 's/^#   hwdp \([a-z][a-z-]*\) .*/\1/p' "$_root/bin/hwdp"); do
+  _vocab='s/^#   hwdp \([a-z][a-z-]*\) .*/\1/p'
+  for _c in $(sed -n "$_vocab" "$_root/bin/hwdp"); do
     [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
       || bad "cmd $_c missing"; done
   # Drift, not tidiness: a dangling link is a command that exists until it is
@@ -287,8 +288,8 @@ do_check() {
   # The shared probe and its providers: the tools resolve libexec from their own
   # real path, so a missing library is a broken install, while a missing PREFIX
   # symlink is only an inconvenience -- hence bad vs warn.
-  [ -f "$_root/libexec/$PKG/probe.sh" ] && ok "libexec/probe.sh present" \
-    || bad "libexec/probe.sh missing"
+  [ -f "$_root/libexec/$PKG/probe_lib" ] && ok "libexec/probe_lib present" \
+    || bad "libexec/probe_lib missing"
   [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
     && ok "libexec linked into $PREFIX" \
     || warn "libexec not linked at $_lib/$PKG (tools still resolve it)"

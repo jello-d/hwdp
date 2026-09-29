@@ -2,7 +2,7 @@
 # setup.t - the install roundtrip against a scratch PREFIX: install -> assert
 # the ~/.local symlinks land -> check -> uninstall -> assert they are gone.
 # Nothing outside the scratch dir is touched.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init setup
 
 PREFIX=$T/local
@@ -56,15 +56,15 @@ rm -f "$XDG_BIN_HOME/theirs"
 # box by check's WARN; pinned here so it cannot come back.
 rm -rf "$PREFIX/libexec/hwdp"
 mkdir -p "$PREFIX/libexec/hwdp/cmd"
-: > "$PREFIX/libexec/hwdp/probe.sh"           # a stale file from that install
+: > "$PREFIX/libexec/hwdp/probe_lib"           # a stale file from that install
 sh "$HERE/setup.sh" install >/dev/null \
   || fail "re-install over a real dir errored"
 [ -L "$PREFIX/libexec/hwdp" ] \
   || fail "libexec/hwdp is not a symlink; the install nested under a stale dir"
 [ -e "$PREFIX/libexec/hwdp/hwdp" ] \
   && fail "the link was nested one level down (libexec/hwdp/hwdp)"
-[ -e "$PREFIX/libexec/hwdp/probe.sh" ] \
-  || fail "the linked libexec does not resolve probe.sh"
+[ -e "$PREFIX/libexec/hwdp/probe_lib" ] \
+  || fail "the linked libexec does not resolve probe_lib"
 
 # ...and UNINSTALL clears the same stale tree rather than leaving the crumb a
 # mode switch is meant not to leave. Gated on our manifest sitting beside it,
@@ -137,7 +137,7 @@ sys install >/dev/null || fail "re-install errored"
   && fail "an over-installed session tool was left at the shared prefix"
 [ -f "$C/bin/hwdp" ] && [ ! -L "$C/bin/hwdp" ] \
   || fail "copy mode left a symlink, not a real file"
-[ -f "$C/libexec/hwdp/probe.sh" ] && [ ! -L "$C/libexec/hwdp" ] \
+[ -f "$C/libexec/hwdp/probe_lib" ] && [ ! -L "$C/libexec/hwdp" ] \
   || fail "copy mode did not copy the libexec tree"
 # Against the SOURCE dispatcher's own advertised list, not a literal count: a
 # hardcoded 7 here meant adding a subcommand failed this test with "cannot

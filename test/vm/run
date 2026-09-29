@@ -110,7 +110,7 @@ runcmd:
       echo "HWDP_VM_SHAPE=$(hwdp shape 2>&1)"
       hwdp ui 2>&1 | sed 's/^/HWDP_VM_UI_/'
       echo "HWDP_VM_PANELS=$(hwdp id >/dev/null 2>&1; \
-        sh -c '. /root/hwdp/libexec/hwdp/probe.sh
+        sh -c '. /root/hwdp/libexec/hwdp/probe_lib
                HWDP_LIBEXEC=/root/hwdp/libexec/hwdp probe_panels' \
         2>/dev/null | head -1 | tr '\t' ' ')"
 

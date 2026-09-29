@@ -22,7 +22,7 @@
 #      holds no lock, so this is about the SHARED runner keeping one behaviour:
 #      the rule is invisible at the call site and a second copy would sooner or
 #      later be written without it.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init apply
 
 MGR=$HERE/bin/hwdp

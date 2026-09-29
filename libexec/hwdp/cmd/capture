@@ -22,7 +22,7 @@
 # The temp file is made INSIDE $PROFILES so the rename is atomic: across
 # filesystems `mv` degrades to copy-then-delete and stops being.
 set -eu
-. "$HWDP_LIBEXEC/displayset.sh"
+. "$HWDP_LIBEXEC/displayset_lib"
 
 _id=$(hwdp_id)
 [ -n "$_id" ] || { echo "hwdp capture: no outputs to capture" >&2; exit 1; }

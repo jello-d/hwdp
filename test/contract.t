@@ -2,7 +2,7 @@
 # contract.t - the PROVIDER contract, asserted against the shipped providers.
 #
 # The whole design is drop-in providers: an integrator adds a compositor by
-# adding a file, and probe.sh takes the first that answers. That only holds if
+# adding a file, and probe_lib takes the first that answers. That only holds if
 # every provider agrees on the RECORD, and nothing checked it. A provider that
 # drifts a field -- or a new one written against a stale reading of the docs --
 # surfaces as an empty or subtly wrong probe, which in this package has meant
@@ -11,8 +11,8 @@
 # So this pins the two things a provider author has to get right:
 #   the SHAPE of a record (field count, and which fields are numbers)
 #   the ABSTAIN contract (cannot answer here = non-zero OR silent, never a
-#   partial record, because probe.sh treats any output as the answer)
-. "$(dirname "$0")/lib.sh"
+#   partial record, because probe_lib treats any output as the answer)
+. "$(dirname "$0")/harness_lib"
 harness_init contract
 
 P=$HERE/libexec/hwdp/providers
@@ -86,7 +86,7 @@ printf '%s\n' "$_out" | awk -F"$TAB" '
   || fail "drm-sysfs provider emitted a malformed sha or size"
 
 # --- abstain: non-zero OR silent, never a partial record --------------------
-# probe.sh takes ANY non-empty output as the answer and stops, so a provider
+# probe_lib takes ANY non-empty output as the answer and stops, so a provider
 # that half-answers in an environment it does not serve would shadow the one
 # that could.
 _out=$(env -u WAYLAND_DISPLAY PATH="$T/bin:$PATH" "$P/layout/10-wlr-randr" \
@@ -106,13 +106,13 @@ _out=$(HWDP_DRM="$T/drm-none" "$P/panels/10-drm-sysfs" 2>/dev/null)
 [ -z "$_out" ] || fail "drm-sysfs answered for a disconnected connector: $_out"
 
 # --- every shipped provider is executable and parses ------------------------
-# A provider that is not executable is skipped in silence by probe.sh, which
+# A provider that is not executable is skipped in silence by probe_lib, which
 # looks identical to one that abstained.
 _count=0
 for _p in "$P"/*/*; do
   [ -f "$_p" ] || continue
   _count=$((_count + 1))
-  [ -x "$_p" ] || fail "provider $_p is not executable (probe.sh would skip \
+  [ -x "$_p" ] || fail "provider $_p is not executable (probe_lib would skip \
 it silently)"
 done
 [ "$_count" -ge 3 ] || fail "expected at least 3 shipped providers, found \

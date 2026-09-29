@@ -8,7 +8,7 @@
 # matching profile (injecting scale) or synthesizes when none exists.
 set -eu
 
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init layout
 
 KA=$HERE/bin/hwdp

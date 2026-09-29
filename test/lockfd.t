@@ -15,7 +15,7 @@
 #
 # Its own file because the assertion requires KILLING the supervisor, which
 # every other supervisor test needs alive.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init lockfd
 
 MGR=$HERE/bin/hwdp

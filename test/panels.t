@@ -19,7 +19,7 @@
 #      different id from it;
 #   4. nothing connected is EMPTY output at status 0 -- an answer, not an
 #      error, so a caller can tell "no panels" from "the probe broke".
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init panels
 
 MGR=$HERE/bin/hwdp

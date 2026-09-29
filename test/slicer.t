@@ -9,7 +9,7 @@
 #
 # It also pins the thing the move into hwdp was for: the geometry comes from
 # `hwdp geometry` and nothing here parses a compositor.
-. "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/harness_lib"
 harness_init slicer
 
 WS=$HERE/bin/wallpaper-slicer
