@@ -22,7 +22,7 @@ STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
 OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-layout.config}
 TAB=$(printf '\t')
 
-# outputs: one TAB record per output we can actually act on --
+# outputs: one TAB record per output we can actually act on,
 #   edid \t connector \t res_w \t res_h \t mm_w \t mm_h \t rate \t
 #   transform \t pos
 #

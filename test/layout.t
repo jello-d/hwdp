@@ -382,7 +382,7 @@ for _k in KITTY_FONT TITLE_FONT MAKO_FONT LOCK_RADIUS CURSOR_SIZE MAGNIFY; do
     || fail "mixed DPI dropped the $_k key"
 done
 
-# Sized for the DENSEST panel: 3840 wide is well over LODPI_MAX_W, so hidpi --
+# Sized for the DENSEST panel: 3840 wide is well over LODPI_MAX_W, so hidpi,
 # empty KITTY_FONT (kitty.conf's own stands) and the hidpi cursor.
 printf '%s\n' "$_out" | grep -q '^CURSOR_SIZE=48' \
   || fail "mixed DPI did not size for the densest panel: $_out"

@@ -4,7 +4,7 @@
 # The whole design is drop-in providers: an integrator adds a compositor by
 # adding a file, and probe_lib takes the first that answers. That only holds if
 # every provider agrees on the RECORD, and nothing checked it. A provider that
-# drifts a field, or a new one written against a stale reading of the docs --
+# drifts a field, or a new one written against a stale reading of the docs,
 # surfaces as an empty or subtly wrong probe, which in this package has meant
 # a blank bar or a confidently wrong cursor size rather than an error.
 #

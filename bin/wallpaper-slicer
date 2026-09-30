@@ -11,7 +11,7 @@
 # draw the SAME image on every output independently; there is no spanned mode.
 # To fake a span we PRE-SLICE the source into one crop per output, each crop
 # being that output's logical sub-rectangle of the image after the image is
-# cover-scaled (fill) or contained (fit) over the WHOLE output-layout union --
+# cover-scaled (fill) or contained (fit) over the WHOLE output-layout union,
 # and let the caller hand each output its own slice. Every slice comes from one
 # global cover rect, so the slices tile exactly: a feature crossing a bezel is
 # continuous, the same property the workspace-wallpaper compositor plugin has.
@@ -341,7 +341,7 @@ read_geometry() {
 # ---- main -------------------------------------------------------------------
 geom=$(read_geometry)
 # awk, not `grep -c`: grep exits 1 when the count is ZERO, so under `set -e`
-# the no-display case would abort here instead of reaching the message below --
+# the no-display case would abort here instead of reaching the message below,
 # the exact silent failure this is meant to report.
 nout=$(printf '%s\n' "$geom" | awk 'NF { n++ } END { print n + 0 }')
 

@@ -24,13 +24,13 @@
 #   MAGNIFY       how much to enlarge a FIXED-LAYOUT app that cannot scale
 #                 itself (run-scaled's default). A 640x480 program is unusable
 #                 on a 2880x1800 panel and merely small on 1920x1080, so the
-#                 factor is a property of the DISPLAY, not of the launcher --
+#                 factor is a property of the DISPLAY, not of the launcher,
 #                 which is the whole reason it belongs here rather than being
 #                 hardcoded by every caller. Bounded by what still FITS: 3x a
 #                 640x480 app is 1920x1440, which fits a 1800-tall panel and
 #                 does not fit a 1080-tall one.
 # The hidpi TITLE_FONT and CURSOR_SIZE mirror wayfire.ini's [pixdecor]
-# title_font and [input] cursor_size -- keep them in sync.
+# title_font and [input] cursor_size; keep them in sync.
 set -eu
 . "$HWDP_LIBEXEC/displayset_lib"
 
@@ -95,7 +95,7 @@ fi
 #
 # Sizing for the DENSEST is the safer of two wrong answers: its numbers come
 # out oversized on a coarser panel, which is clumsy but readable, where sizing
-# for the coarsest is microscopic on a dense one. This used to be `head -1` --
+# for the coarsest is microscopic on a dense one. This used to be `head -1`,
 # the same compromise, chosen by accident and in silence.
 #
 # Needs a session: the panels probe (DRM sysfs) carries no millimetre size, so
@@ -111,7 +111,7 @@ if [ "$_mixed_warn" = 1 ]; then
     # rounding, and a warning that cries wolf gets ignored when it matters.
     _far='BEGIN { exit !(l > 0 && h / l > 1.25) }'
     if awk -v h="$_hi" -v l="$_lo" "$_far"; then
-      echo "hwdp ui: MIXED DPI -- these panels differ in physical density:" >&2
+      echo "hwdp ui: MIXED DPI: these panels differ in physical density:" >&2
       printf '%s\n' "$_dens" | while IFS="$(printf '\t')" read -r _p _w _n; do
         echo "hwdp ui:   ${_n:-?} ${_w}px wide, ${_p} ppi" >&2
       done

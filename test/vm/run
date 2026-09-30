@@ -4,7 +4,7 @@
 # The stub suite (test/run) drives the panels provider against a hand-built
 # fake sysfs tree: directories named like connectors, with bytes standing in
 # for an EDID. That answers "does the logic do what we mean". It cannot answer
-# "does this work against a kernel", and every assumption the fake encodes --
+# "does this work against a kernel", and every assumption the fake encodes,
 # that `status` says exactly `connected`, that `edid` reads back despite a
 # stat size of 0, that `modes` line 1 is the native mode, is unverified.
 #
@@ -22,7 +22,7 @@
 #   sh test/vm/run --keep       # keep the overlay for poking at
 #
 # Prereqs: qemu-system-x86_64, xorriso, curl, /dev/kvm writable (an ACL grant
-# is enough). NO sudo on the host -- the guest is root.
+# is enough). NO sudo on the host; the guest is root.
 set -eu
 
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)

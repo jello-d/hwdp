@@ -65,7 +65,7 @@ pass "the key set and its order are stable"
 # This is the asymmetry that produced six bad hand-written pins. KITTY_FONT,
 # MAKO_FONT and LOCK_RADIUS exist ONLY to shrink a fixed-pixel default on a
 # low-density panel; their hi-res answer is EMPTY, which tells the consumer to
-# keep its own config value. TITLE_FONT and CURSOR_SIZE are the opposite --
+# keep its own config value. TITLE_FONT and CURSOR_SIZE are the opposite:
 # always set, so switching back to a hi-res panel RESTORES them rather than
 # leaving them shrunk.
 for _k in KITTY_FONT TITLE_FONT MAKO_FONT LOCK_RADIUS CURSOR_SIZE MAGNIFY; do

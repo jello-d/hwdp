@@ -15,7 +15,7 @@ _skip=0
 # test said, which is fine when the test called fail() and useless when it did
 # not: an intermittent failure was seen three times and every post-mortem had
 # only "hwdp tests FAILED" to go on, because the run printed no FAIL line and
-# the next run passed. A test can exit non-zero WITHOUT printing -- `set -eu`
+# the next run passed. A test can exit non-zero WITHOUT printing; `set -eu`
 # kills a script silently on any unguarded command, so the status is the only
 # reliable signal and it was being thrown away.
 _failed=
@@ -35,7 +35,7 @@ for _t in "$_dir"/*.t; do
     # calling out by name: it sends you looking for an assertion that was
     # never reached rather than for the command that actually died.
     if [ "$(printf '%s\n' "$_out" | grep -c .)" -eq 0 ]; then
-      printf 'FAILED %s: exit %d with NO OUTPUT -- a set -e death, not a\n' \
+      printf 'FAILED %s: exit %d with NO OUTPUT: a set -e death, not a\n' \
         "$(basename "$_t")" "$_trc"
       printf '       failed assertion. Re-run it alone with `sh -x` to see\n'
       printf '       which command exited non-zero.\n'

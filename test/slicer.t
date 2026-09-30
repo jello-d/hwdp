@@ -260,7 +260,7 @@ for _o2 in WIDE NARROW; do
     || fail "$_o2 slice is $_wh; pixel size must follow the LOGICAL size"
 done
 
-# A panel that reports NO size falls back to logical space for the whole run --
+# A panel that reports NO size falls back to logical space for the whole run,
 # mixing the two would be incoherent, and some panels genuinely report 0.
 cat > "$T/bin/hwdp" <<'EOF'
 #!/bin/sh

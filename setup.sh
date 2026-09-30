@@ -271,7 +271,7 @@ do_check() {
     elif [ -e "$_bin/$_t" ] || [ -e "/usr/local/bin/$_t" ]; then
       warn "$_t installed but not on THIS shell's PATH"
     else bad "$_t not installed ($_bin/$_t)"; fi; done
-  # Every subcommand the dispatcher advertises must actually be installed --
+  # Every subcommand the dispatcher advertises must actually be installed,
   # a missing impl is a command that exists until someone runs it. The list is
   # READ FROM the dispatcher's own header block, the same lines its `--help`
   # renders, so this cannot check a stale vocabulary: a hand-kept copy here

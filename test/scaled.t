@@ -2,7 +2,7 @@
 # scaled.t - run-scaled's argument handling and the command it BUILDS.
 #
 # The last shipped command without a test, and the one reported as misbehaving.
-# It cannot be tested by running it -- it EXECs gamescope and becomes the child
+# It cannot be tested by running it: it EXECs gamescope and becomes the child
 # process, so the thing to assert is the argv it assembles. A stub gamescope
 # that prints its own arguments turns an unrunnable exec into a readable value.
 #

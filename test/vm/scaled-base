@@ -33,7 +33,7 @@
 #   sh test/vm/scaled-base          # ~10-20 min, once per suite
 #
 # Leaves $VM/base-scaled-<suite>.qcow2. Prereqs: qemu-system-x86_64, xorriso,
-# curl, qemu-img, /dev/kvm writable. NO host sudo -- the guest is root.
+# curl, qemu-img, /dev/kvm writable. NO host sudo; the guest is root.
 set -eu
 
 SUITE=${SCALED_SUITE:-resolute}
@@ -151,9 +151,9 @@ echo "base: ---- end ----"
 
 grep -q 'SCALED_BASE_OK=1' "$CONSOLE" 2>/dev/null \
   || _die "base build never reported; see $CONSOLE"
-echo "base: PASS -- $BASE"
+echo "base: PASS, built $BASE"
 if grep -q 'SCALED_BASE_GAMESCOPE=ok' "$CONSOLE" 2>/dev/null; then
-  echo "base: gamescope initialises on lavapipe -- that CHANGED, and a nested"
+  echo "base: gamescope initialises on lavapipe: that CHANGED, and a nested"
   echo "base: run-scaled is now testable in a guest. Worth acting on."
 else
   echo "base: gamescope does not initialise (expected: lavapipe has no"

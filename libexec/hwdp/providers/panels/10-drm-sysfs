@@ -19,7 +19,7 @@ for _c in "$DRM"/*-*/; do
   [ "$(cat "$_c/status" 2>/dev/null)" = connected ] || continue
   _h=$(sha256sum < "$_c/edid" 2>/dev/null | cut -d' ' -f1)
   [ -n "$_h" ] && [ "$_h" != "$_EMPTY_SHA" ] || continue
-  # The connector's first listed mode is its preferred (native) one. Absent --
+  # The connector's first listed mode is its preferred (native) one. Absent,
   # a connector the kernel has not probed a mode list for, so report 0 rather
   # than guess; a consumer sizing UI from it can then tell it does not know.
   _m=$(head -1 "$_c/modes" 2>/dev/null)

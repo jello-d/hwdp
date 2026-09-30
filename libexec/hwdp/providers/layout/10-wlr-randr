@@ -1,7 +1,7 @@
 #!/bin/sh
 # hwdp LAYOUT provider: wlroots/Wayland, via wlr-randr.
 #
-# Emits every output wlr-randr reports, enabled or not, and filters nothing --
+# Emits every output wlr-randr reports, enabled or not, and filters nothing,
 # see libexec/hwdp/probe_lib for why that is the consumer's job.
 #
 # GOTCHA, paid for once already: wlr-randr COMBINES mode flags. When the current
