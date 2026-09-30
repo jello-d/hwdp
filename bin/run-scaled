@@ -236,6 +236,7 @@ GS=("$GAMESCOPE" -w "$INT_W" -h "$INT_H" -W "$BOX_W" -H "$BOX_H")
 [ "$FULLSCREEN" -eq 1 ] && GS+=(-f) || GS+=(-b)   # -b: borderless window
 case $FILTER in
     linear)  ;;
+    # conventions: allow -- getopt's own error text, quoted verbatim
     # `-F nearest`, NOT `-n`. gamescope has no -n: the short form was
     # `Super + N` as a runtime TOGGLE, never a command-line option, and
     # gamescope 3.16 rejects it outright with "invalid option -- 'n'". So
