@@ -13,7 +13,7 @@ adding a file, plus the standalone clients
 and
 .B wallpaper-slicer
 described below. It is environment-agnostic: it works under X11 or a wlroots
-compositor, and hardcodes no downstream tool \(em everything session-specific
+compositor, and hardcodes no downstream tool: everything session-specific
 is a HOOK or a PROVIDER an integrator fills.
 .SH COMMANDS
 .TP
@@ -23,9 +23,9 @@ connected connectors' EDIDs, so it names the SET regardless of order or which
 connector each panel sits on. Empty with nothing connected. Resolves HEADLESS.
 .TP
 .B hwdp shape
-The workspace shape \(em
-.BR single " or " triple
-\(em the panel COUNT coarsened, since the grid, window rules and wallpaper key
+The workspace shape:
+.BR single " or " triple:
+the panel COUNT coarsened, since the grid, window rules and wallpaper key
 on how many panels there are, not which. Resolves HEADLESS.
 .TP
 .B hwdp ui
@@ -39,10 +39,10 @@ override wins per key; else a density default. Resolves HEADLESS, and REFUSES
 (exit 3, no output) rather than guess when no display answers at all.
 .TP
 .B hwdp geometry
-Print one line per enabled output \(em
+Print one line per enabled output:
 .I NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ORIENTATION
-.I MM_W MM_H
-\(em projected from the shared layout probe. Settles by default (samples until
+.I MM_W MM_H:
+projected from the shared layout probe. Settles by default (samples until
 the layout holds still);
 .B \-\-now
 prints one snapshot.
@@ -64,7 +64,7 @@ counterpart to
 and the split is the one this package is built on: panels is what the KERNEL
 sees attached (DRM sysfs, so it answers from a TTY, at boot, at a greeter, over
 ssh), geometry is how a COMPOSITOR has arranged it and needs a session. Use it
-to size anything drawn BEFORE a session exists \(em a boot menu, a greeter \(em
+to size anything drawn BEFORE a session exists (a boot menu, a greeter)
 where the compositor's current mode does not yet exist and the panel's native
 mode is the right question. The EDID hash the provider carries is deliberately
 NOT emitted;
@@ -78,14 +78,14 @@ each output's sticky scale into the profile named by the id, or synthesize a
 side-by-side one when there is none.
 .TP
 .B hwdp capture
-Snapshot the current arrangement (transforms, positions, modes \(em no scale)
+Snapshot the current arrangement (transforms, positions, modes: no scale)
 into a profile named by the id, so a rig is onboarded by arranging it once.
 .TP
 .B hwdp apply " [" \-q ]
 Fire the
 .I changed
 hooks now. Every other path into them is driven by a DISPLAY event, but the
-answers this tool gives also depend on things no display event announces \(em a
+answers this tool gives also depend on things no display event announces: a
 per-rig
 .IR <id>.ui " override, or the calibrated sizing itself."
 Nothing watches those, so the hooks never run, and a consumer that CACHES its
@@ -93,7 +93,7 @@ answer keeps serving the stale one. Hooks are expected idempotent, so this is
 safe to run at any time; a failing hook is reported and the rest still run, with
 a non-zero overall status. It does NOT regenerate the config or signal
 .BR kanshi
-\(em that is the supervisor's job \(em it re-runs the REACTIONS only.
+ (that is the supervisor's job) it re-runs the REACTIONS only.
 .B \-q
 says nothing on success, for a provisioning run.
 .TP
@@ -111,7 +111,7 @@ It reacts to the DISPLAY SET changing as well as to the compositor config: the
 connected panels are polled every
 .B HWDP_HOTPLUG_POLL
 seconds (default 4, 0 disables), and on a change the kanshi config is
-REGENERATED before the hooks run and kanshi reloads \(em its profiles describe
+REGENERATED before the hooks run and kanshi reloads: its profiles describe
 the outputs that existed when it was written, so a reload alone would re-read a
 file that does not mention the new panel. The fingerprint is the same probe
 .B hwdp id
@@ -124,16 +124,16 @@ The supervisor DETACHES, so its own diagnostics go to
 .BR HWDP_WATCH_LOG ,
 default $XDG_RUNTIME_DIR/hwdp-watch.log, truncated per supervisor and gone on
 reboot. Set it to /dev/null to opt out. It is where the hotplug announcements,
-"kanshi gone, restarting" and any failing hook are recorded \(em a background
+"kanshi gone, restarting" and any failing hook are recorded: a background
 process that reports nothing cannot be debugged after the fact, and display
 faults almost always are.
 .SH MIXED DPI
 Panels of different physical density need
 .BR HWDP_TARGET_PPI .
 .B hwdp ui
-emits one value per key because each consumer has one global config \(em kitty
-a single font_size, pixdecor a single compositor-wide title_font, mako a single
-font \(em so there is nowhere to put a per-output value. The only fix is to
+emits one value per key because each consumer has one global config (kitty a
+single font_size, pixdecor a single compositor-wide title_font, mako a single
+font) so there is nowhere to put a per-output value. The only fix is to
 remove the difference: set
 .B HWDP_TARGET_PPI=<n>
 and
@@ -148,7 +148,7 @@ wp_fractional_scale_manager_v1 a 4K at 1.75 still draws text at 1.75x device
 pixels; what shrinks is the logical desktop (3840x2160 to 2194x1234).
 .PP
 Left unset, every output stays at scale 1 and density is absorbed by the UI
-numbers instead \(em exact for one panel or a wall of identical ones. Seeing
+numbers instead: exact for one panel or a wall of identical ones. Seeing
 panels more than 25% apart,
 .B hwdp ui
 then names them with their ppi on stderr, sizes for the DENSEST (oversized on a
@@ -187,7 +187,7 @@ paint the same image on every output and have no spanned mode, so the source is
 pre-sliced: each crop is that output's sub-rectangle of the image after it is
 cover-scaled (fill) or contained (fit) over the whole layout union. Every slice
 comes from one global cover rect, so a feature crossing a bezel stays
-continuous. Slices are cut in LOGICAL orientation and never pre-rotated \(em
+continuous. Slices are cut in LOGICAL orientation and never pre-rotated:
 the compositor applies the output transform. Prints
 .IR NAME <TAB> PATH
 per output; needs one of
