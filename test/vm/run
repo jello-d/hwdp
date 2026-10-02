@@ -80,6 +80,19 @@ runcmd:
       chmod +x bin/* setup.sh test/run libexec/hwdp/cmd/* \
         libexec/hwdp/providers/*/* || true
 
+      # THE ISO CARRIES .git AND `cp -a` PRESERVES THE DEVELOPER'S UID, so a
+      # guest running as root meets git's dubious-ownership guard. Measured in
+      # this guest rather than reasoned about:
+      #
+      #   FAIL conventions: not a git repo
+      #
+      # test/conventions.t reads its file list through `git rev-parse` with
+      # stderr DISCARDED, so it reported "not a git repo": true about what it
+      # could establish and silent about why. Without this the whole-tree
+      # conventions check FAILS in the guest while passing on the desk, which is
+      # a verdict about the substrate rather than about the tree.
+      git config --global --add safe.directory /root/hwdp
+
       echo "=== the DRM the kernel actually gives us ==="
       for c in /sys/class/drm/*-*/; do
         [ -d "$c" ] || continue
