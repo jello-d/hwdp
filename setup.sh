@@ -54,11 +54,56 @@ _man=$_shr/man
 # which is what `head`-tracked packaging expects. The tools find it from their
 # own real path anyway; this is for anyone who wants it at a predictable place.
 _lib=$PREFIX/libexec
+
+# THE PAYLOAD, in user mode only. The rule is `_install-placement.md` and the
+# recipe `_place-conversion.md`; what follows is only what is SPECIFIC here.
+#
+# WHY A DEPARTED PACKAGE CANNOT SYMLINK INTO ITS CLONE: this installs from
+# ~/.cache/tackup/pkgs/hwdp, which is re-cloned on every sweep and wiped on
+# demand, so every link into it dangles the moment that happens.
+#
+# THIS IS THE RECIPE'S CANONICAL DIRECTION, confirmed by RUNNING it rather than
+# reading it: `bin/hwdp` resolves its own real path and reads a SIBLING tree,
+#
+#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec/hwdp
+#
+# so with ~/.local/bin/hwdp linked at <payload>/bin/hwdp it lands on
+# <payload>/libexec/hwdp. `hwdp shape` answered through exactly that layout
+# before any of this was written. Nothing inside libexec/ looks back at bin/,
+# so the dependency is one-directional and bin + libexec + man are the whole
+# payload (there is no share/ in this repo).
+_pay=$_shr/$PKG
+
+# A SHAPE GUARD, because the next thing this path meets is `rm -rf` and the
+# house rule is that no variable reaches that command unchecked. Keyed on SHAPE
+# rather than on a literal $HOME prefix: the conversion is verified under a
+# scratch PREFIX, and the recipe's own example guard would refuse exactly the
+# safe rehearsal it prescribes.
+_pay_sane() {
+  case ${_pay:-} in
+    /*/"$PKG") [ "$(dirname "$_pay")" != / ] ;;
+    *)         return 1 ;;
+  esac
+}
+
 # What we last placed in $_bin. In COPY mode an installed file carries no
 # marker pointing home, so a departed tool cannot be recognised from its target
 # the way a dangling symlink can, and at a ROOT prefix that would strand a
 # root-owned binary nobody can account for. Kept BESIDE the libexec tree, since
 # a copying install rm -rf's the tree itself.
+#
+# AND IT DELIBERATELY DOES NOT MOVE INTO THE PAYLOAD, which is the same hazard
+# the recipe records for a venv: the payload is restaged and swapped on every
+# install, so a manifest inside it would be destroyed every time and the prune
+# history with it. `_prune_stale` exists because five links survived the
+# collapse to a single `hwdp` command, so losing that record silently reinstates
+# the bug it was written to fix.
+#
+# IT STAYS IN $_lib RATHER THAN BESIDE THE PAYLOAD, measured rather than
+# assumed: ~/.local/libexec is SHARED, and charon, severance and valet-key all
+# still have entries there, so the directory persists whatever hwdp does. Moving
+# the manifest would buy tidiness at the price of a migration that can only lose
+# prune history. The struck path is libexec/<pkg>, not libexec itself.
 _manifest=$_lib/.$PKG-installed
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
@@ -149,10 +194,25 @@ _unplace() {
 # into our own bin/, so another package's binary can never be touched.
 _prune_stale() {
   # Symlink mode: ours if it points into our own bin/ and no longer resolves.
+  #
+  # BOTH BINS COUNT NOW, and missing that would have silently re-broken the bug
+  # this function exists to fix. It recognised its own links by them pointing
+  # into the CLONE, and the conversion repoints them at the payload, so after it
+  # every link would have looked like somebody else's and nothing would ever be
+  # pruned again: a departed tool's link left on PATH for ever, which is exactly
+  # the state five of them were in before this existed.
+  #
+  # THE CLONE FORM STAYS, because a box converts on its next install and the
+  # links it is reclaiming were placed by the version before that one. Dropping
+  # it would strand every pre-conversion crumb permanently.
   for _l in "$_bin"/*; do
     [ -L "$_l" ] || continue
     _lt=$(readlink "$_l") || continue
-    case $_lt in "$_root/bin/"*) ;; *) continue ;; esac
+    case $_lt in
+      "$_root/bin/"*) ;;
+      "$_pay/bin/"*) ;;
+      *) continue ;;
+    esac
     [ -e "$_lt" ] && continue
     rm -f "$_l" && echo "$PKG: pruned stale link $(basename "$_l")"
   done
@@ -178,12 +238,46 @@ _write_manifest() {
   [ "$(id -u)" = 0 ] && chown root:root "$_manifest" || :
 }
 
+# STAGE BESIDE THE LIVE TREE AND SWAP, never write into it. A copying install
+# re-runs on every provision sweep, so it must be idempotent, and a half-written
+# payload is worse than an old one: `hwdp` resolves its providers out of this
+# tree and the greeter runs the published copy of it. Staging means the live
+# tree is only ever replaced by a complete one.
+_payload_stage() {
+  if ! _pay_sane; then
+    echo "$PKG: refusing to stage a payload at '${_pay:-}'" >&2
+    return 1
+  fi
+  # DERIVED FROM A PATH JUST GUARDED, which is the only form in which these two
+  # names may reach `rm -rf`. The guard is immediately above on purpose.
+  _paynew=$_pay.new
+  _payold=$_pay.old
+  rm -rf -- "$_paynew" "$_payold"
+  mkdir -p "$_paynew"
+  for _pd in bin libexec man; do
+    if [ -d "$_root/$_pd" ]; then cp -R "$_root/$_pd" "$_paynew/$_pd"; fi
+  done
+  mkdir -p "$(dirname "$_pay")"
+  if [ -e "$_pay" ]; then mv -- "$_pay" "$_payold"; fi
+  mv -- "$_paynew" "$_pay"
+  rm -rf -- "$_payold"
+}
+
 do_install() {
+  # A PAYLOAD IN USER MODE ONLY. Copy mode is the SHARED/system install, which
+  # copies into a root-owned prefix and already satisfies place-not-link; giving
+  # it a payload too would mean two copies and a second thing to keep in step.
+  # So this leaves the /opt behaviour the greeter depends on byte-identical.
+  _srcroot=$_root
+  if [ "${HWDP_INSTALL_COPY:-0}" != 1 ]; then
+    _payload_stage || return 1
+    _srcroot=$_pay
+  fi
   mkdir -p "$_bin" "$_lib"
   for _t in "$_root"/bin/*; do
     _n=$(basename "$_t")
     if _wanted_at_prefix "$_n"; then
-      _place "$_t" "$_bin/$_n"
+      _place "$_srcroot/bin/$_n" "$_bin/$_n"
     elif [ -e "$_bin/$_n" ] || [ -L "$_bin/$_n" ]; then
       # SWEEP what an earlier over-install left at a shared prefix. A stale
       # shadow is worse than a missing tool: the missing one fails loudly,
@@ -206,11 +300,23 @@ do_install() {
     cp -a "$_root/libexec/$PKG" "$_lib/$PKG"
     [ "$(id -u)" = 0 ] && chown -R root:root "$_lib/$PKG" || :
   else
-    ln -sfn "$_root/libexec/$PKG" "$_lib/$PKG"
+    # THE STRUCK ROOT IS NOT RECREATED. `~/.local/libexec/<pkg>` was a symlink
+    # into the clone, so it dangled on every re-clone; the tools resolve their
+    # libexec out of the payload now, which `check` asserts. The `rm -rf` above
+    # is what retires an existing one, and it runs in BOTH modes, so a box takes
+    # the retirement on the very next install rather than waiting for an
+    # uninstall that may never come.
+    #
+    # NOTHING REPLACES IT. The comment this branch used to carry said the link
+    # was "for anyone who wants it at a predictable place", and the predictable
+    # place is now <payload>/libexec/hwdp, which is also where the tools
+    # genuinely look.
+    :
   fi
   _man_pages | while IFS= read -r _m; do
     _d=$_man/$(basename "$(dirname "$_m")")
-    mkdir -p "$_d"; _place "$_m" "$_d/$(basename "$_m")"; done
+    mkdir -p "$_d"
+    _place "$_srcroot/${_m#"$_root"/}" "$_d/$(basename "$_m")"; done
   _write_manifest
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
     echo "$PKG: COPIED the tools (+ libexec, man) into $PREFIX"
@@ -220,7 +326,19 @@ do_install() {
 }
 
 do_uninstall() {
-  for _t in "$_root"/bin/*; do _unplace "$_bin/$(basename "$_t")" "$_t"; done
+  # BOTH TARGETS, for the reason `_unplace` only removes a link whose target
+  # MATCHES: that match is what stops it deleting an integrator's own link of
+  # the same name. Handed only the clone path it matches nothing after a
+  # conversion,
+  # so uninstall would silently leave every link behind. A box may legitimately
+  # carry either form, since only an uninstall from this version clears the old.
+  _unsrc=$_root
+  if [ "${HWDP_INSTALL_COPY:-0}" != 1 ]; then _unsrc=$_pay; fi
+  for _t in "$_root"/bin/*; do
+    _n=$(basename "$_t")
+    _unplace "$_bin/$_n" "$_unsrc/bin/$_n"
+    _unplace "$_bin/$_n" "$_t"
+  done
   _prune_stale
   # -L BEFORE -d, since a symlink TO a directory satisfies both.
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
@@ -238,9 +356,23 @@ do_uninstall() {
     echo "$PKG: removed a stale copy-mode libexec tree at $_lib/$PKG"
   fi
   _man_pages | while IFS= read -r _m; do
-    _unplace "$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")" "$_m"
+    _l=$_man/$(basename "$(dirname "$_m")")/$(basename "$_m")
+    _unplace "$_l" "$_unsrc/${_m#"$_root"/}"
+    _unplace "$_l" "$_m"
   done
   rm -f "$_manifest"
+  # AND THE PAYLOAD, the only directory this version creates. Guarded, then
+  # removed through a value that cannot be anything else: the house rule is that
+  # no unchecked variable reaches `rm -rf`, and this is the one place here
+  # that deletes a TREE under a user prefix.
+  if [ "${HWDP_INSTALL_COPY:-0}" != 1 ]; then
+    if [ -d "$_pay" ] && _pay_sane; then
+      rm -rf -- "$_pay"
+      echo "$PKG: removed the payload at $_pay"
+    elif [ -e "$_pay" ] && ! _pay_sane; then
+      echo "$PKG: refusing to remove '$_pay' (not a payload-shaped path)" >&2
+    fi
+  fi
   echo "$PKG: removed the install from $PREFIX"
 }
 
@@ -296,9 +428,54 @@ do_check() {
   # symlink is only an inconvenience, hence bad vs warn.
   [ -f "$_root/libexec/$PKG/probe_lib" ] && ok "libexec/probe_lib present" \
     || bad "libexec/probe_lib missing"
-  [ "$(readlink "$_lib/$PKG" 2>/dev/null)" = "$_root/libexec/$PKG" ] \
-    && ok "libexec linked into $PREFIX" \
-    || warn "libexec not linked at $_lib/$PKG (tools still resolve it)"
+  # THE PAYLOAD INVARIANTS. This used to WARN when $_lib/$PKG was not a symlink
+  # into the clone, which after the conversion is the state of every CORRECT
+  # box: a warning that is permanently on is how a report stops being read, so
+  # it had to move with the layout rather than be left pointing at the old one.
+  #
+  # Copy mode is exempt: it installs into a root-owned system prefix, has no
+  # payload by design, and is the tree the greeter resolves through.
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    [ -d "$_lib/$PKG" ] && [ ! -L "$_lib/$PKG" ] \
+      && ok "libexec copied into $PREFIX" \
+      || bad "copy mode has no real libexec tree at $_lib/$PKG"
+  else
+    if [ -d "$_pay" ] && [ ! -L "$_pay" ]; then
+      ok "payload is a real directory ($_pay)"
+    else
+      bad "payload missing or a symlink ($_pay); a departed package must own a
+  real tree, because a link into the clone dangles on the next re-clone"
+    fi
+    # THE INVARIANT THE TOOLS ACTUALLY DEPEND ON. `hwdp` resolves its own real
+    # path and reads a SIBLING libexec, so bin and libexec have to sit at that
+    # exact relative depth inside the payload. Asserted as a RESOLUTION rather
+    # than as "both directories exist", because adjacency is not the claim.
+    _cpay=$(readlink -f "$_bin/$PKG" 2>/dev/null || true)
+    if [ -n "$_cpay" ] \
+       && [ -d "$(dirname "$(dirname "$_cpay")")/libexec/$PKG" ]; then
+      ok "hwdp resolves its libexec through the payload"
+    else
+      bad "hwdp at $_bin/$PKG does not resolve to a tree with libexec/$PKG
+  beside its bin/, so every dispatched command would be unreachable"
+    fi
+    # AND NOTHING MAY RESOLVE BACK INTO THE SOURCE TREE, which is the rule the
+    # conversion exists for and the only assertion that can see a half-done one:
+    # one surviving link into the clone re-breaks on the next sweep.
+    _leak=
+    for _ld in "$_bin" "$_man" "$_lib"; do
+      [ -d "$_ld" ] || continue
+      for _lf in "$_ld"/* "$_ld"/*/*; do
+        [ -L "$_lf" ] || continue
+        case "$(readlink -f "$_lf" 2>/dev/null)" in
+          "$_root"/*) _leak="$_leak $_lf" ;;
+        esac
+      done
+    done
+    if [ -z "$_leak" ]; then
+      ok "no installed link resolves into the source tree"
+    else bad "these resolve into the source tree, so they dangle when it is
+  re-cloned or wiped:$_leak"; fi
+  fi
   for _c in layout panels; do
     _n=0
     for _p in "$_root/libexec/$PKG/providers/$_c"/*; do

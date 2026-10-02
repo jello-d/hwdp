@@ -14,13 +14,51 @@ export XDG_BIN_HOME XDG_DATA_HOME
 
 sh "$HERE/setup.sh" install >/dev/null || fail "install errored"
 
-# every bin/ tool is linked into PREFIX/bin, pointing back at the repo
+# EVERY bin/ TOOL IS LINKED INTO THE PAYLOAD, not back at the repo. That is the
+# whole of the place-not-link conversion: a departed package installs from
+# ~/.cache/tackup/pkgs/hwdp, which is re-cloned on every sweep and wiped on
+# demand, so a link into it dangles the moment that happens.
+PAY=$XDG_DATA_HOME/hwdp
 for _t in "$HERE"/bin/*; do
   _n=$(basename "$_t")
   _l=$XDG_BIN_HOME/$_n
   [ -L "$_l" ] || fail "$_n not linked into PREFIX/bin"
-  [ "$(readlink "$_l")" = "$_t" ] || fail "$_n link does not point at the repo"
+  [ "$(readlink "$_l")" = "$PAY/bin/$_n" ] \
+    || fail "$_n links to '$(readlink "$_l")' rather than into the payload at
+$PAY/bin/$_n: a link into the source tree is what this conversion removes"
 done
+[ -d "$PAY" ] && [ ! -L "$PAY" ] \
+  || fail "the payload at $PAY is not a real directory"
+
+# AND THE TOOLS STILL FIND THEIR libexec THROUGH IT, which is the invariant the
+# payload exists to preserve and the one a reader is most likely to break.
+# `bin/hwdp` resolves its own real path and reads a SIBLING tree:
+#
+#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec/hwdp
+#
+# so bin and libexec must sit at that exact relative depth INSIDE the payload.
+# Asserted by RUNNING a dispatched subcommand, because the adjacency of two
+# directories is not the claim: the claim is that the dispatch resolves.
+[ -d "$PAY/libexec/hwdp" ] \
+  || fail "no libexec/hwdp beside the payload's bin/, so every dispatched
+subcommand resolves to nothing"
+env -u HWDP_LIBEXEC "$XDG_BIN_HOME/hwdp" shape >/dev/null 2>&1 \
+  || fail "hwdp could not dispatch 'shape' through the payload link, so its
+self-location does not resolve there"
+
+# NOTHING MAY RESOLVE BACK INTO THE SOURCE TREE. The only assertion that can see
+# a half-done conversion: one surviving link re-breaks on the next re-clone.
+_leak=
+for _d in "$XDG_BIN_HOME" "$XDG_DATA_HOME/man/man1" "$PREFIX/libexec"; do
+  [ -d "$_d" ] || continue
+  for _f in "$_d"/*; do
+    [ -L "$_f" ] || continue
+    case "$(readlink -f "$_f" 2>/dev/null)" in
+      "$HERE"/*) _leak="$_leak $_f" ;;
+    esac
+  done
+done
+[ -z "$_leak" ] || fail "these resolve into the source tree:$_leak"
 
 # the man page landed
 [ -e "$XDG_DATA_HOME/man/man1/hwdp.1" ] || fail "man page not installed"
@@ -47,24 +85,35 @@ sh "$HERE/setup.sh" install >/dev/null || fail "re-install errored"
   || fail "install pruned a link that belongs to another package"
 rm -f "$XDG_BIN_HOME/theirs"
 
-# A prefix that once held a COPY install keeps a REAL libexec/<pkg>/ directory,
-# and both placement commands NEST rather than replace against one: `cp -a`
-# puts the tree a level down, and `ln -sfn` buries the link at
-# libexec/hwdp/hwdp. The symlink branch used to miss this, so the stale tree
-# went on resolving in front of the new link, silently, because the tools
-# find their libexec from their own real path and kept working. Found on a live
-# box by check's WARN; pinned here so it cannot come back.
+# THE STRUCK ROOT IS RETIRED, NOT REPLACED. `~/.local/libexec/<pkg>` is gone as
+# a concept: it was a symlink into the clone, so it dangled on every re-clone,
+# and the tools resolve their libexec out of the payload now.
+#
+# THIS CASE USED TO ASSERT A SYMLINK THERE, for a real reason that no longer
+# applies: both placement commands NEST rather than replace against a real
+# directory, so a prefix that once held a COPY install buried the new link at
+# libexec/hwdp/hwdp and the stale tree went on resolving in front of it,
+# silently, because the tools find their libexec from their own real path and
+# kept working. Found on a live box by check's WARN.
+#
+# THE STALE TREE STILL HAS TO GO, which is the half worth keeping: left behind
+# it is the crumb a mode switch is meant not to leave, and the `rm -rf` that
+# clears it runs in BOTH modes so a box takes the retirement on its next install
+# rather than waiting for an uninstall that may never come.
 rm -rf "$PREFIX/libexec/hwdp"
 mkdir -p "$PREFIX/libexec/hwdp/cmd"
 : > "$PREFIX/libexec/hwdp/probe_lib"           # a stale file from that install
 sh "$HERE/setup.sh" install >/dev/null \
   || fail "re-install over a real dir errored"
-[ -L "$PREFIX/libexec/hwdp" ] \
-  || fail "libexec/hwdp is not a symlink; the install nested under a stale dir"
-[ -e "$PREFIX/libexec/hwdp/hwdp" ] \
-  && fail "the link was nested one level down (libexec/hwdp/hwdp)"
-[ -e "$PREFIX/libexec/hwdp/probe_lib" ] \
-  || fail "the linked libexec does not resolve probe_lib"
+[ -e "$PREFIX/libexec/hwdp" ] \
+  && fail "install left the struck root at $PREFIX/libexec/hwdp; the payload
+carries the libexec tree now, and recreating it puts the dangling-link violation
+straight back"
+# ...and the tools are unaffected by its absence, which is the point: they never
+# read that path, they read a sibling of their own real one.
+env -u HWDP_LIBEXEC "$XDG_BIN_HOME/hwdp" shape >/dev/null 2>&1 \
+  || fail "hwdp stopped dispatching once the struck root was retired, so
+something still depends on a path the conversion removes"
 
 # ...and UNINSTALL clears the same stale tree rather than leaving the crumb a
 # mode switch is meant not to leave. Gated on our manifest sitting beside it,
@@ -165,6 +214,12 @@ for _t in "$HERE"/bin/*; do
   [ -e "$XDG_BIN_HOME/$_n" ] && fail "$_n still present after uninstall" || :
 done
 [ -e "$XDG_DATA_HOME/man/man1/hwdp.1" ] && fail "man page not removed" || :
+# AND THE PAYLOAD GOES WITH IT. It is the only directory this install creates,
+# so leaving it behind makes uninstall a half-measure and the next install a
+# swap against a tree nobody owns. Added because the proof that the other three
+# assertions bite showed this one had none: deleting the payload removal from
+# setup.sh left the test green.
+[ -e "$PAY" ] && fail "uninstall left the payload at $PAY" || :
 
 pass "install/check/uninstall roundtrip"
 
