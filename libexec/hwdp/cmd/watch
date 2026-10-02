@@ -47,19 +47,41 @@ cfg="${WAYFIRE_CONFIG_FILE:-$HOME/.config/wayfire/wayfire.ini}"
 # In $XDG_RUNTIME_DIR so it is per-session, tmpfs-cheap and gone on reboot;
 # truncated per supervisor, since a new one means a new session. Set it to
 # /dev/null to opt out.
-watch_log="${HWDP_WATCH_LOG:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
-lock="${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.lock"
+# RUNTIME FILES LIVE IN OUR OWN DIRECTORY, `$XDG_RUNTIME_DIR/hwdp/`, not as
+# `hwdp-*` siblings of every other tool's. The names were already prefixed, so
+# nothing could collide, but one directory per package is what makes the set
+# enumerable: `setup.sh paths` can name it, an audit can sweep it, and teardown
+# can see what is left. The old flat names are retired below.
+_rt=${XDG_RUNTIME_DIR:-/tmp}/hwdp
+mkdir -p "$_rt" 2>/dev/null || _rt=${XDG_RUNTIME_DIR:-/tmp}
+watch_log="${HWDP_WATCH_LOG:-$_rt/watch.log}"
+lock="$_rt/watch.lock"
+
+# THE OLD LOCK IS STILL HONOURED, for exactly as long as a supervisor started
+# before this change can still be running. Moving a lockfile is not a rename:
+# the running supervisor holds the OLD path, a new one taking only the NEW path
+# would see it free, and the single-supervisor guarantee this whole file is
+# built on would silently become two (two kanshi owners, two hook runners).
+# So a held old lock counts as "a supervisor is already up" and we nudge, which
+# is what every other losing invocation does. Safe to delete once no session
+# predating the move can be alive, i.e. after both boxes have logged in again.
+lock_old=${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.lock
+_old_supervisor_live() {
+  [ -e "$lock_old" ] || return 1
+  if ( flock -n 8 ) 8>"$lock_old" 2>/dev/null; then return 1; fi
+  return 0
+}
 
 # FIFO carrying the persistent monitor's event stream back to the supervisor,
 # so inotifywait can run backgrounded (PID tracked for cleanup) while we read
 # its output line by line in this shell (variable updates stay in scope).
-fifo="${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.$$.events"
+fifo="$_rt/watch.$$.events"
 
 # Generation token for the coalesced settle (see schedule_settle): holds the
 # newest pending settle's number. A settle that reads a different (or missing)
 # number after its sleep stands down, which is how a burst coalesces and how
 # teardown cancels without owning the process.
-settle_token="${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.$$.settle"
+settle_token="$_rt/watch.$$.settle"
 settle_gen=0
 
 # The compositor's Wayland socket. When this vanishes, Wayfire is gone.
@@ -101,6 +123,13 @@ nudge() {
 # when we're about to become the supervisor. Guard with an env flag so the
 # re-exec happens exactly once.
 if [ "${HWDP_WATCH_DAEMONIZED:-}" != 1 ]; then
+  # A supervisor started before the runtime files moved holds the OLD lock and
+  # knows nothing about the new one, so ask about it FIRST or we would start a
+  # second one alongside it.
+  if _old_supervisor_live; then
+    nudge
+    exit 0
+  fi
   # Only daemonize if we'd be the supervisor; a nudge should stay attached.
   # Probe the lock non-destructively: if someone holds it, just nudge inline.
   if exec 9>"$lock" && flock -n 9; then
@@ -117,6 +146,12 @@ if [ "${HWDP_WATCH_DAEMONIZED:-}" != 1 ]; then
 fi
 
 # --- nudge-or-supervise: try to take the lock on fd 9 ------------------
+# The old lock again, for a run that entered already daemonized (the tests, and
+# a hand re-exec): this path takes the lock for real, so it needs the same gate.
+if _old_supervisor_live; then
+  nudge
+  exit 0
+fi
 exec 9>"$lock"
 if ! flock -n 9; then
   # Another supervisor already holds the lock -> we are just a nudge.

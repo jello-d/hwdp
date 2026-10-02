@@ -223,6 +223,35 @@ done
 
 pass "install/check/uninstall roundtrip"
 
+# --- the `paths` CONTRACT VERB -----------------------------------------------
+# Part of the package contract: one declaration feeds the install audit, the
+# stale-path sweep, uninstall saying what it kept, and discoverability. Pinned
+# because four consumers reading it is exactly the shape where a silently
+# dropped key degrades each of them differently.
+_pv=$(sh "$HERE/setup.sh" paths) || fail "paths verb failed"
+for _k in bin payload man state config runtime profiles; do
+  printf '%s\n' "$_pv" | grep -q "^$_k$(printf '\t')" \
+    || fail "paths omits the '$_k' root; a consumer of this verb then guesses"
+done
+printf '%s\n' "$_pv" | while IFS= read -r _l; do
+  case $_l in
+    *"$(printf '\t')"/*) ;;
+    *) fail "paths line is not 'key<TAB>/absolute/path': [$_l]" ;;
+  esac
+done
+
+# COPY MODE OWNS DIFFERENT ROOTS, and the payload is the one that differs most:
+# a copying install places its tree AT the prefix, so there is no separate
+# payload directory and naming one would send an audit at a path that has never
+# existed.
+_pu=$(sh "$HERE/setup.sh" paths | sed -n 's/^payload\t//p')
+_pc=$(HWDP_INSTALL_COPY=1 PREFIX=/opt/hwdp sh "$HERE/setup.sh" paths \
+      | sed -n 's/^payload\t//p')
+[ "$_pc" = /opt/hwdp ] \
+  || fail "copy mode must declare the prefix itself as the payload, got '$_pc'"
+[ "$_pu" != "$_pc" ] || fail "the two modes declared the same payload root"
+pass "the paths verb declares every root, and differs by mode"
+
 # --- check AUDITS this rig's UI override, and only ever WARNS ----------------
 # Both findings describe a deliberate human choice that `install` cannot fix,
 # so they must not FAIL: a check reporting what apply can never clear goes

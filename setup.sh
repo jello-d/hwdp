@@ -74,6 +74,25 @@ _lib=$PREFIX/libexec
 # payload (there is no share/ in this repo).
 _pay=$_shr/$PKG
 
+# Does <entry-point> sit at bin/<cmd> with a SIBLING libexec/<pkg>? That is the
+# whole of self-location: `readlink -f "$0"` then `../libexec`. Resolving first
+# means a symlink chain is followed to the real file, which is the thing that
+# has to be at the right depth.
+_resolves_libexec() {   # <entry-point>
+  _rl=$(readlink -f "$1" 2>/dev/null) || return 1
+  [ -n "$_rl" ] || return 1
+  [ -d "$(dirname "$(dirname "$_rl")")/libexec/$PKG" ]
+}
+
+# Is <cmd> one this package declares SHARED? Reads SYSTEM_TOOLS, the same single
+# source of truth the `system-tools` verb publishes, so an integrator and this
+# check can never disagree about which commands may legitimately be absent from
+# the user prefix.
+_is_system_tool() {   # <cmd>
+  for _st in $SYSTEM_TOOLS; do [ "$1" = "$_st" ] && return 0; done
+  return 1
+}
+
 # A SHAPE GUARD, because the next thing this path meets is `rm -rf` and the
 # house rule is that no variable reaches that command unchecked. Keyed on SHAPE
 # rather than on a literal $HOME prefix: the conversion is verified under a
@@ -104,7 +123,30 @@ _pay_sane() {
 # still have entries there, so the directory persists whatever hwdp does. Moving
 # the manifest would buy tidiness at the price of a migration that can only lose
 # prune history. The struck path is libexec/<pkg>, not libexec itself.
-_manifest=$_lib/.$PKG-installed
+# USER MODE PUTS IT IN XDG STATE, not in the struck libexec root. "What we
+# last placed" is per-package STATE, which the placement rule already homes at
+# ~/.local/state/<pkg> (root state goes to /var/lib/<pkg>), and leaving it in
+# ~/.local/libexec kept that struck root alive for one hidden file. The comment
+# here used to justify staying by saying charon, severance and valet-key still
+# had entries there; measured 2026-10-02 on BOTH boxes, they have all converted
+# and `.hwdp-installed` was the ONLY thing left, so the justification had
+# expired and hwdp alone was holding the directory open.
+#
+# COPY MODE IS UNCHANGED, and deliberately: that prefix is root-owned and
+# root-visible (/opt/<pkg>), which is the whole reason it exists, and root
+# cannot read a manifest inside an encrypted home.
+#
+# IT STILL DOES NOT MOVE INTO THE PAYLOAD, which is the hazard the recipe
+# records for a venv: the payload is restaged and swapped on every install, so
+# a manifest inside it would be destroyed every time and the prune history with
+# it. `_prune_stale` exists because five links survived the collapse to a single
+# `hwdp` command, so losing that record silently reinstates the bug it fixed.
+if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+  _manifest=$_lib/.$PKG-installed
+else
+  _manifest=${XDG_STATE_HOME:-$PREFIX/state}/$PKG/installed
+fi
+_manifest_old=$_lib/.$PKG-installed
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
@@ -138,7 +180,12 @@ _man_pages() { for _m in "$_root"/man/man*/*.[0-9]; do
 # session launcher, invoked from a keybind or a menu by the person sitting
 # there. Installing it system-side would put a second copy of a user-only tool
 # on PATH, which is precisely the shadow the single-copy rule forbids.
-SYSTEM_TOOLS=${SYSTEM_TOOLS:-hwdp}
+# `-`, NOT `:-`, so an integrator can declare that NOTHING is shared. The verb
+# contract above says an EMPTY answer is a real answer, and `:-` substitutes on
+# NULL as well as unset, so `SYSTEM_TOOLS=` handed back `hwdp` and the one
+# statement the contract calls meaningful could not be made. Same empty-is-not-
+# absent trap this package already documents for a `<id>.ui` override key.
+SYSTEM_TOOLS=${SYSTEM_TOOLS-hwdp}
 
 # _wanted_at_prefix <tool>: is this tool wanted at the prefix being installed
 # to? Keyed on COPY MODE, which is already defined as "what a shared prefix
@@ -229,7 +276,29 @@ _prune_stale() {
 # departs. Honours _wanted_at_prefix: at a shared prefix the manifest must not
 # claim a session tool we deliberately did not install, or it describes a
 # prefix that never existed.
+# ADOPT A MANIFEST LEFT AT THE OLD PATH, then retire it. The record is prune
+# history: `_prune_stale` uses it to recognise a tool this package placed and
+# later stopped shipping, so losing it silently reinstates the dangling-link bug
+# it was written for. Moving rather than rewriting keeps that history across the
+# layout change, and the old file is removed so the struck root can go with it.
+_adopt_old_manifest() {
+  [ "${HWDP_INSTALL_COPY:-0}" = 1 ] && return 0
+  [ "$_manifest" != "$_manifest_old" ] || return 0
+  [ -f "$_manifest_old" ] || return 0
+  [ -f "$_manifest" ] && { rm -f "$_manifest_old"; return 0; }
+  mkdir -p "$(dirname "$_manifest")"
+  cp -p "$_manifest_old" "$_manifest" || return 1
+  rm -f "$_manifest_old"
+  echo "$PKG: moved the install manifest to $_manifest"
+  # And take the struck root with it when nothing else is using it. rmdir, never
+  # rm -rf: it refuses a non-empty directory, so another package's entry is safe
+  # by construction rather than by a check that could be wrong.
+  rmdir "$_lib" 2>/dev/null \
+    && echo "$PKG: retired the struck libexec root ($_lib)" || :
+}
+
 _write_manifest() {
+  mkdir -p "$(dirname "$_manifest")"
   : > "$_manifest"
   for _t in "$_root"/bin/*; do
     _n=$(basename "$_t")
@@ -268,12 +337,19 @@ do_install() {
   # copies into a root-owned prefix and already satisfies place-not-link; giving
   # it a payload too would mean two copies and a second thing to keep in step.
   # So this leaves the /opt behaviour the greeter depends on byte-identical.
+  _adopt_old_manifest || return 1
   _srcroot=$_root
   if [ "${HWDP_INSTALL_COPY:-0}" != 1 ]; then
     _payload_stage || return 1
     _srcroot=$_pay
   fi
-  mkdir -p "$_bin" "$_lib"
+  # $_lib ONLY IN COPY MODE. In user mode it is the STRUCK top-level
+  # libexec root, and creating it here undid the retirement a few lines
+  # below in the same run: the rmdir reported success and the directory was
+  # back before install returned. A mkdir is as much a part of a layout as
+  # the files in it.
+  mkdir -p "$_bin"
+  [ "${HWDP_INSTALL_COPY:-0}" = 1 ] && mkdir -p "$_lib" || :
   for _t in "$_root"/bin/*; do
     _n=$(basename "$_t")
     if _wanted_at_prefix "$_n"; then
@@ -360,7 +436,11 @@ do_uninstall() {
     _unplace "$_l" "$_unsrc/${_m#"$_root"/}"
     _unplace "$_l" "$_m"
   done
-  rm -f "$_manifest"
+  rm -f "$_manifest" "$_manifest_old"
+  # Take the state dir and the struck root if they are now empty. rmdir refuses
+  # a non-empty directory, so neither can remove somebody else's file.
+  rmdir "$(dirname "$_manifest")" 2>/dev/null || :
+  rmdir "$_lib" 2>/dev/null || :
   # AND THE PAYLOAD, the only directory this version creates. Guarded, then
   # removed through a value that cannot be anything else: the house rule is that
   # no unchecked variable reaches `rm -rf`, and this is the one place here
@@ -450,13 +530,34 @@ do_check() {
     # path and reads a SIBLING libexec, so bin and libexec have to sit at that
     # exact relative depth inside the payload. Asserted as a RESOLUTION rather
     # than as "both directories exist", because adjacency is not the claim.
-    _cpay=$(readlink -f "$_bin/$PKG" 2>/dev/null || true)
-    if [ -n "$_cpay" ] \
-       && [ -d "$(dirname "$(dirname "$_cpay")")/libexec/$PKG" ]; then
-      ok "hwdp resolves its libexec through the payload"
+    # ASSERTED ON THE PAYLOAD, which exists in every correct state. It used
+    # to be asserted on $_bin/$PKG, and that path is NOT guaranteed: a command
+    # this package classifies as SHARED is published ONCE at a system prefix by
+    # the integrator, which DELETES the user-prefix duplicate (the
+    # one-command-on-PATH rule). So a correctly installed box went PERMANENTLY
+    # RED: `hwdp` living at /usr/local/bin/hwdp -> /opt/hwdp, with
+    # ~/.local/bin/hwdp absent BY DESIGN, was reported as a payload whose
+    # commands are all unreachable. Measured on manifold 2026-10-02, where every
+    # run ended `APPLY DID NOT FIX: install hwdp`.
+    if _resolves_libexec "$_pay/bin/$PKG"; then
+      ok "the payload's $PKG resolves its libexec"
     else
-      bad "hwdp at $_bin/$PKG does not resolve to a tree with libexec/$PKG
-  beside its bin/, so every dispatched command would be unreachable"
+      bad "$_pay/bin/$PKG does not resolve to a tree with libexec/$PKG beside
+  its bin/, so every dispatched command would be unreachable"
+    fi
+    # AND THE USER-PREFIX ENTRY POINT, only when there should be one. Absence is
+    # correct exactly when the integrator may have published it elsewhere, and
+    # SYSTEM_TOOLS is this package's own statement of which commands those are:
+    # the same source of truth the `system-tools` verb publishes, so the check
+    # cannot disagree with the contract it exports.
+    if [ -e "$_bin/$PKG" ] || [ -L "$_bin/$PKG" ]; then
+      _resolves_libexec "$_bin/$PKG" \
+        && ok "$_bin/$PKG resolves its libexec" \
+        || bad "$_bin/$PKG does not resolve to a tree with libexec/$PKG"
+    elif _is_system_tool "$PKG"; then
+      ok "$PKG not at $_bin (SHARED: published at a system prefix instead)"
+    else
+      bad "$PKG is not SHARED, so $_bin/$PKG should exist and does not"
     fi
     # AND NOTHING MAY RESOLVE BACK INTO THE SOURCE TREE, which is the rule the
     # conversion exists for and the only assertion that can see a half-done one:
@@ -552,8 +653,37 @@ _check_override() {
             "-- so pinning one makes that thing SMALLER, not bigger."
 }
 
+# EVERY ROOT THIS PACKAGE OWNS, one `key<TAB>path` per line. Part of the package
+# contract: ONE declaration feeds the four things that otherwise each guess at
+# it, namely the install audit, the stale-path sweep, uninstall saying what it
+# kept, and plain discoverability. Printed for the CURRENT mode, since copy mode
+# and user mode genuinely own different roots and the caller already chose one
+# by setting (or not setting) HWDP_INSTALL_COPY.
+do_paths() {
+  printf 'bin\t%s\n'     "$_bin/$PKG"
+  # COPY MODE HAS NO PAYLOAD: it installs the tree AT the prefix, which is the
+  # whole point of a root-owned /opt/<pkg>. Printing $_shr/$PKG there named a
+  # path that has never existed, which is worse than printing nothing when the
+  # consumers of this verb are an audit and a stale-path sweep.
+  if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    printf 'payload\t%s\n' "$PREFIX"
+  else
+    printf 'payload\t%s\n' "$_pay"
+  fi
+  printf 'man\t%s\n'     "$_man/man1/$PKG.1"
+  printf 'state\t%s\n'   "$(dirname "$_manifest")"
+  printf 'config\t%s\n'  "${XDG_CONFIG_HOME:-$HOME/.config}/$PKG"
+  printf 'runtime\t%s\n' "${XDG_RUNTIME_DIR:-/tmp}/$PKG"
+  # The kanshi adapter's: `capture` WRITES a profile here and `ui` reads a
+  # `<id>.ui` override beside it, so it is a root this package puts USER data
+  # in. Declared so uninstall can say it is KEPT rather than silently leave it.
+  printf 'profiles\t%s\n' \
+    "${KANSHI_PROFILES:-${XDG_CONFIG_HOME:-$HOME/.config}/kanshi/profiles}"
+}
+
+
 _U="usage: setup.sh\
- [install|uninstall|check|test|version|system-tools]   (PREFIX=... env)"
+ [install|uninstall|check|test|version|system-tools|paths]   (PREFIX=... env)"
 
 # The prefix is an ENV var, not a flag, and an extra argument used to be
 # ignored in silence: `setup.sh install --prefix /tmp/x` installed to the
@@ -579,6 +709,7 @@ case "${1:-install}" in
   # correct copy. Empty output is a real answer (nothing here is shared), so
   # callers must distinguish it from a non-zero exit (this verb not supported).
   system-tools) for _w in $SYSTEM_TOOLS; do printf '%s\n' "$_w"; done ;;
+  paths)     do_paths ;;
   -h|--help|help) echo "$_U" ;;
   *) echo "setup.sh: unknown command '${1:-}'" >&2; echo "$_U" >&2; exit 2 ;;
 esac

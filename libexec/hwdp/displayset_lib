@@ -19,7 +19,13 @@
 _cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}/kanshi
 PROFILES=${KANSHI_PROFILES:-$_cfg/profiles}
 STICKY=${KANSHI_STICKY:-$_cfg/auto-scale}
-OUT=${KANSHI_OUT:-${XDG_RUNTIME_DIR:-/tmp}/hwdp-layout.config}
+# IN OUR OWN RUNTIME DIRECTORY, like the supervisor's files: one directory per
+# package is what lets `setup.sh paths` name the root and an audit sweep it.
+# Created here because a consumer may generate the config before any supervisor
+# has run. The fallback keeps a box with no XDG_RUNTIME_DIR working.
+_rtd=${XDG_RUNTIME_DIR:-/tmp}/hwdp
+mkdir -p "$_rtd" 2>/dev/null || _rtd=${XDG_RUNTIME_DIR:-/tmp}
+OUT=${KANSHI_OUT:-$_rtd/layout.config}
 TAB=$(printf '\t')
 
 # outputs: one TAB record per output we can actually act on,
