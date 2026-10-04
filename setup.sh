@@ -3,7 +3,7 @@
 # display-profile detection + monitor-set layout/autoscale. The SINGLE entry
 # point a consumer or provisioning layer uses.
 #
-# bin/hwdp is the display-state command, dispatching to libexec/hwdp/cmd/:
+# bin/hwdp is the display-state command, dispatching to libexec/cmd/:
 #   id shape ui        display-profile queries (these answer HEADLESS)
 #   geometry           one line per enabled output (stable contract)
 #   layout capture     the kanshi adapter: emit the runtime config / snapshot
@@ -65,10 +65,10 @@ _lib=$PREFIX/libexec
 # THIS IS THE RECIPE'S CANONICAL DIRECTION, confirmed by RUNNING it rather than
 # reading it: `bin/hwdp` resolves its own real path and reads a SIBLING tree,
 #
-#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec/hwdp
+#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec
 #
 # so with ~/.local/bin/hwdp linked at <payload>/bin/hwdp it lands on
-# <payload>/libexec/hwdp. `hwdp shape` answered through exactly that layout
+# <payload>/libexec. `hwdp shape` answered through exactly that layout
 # before any of this was written. Nothing inside libexec/ looks back at bin/,
 # so the dependency is one-directional and bin + libexec + man are the whole
 # payload (there is no share/ in this repo).
@@ -81,7 +81,8 @@ _pay=$_shr/$PKG
 _resolves_libexec() {   # <entry-point>
   _rl=$(readlink -f "$1" 2>/dev/null) || return 1
   [ -n "$_rl" ] || return 1
-  [ -d "$(dirname "$(dirname "$_rl")")/libexec/$PKG" ]
+  _rr=$(dirname "$(dirname "$_rl")")
+  [ -d "$_rr/libexec" ] && [ -d "$_rr/lib" ]
 }
 
 # Is <cmd> one this package declares SHARED? Reads SYSTEM_TOOLS, the same single
@@ -323,7 +324,7 @@ _payload_stage() {
   _payold=$_pay.old
   rm -rf -- "$_paynew" "$_payold"
   mkdir -p "$_paynew"
-  for _pd in bin libexec man; do
+  for _pd in bin lib libexec man; do
     if [ -d "$_root/$_pd" ]; then cp -R "$_root/$_pd" "$_paynew/$_pd"; fi
   done
   mkdir -p "$(dirname "$_pay")"
@@ -373,8 +374,20 @@ do_install() {
   # by check's own WARN, which is the drift-detection earning its keep).
   rm -rf "$_lib/$PKG"
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
-    cp -a "$_root/libexec/$PKG" "$_lib/$PKG"
-    [ "$(id -u)" = 0 ] && chown -R root:root "$_lib/$PKG" || :
+    # BOTH implementation dirs, and flat. lib/ is SOURCED and libexec/
+    # EXECUTED (FHS); a COPY prefix that took only one leaves every cmd
+    # unable to source its libs. The prefix is package-private (/opt/hwdp),
+    # so neither dir needs the old <pkg>/ namespacing inside it.
+    for _cd in lib libexec; do
+      _cdst=$PREFIX/$_cd
+      case $_cdst in
+      /*/"$_cd") ;;
+      *) echo "$PKG: refusing to replace '$_cdst'" >&2; return 1 ;;
+      esac
+      rm -rf -- "$_cdst"
+      cp -a "$_root/$_cd" "$_cdst"
+      [ "$(id -u)" = 0 ] && chown -R root:root "$_cdst" || :
+    done
   else
     # THE STRUCK ROOT IS NOT RECREATED. `~/.local/libexec/<pkg>` was a symlink
     # into the clone, so it dangled on every re-clone; the tools resolve their
@@ -385,7 +398,7 @@ do_install() {
     #
     # NOTHING REPLACES IT. The comment this branch used to carry said the link
     # was "for anyone who wants it at a predictable place", and the predictable
-    # place is now <payload>/libexec/hwdp, which is also where the tools
+    # place is now <payload>/libexec, which is also where the tools
     # genuinely look.
     :
   fi
@@ -418,7 +431,16 @@ do_uninstall() {
   _prune_stale
   # -L BEFORE -d, since a symlink TO a directory satisfies both.
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
+    # Both FHS dirs the copy install placed, plus the legacy nested one so a
+    # box installed before the flattening is left clean either way.
     rm -rf "$_lib/$PKG"
+    for _cd in lib libexec; do
+      _cdst=$PREFIX/$_cd
+      case $_cdst in
+      /*/"$_cd") rm -rf -- "$_cdst" ;;
+      *) echo "$PKG: refusing to remove '$_cdst'" >&2 ;;
+      esac
+    done
   elif [ -L "$_lib/$PKG" ]; then
     [ "$(readlink "$_lib/$PKG")" = "$_root/libexec/$PKG" ] \
       && rm -f "$_lib/$PKG" || :
@@ -491,7 +513,7 @@ do_check() {
   # failure the bin/* loop above was already written to avoid.
   _vocab='s/^#   hwdp \([a-z][a-z-]*\) .*/\1/p'
   for _c in $(sed -n "$_vocab" "$_root/bin/hwdp"); do
-    [ -x "$_root/libexec/$PKG/cmd/$_c" ] && ok "cmd $_c present" \
+    [ -x "$_root/libexec/cmd/$_c" ] && ok "cmd $_c present" \
       || bad "cmd $_c missing"; done
   # Drift, not tidiness: a dangling link is a command that exists until it is
   # run, and it can shadow the real tool elsewhere on PATH. `install` prunes.
@@ -506,8 +528,8 @@ do_check() {
   # The shared probe and its providers: the tools resolve libexec from their own
   # real path, so a missing library is a broken install, while a missing PREFIX
   # symlink is only an inconvenience, hence bad vs warn.
-  [ -f "$_root/libexec/$PKG/probe_lib" ] && ok "libexec/probe_lib present" \
-    || bad "libexec/probe_lib missing"
+  [ -f "$_root/lib/probe_lib" ] && ok "lib/probe_lib present" \
+    || bad "lib/probe_lib missing"
   # THE PAYLOAD INVARIANTS. This used to WARN when $_lib/$PKG was not a symlink
   # into the clone, which after the conversion is the state of every CORRECT
   # box: a warning that is permanently on is how a report stops being read, so
@@ -542,7 +564,7 @@ do_check() {
     if _resolves_libexec "$_pay/bin/$PKG"; then
       ok "the payload's $PKG resolves its libexec"
     else
-      bad "$_pay/bin/$PKG does not resolve to a tree with libexec/$PKG beside
+      bad "$_pay/bin/$PKG does not resolve to a tree with lib+libexec beside
   its bin/, so every dispatched command would be unreachable"
     fi
     # AND THE USER-PREFIX ENTRY POINT, only when there should be one. Absence is
@@ -553,7 +575,7 @@ do_check() {
     if [ -e "$_bin/$PKG" ] || [ -L "$_bin/$PKG" ]; then
       _resolves_libexec "$_bin/$PKG" \
         && ok "$_bin/$PKG resolves its libexec" \
-        || bad "$_bin/$PKG does not resolve to a tree with libexec/$PKG"
+        || bad "$_bin/$PKG does not resolve to a tree with lib+libexec"
     elif _is_system_tool "$PKG"; then
       ok "$PKG not at $_bin (SHARED: published at a system prefix instead)"
     else
@@ -579,7 +601,7 @@ do_check() {
   fi
   for _c in layout panels; do
     _n=0
-    for _p in "$_root/libexec/$PKG/providers/$_c"/*; do
+    for _p in "$_root/libexec/providers/$_c"/*; do
       [ -x "$_p" ] && _n=$((_n + 1)); done
     [ "$_n" -ge 1 ] && ok "$_c providers ($_n)" \
       || bad "no $_c providers installed"; done

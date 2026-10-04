@@ -185,13 +185,13 @@ echo "\$watch_log"
 INNER')
 [ "$_lg" = /run/user/999/hwdp-watch.log ] \
   || fail "the default log is not under XDG_RUNTIME_DIR (got $_lg)"
-grep -q 'watch_log' "$HERE/libexec/hwdp/cmd/watch" \
+grep -q 'watch_log' "$HERE/libexec/cmd/watch" \
   || fail "the supervisor has no log at all"
 # Scoped to the DAEMONIZE line: >/dev/null is legitimate elsewhere (silencing
 # inotifywait, pkill), so a bare grep for it would always fire.
-grep -q 'setsid[^|]*>/dev/null' "$HERE/libexec/hwdp/cmd/watch" \
+grep -q 'setsid[^|]*>/dev/null' "$HERE/libexec/cmd/watch" \
   && fail "the daemonize still discards the supervisor's output" || :
-grep -q 'setsid.*watch_log\|>>"\$watch_log"' "$HERE/libexec/hwdp/cmd/watch" \
+grep -q 'setsid.*watch_log\|>>"\$watch_log"' "$HERE/libexec/cmd/watch" \
   || fail "the daemonize does not redirect into the log"
 
 pass "hotplug: in, out, swapped, quiet when still, and the supervisor logs"

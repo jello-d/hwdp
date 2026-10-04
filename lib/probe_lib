@@ -1,4 +1,4 @@
-# libexec/hwdp/probe_lib: the ONE place hwdp learns what displays exist.
+# lib/probe_lib: the ONE place hwdp learns what displays exist.
 # Sourced by the tools in bin/; defines functions and the provider roots, and
 # runs nothing on its own. POSIX sh, no bashisms.
 #

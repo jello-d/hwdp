@@ -34,13 +34,13 @@ done
 # payload exists to preserve and the one a reader is most likely to break.
 # `bin/hwdp` resolves its own real path and reads a SIBLING tree:
 #
-#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec/hwdp
+#   HWDP_LIBEXEC=$(dirname "$(dirname "$_self")")/libexec
 #
 # so bin and libexec must sit at that exact relative depth INSIDE the payload.
 # Asserted by RUNNING a dispatched subcommand, because the adjacency of two
 # directories is not the claim: the claim is that the dispatch resolves.
-[ -d "$PAY/libexec/hwdp" ] \
-  || fail "no libexec/hwdp beside the payload's bin/, so every dispatched
+[ -d "$PAY/libexec/cmd" ] && [ -d "$PAY/lib" ] \
+  || fail "no libexec/ + lib/ beside the payload's bin/, so every dispatched
 subcommand resolves to nothing"
 env -u HWDP_LIBEXEC "$XDG_BIN_HOME/hwdp" shape >/dev/null 2>&1 \
   || fail "hwdp could not dispatch 'shape' through the payload link, so its
@@ -186,7 +186,9 @@ sys install >/dev/null || fail "re-install errored"
   && fail "an over-installed session tool was left at the shared prefix"
 [ -f "$C/bin/hwdp" ] && [ ! -L "$C/bin/hwdp" ] \
   || fail "copy mode left a symlink, not a real file"
-[ -f "$C/libexec/hwdp/probe_lib" ] && [ ! -L "$C/libexec/hwdp" ] \
+[ -f "$C/lib/probe_lib" ] && [ ! -L "$C/lib" ] \
+  || fail "copy mode did not copy the lib tree (the cmds cannot source)"
+[ -x "$C/libexec/cmd/shape" ] && [ ! -L "$C/libexec" ] \
   || fail "copy mode did not copy the libexec tree"
 # Against the SOURCE dispatcher's own advertised list, not a literal count: a
 # hardcoded 7 here meant adding a subcommand failed this test with "cannot
@@ -206,7 +208,8 @@ sys install >/dev/null || fail "copy-mode re-install errored"
 
 sys uninstall >/dev/null || fail "copy-mode uninstall errored"
 [ -e "$C/bin/hwdp" ] && fail "copy-mode uninstall left the binary"
-[ -e "$C/libexec/hwdp" ] && fail "copy-mode uninstall left the libexec tree"
+[ -e "$C/libexec" ] && fail "copy-mode uninstall left the libexec tree"
+[ -e "$C/lib" ] && fail "copy-mode uninstall left the lib tree"
 
 sh "$HERE/setup.sh" uninstall >/dev/null || fail "uninstall errored"
 for _t in "$HERE"/bin/*; do

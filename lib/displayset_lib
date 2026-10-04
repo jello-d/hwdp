@@ -1,4 +1,4 @@
-# libexec/hwdp/displayset_lib: the DISPLAY SET view, shared by the subcommands
+# lib/displayset_lib: the DISPLAY SET view, shared by the subcommands
 # that reason about "the monitors on this box" rather than about one output.
 # Sourced after (or instead of) probe_lib, which it pulls in itself.
 #
@@ -11,8 +11,8 @@
 # (cmd/ui owns the density policy, cmd/layout owns the sticky scale), so this
 # holds only what more than one of them genuinely needs.
 
-: "${HWDP_LIBEXEC:?displayset_lib: HWDP_LIBEXEC must be set}"
-. "$HWDP_LIBEXEC/probe_lib"
+: "${HWDP_LIB:?displayset_lib: HWDP_LIB must be set}"
+. "$HWDP_LIB/probe_lib"
 
 # ${HOME:-}: see probe_lib. A daemon-invoked probe with no HOME must degrade to
 # "no user-scope profiles", not abort under set -u.

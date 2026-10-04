@@ -48,7 +48,7 @@
 # off the same variable so the pair stays consistent: with a target set it
 # sizes for that target's density, and without one it buckets by panel width.
 set -eu
-. "$HWDP_LIBEXEC/displayset_lib"
+. "$HWDP_LIB/displayset_lib"
 
 # scale_for <res_w> <res_h> <mm_w> <mm_h>: the computed scale for one output.
 #

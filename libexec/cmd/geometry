@@ -28,7 +28,7 @@
 #   --quiet-ms N  settle window in ms (default 200)
 #   --timeout S   overall cap in seconds (default 30)
 set -u
-. "$HWDP_LIBEXEC/probe_lib"
+. "$HWDP_LIB/probe_lib"
 
 NOW=0
 QUIET_MS=200

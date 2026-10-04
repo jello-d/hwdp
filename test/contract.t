@@ -15,7 +15,7 @@
 . "$(dirname "$0")/harness_lib"
 harness_init contract
 
-P=$HERE/libexec/hwdp/providers
+P=$HERE/libexec/providers
 TAB=$(printf '\t')
 mkdir -p "$T/bin" "$T/drm/card1-DP-2"
 

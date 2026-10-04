@@ -9,5 +9,5 @@
 # TTY to choose a greeter, and the one the greeter itself is rendered under,
 # before any session exists.
 set -eu
-. "$HWDP_LIBEXEC/probe_lib"
+. "$HWDP_LIB/probe_lib"
 hwdp_id

@@ -32,7 +32,7 @@
 # The hidpi TITLE_FONT and CURSOR_SIZE mirror wayfire.ini's [pixdecor]
 # title_font and [input] cursor_size; keep them in sync.
 set -eu
-. "$HWDP_LIBEXEC/displayset_lib"
+. "$HWDP_LIB/displayset_lib"
 
 UI_KITTY_LODPI=${UI_KITTY_LODPI:-10}
 UI_TITLE_HIDPI=${UI_TITLE_HIDPI:-Lato Semibold 14}

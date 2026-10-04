@@ -4,7 +4,7 @@
 # id) and never on a hostname.
 #
 # The only command this package installs. Every subcommand is one executable in
-# libexec/hwdp/cmd/, so adding one is adding a file and this dispatcher never
+# libexec/cmd/, so adding one is adding a file and this dispatcher never
 # grows a special case.
 #
 #   hwdp id         the display-profile id for the connected monitor set
@@ -38,8 +38,9 @@ set -eu
 # the ~/.local/bin symlink the installer makes. This bootstrap is the one thing
 # that cannot itself live in the library it is looking for.
 _self=$(readlink -f "$0" 2>/dev/null) || _self=$0
-HWDP_LIBEXEC=${HWDP_LIBEXEC:-$(dirname "$(dirname "$_self")")/libexec/hwdp}
-export HWDP_LIBEXEC
+HWDP_LIBEXEC=${HWDP_LIBEXEC:-$(dirname "$(dirname "$_self")")/libexec}
+HWDP_LIB=${HWDP_LIB:-$(dirname "$(dirname "$_self")")/lib}
+export HWDP_LIBEXEC HWDP_LIB
 
 # The subcommand list is the block of `#   hwdp <cmd>` lines in the header, so
 # the help and the documentation cannot drift apart.

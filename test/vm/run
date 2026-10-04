@@ -77,8 +77,8 @@ runcmd:
       mount -o ro /dev/disk/by-label/HWDP /mnt/repo
       cp -a /mnt/repo/. /root/hwdp/
       cd /root/hwdp
-      chmod +x bin/* setup.sh test/run libexec/hwdp/cmd/* \
-        libexec/hwdp/providers/*/* || true
+      chmod +x bin/* setup.sh test/run libexec/cmd/* \
+        libexec/providers/*/* || true
 
       # THE ISO CARRIES .git AND `cp -a` PRESERVES THE DEVELOPER'S UID, so a
       # guest running as root meets git's dubious-ownership guard. Measured in
@@ -123,8 +123,8 @@ runcmd:
       echo "HWDP_VM_SHAPE=$(hwdp shape 2>&1)"
       hwdp ui 2>&1 | sed 's/^/HWDP_VM_UI_/'
       echo "HWDP_VM_PANELS=$(hwdp id >/dev/null 2>&1; \
-        sh -c '. /root/hwdp/libexec/hwdp/probe_lib
-               HWDP_LIBEXEC=/root/hwdp/libexec/hwdp probe_panels' \
+        sh -c '. /root/hwdp/lib/probe_lib
+               HWDP_LIB=/root/hwdp/lib probe_panels' \
         2>/dev/null | head -1 | tr '\t' ' ')"
 
       # The record SHAPE, against a real kernel rather than a fixture. The
@@ -132,7 +132,7 @@ runcmd:
       # the bytes come from the kernel.
       echo "HWDP_VM_PANELS_FIELDS=$(sh -c '
         HWDP_DRM=/sys/class/drm \
-        /root/hwdp/libexec/hwdp/providers/panels/10-drm-sysfs' 2>/dev/null \
+        /root/hwdp/libexec/providers/panels/10-drm-sysfs' 2>/dev/null \
         | awk -F'\t' 'NR==1{print NF}')"
 
       echo "=== the stub suite, on a real kernel ==="

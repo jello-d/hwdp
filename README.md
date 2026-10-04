@@ -8,7 +8,7 @@ and hardcodes no downstream tool. Everything session-specific is a **hook** or a
 pluggable **backend** an integrator fills.
 
 It installs `hwdp`, the display-state command, whose subcommands are
-executables under `libexec/hwdp/cmd/`, so adding one is adding a file.
+executables under `libexec/cmd/`, so adding one is adding a file.
 
 ## Commands
 

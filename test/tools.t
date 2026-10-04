@@ -28,16 +28,16 @@ _group_nonempty() {   # <label> <paths...>
   fail "the $_gl selector matched NOTHING -- it has been renamed out from under
 this check, which would otherwise pass while silently checking fewer files"
 }
-_group_nonempty "sourced library" "$HERE"/libexec/hwdp/*_lib
-_group_nonempty "subcommand"      "$HERE"/libexec/hwdp/cmd/*
-_group_nonempty "provider"        "$HERE"/libexec/hwdp/providers/*/*
+_group_nonempty "sourced library" "$HERE"/lib/*_lib
+_group_nonempty "subcommand"      "$HERE"/libexec/cmd/*
+_group_nonempty "provider"        "$HERE"/libexec/providers/*/*
 _group_nonempty "bin"             "$HERE"/bin/*
 
 _n=0
 for _f in "$HERE"/bin/* "$HERE"/setup.sh "$HERE"/test/run \
           "$HERE"/test/vm/run \
-          "$HERE"/libexec/hwdp/*_lib "$HERE"/libexec/hwdp/cmd/* \
-          "$HERE"/libexec/hwdp/providers/*/*; do
+          "$HERE"/lib/*_lib "$HERE"/libexec/cmd/* \
+          "$HERE"/libexec/providers/*/*; do
   [ -f "$_f" ] || continue
   _checker "$_f" || fail "parse error in $(basename "$_f")"
   _n=$((_n + 1))
