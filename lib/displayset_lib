@@ -35,7 +35,7 @@ TAB=$(printf '\t')
 # A projection of probe_layout, and the FILTER is this layer's policy, not the
 # provider's: an output is keyed by its EDID "Make Model Serial" and its sticky
 # scale is signed with its physical size, so one missing either is not one we
-# can place. The `enabled` test used to be implicit -- a disabled output has no
+# can place. The `enabled` test used to be implicit: a disabled output has no
 # current mode, so it fell out by accident, and is explicit here.
 outputs() {
   probe_layout | awk -F"$TAB" -v OFS="$TAB" '

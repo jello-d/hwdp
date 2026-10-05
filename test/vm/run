@@ -56,7 +56,7 @@ xorriso -as mkisofs -R -J -V HWDP -quiet -o "$VM/repo.iso" "$HERE" 2>/dev/null \
 # QUOTED heredoc: nothing here is expanded by the host, so the guest script can
 # use $ freely without a layer of backslashes to get wrong.
 #
-# Tools come from `packages:`, never an apt-get in runcmd -- that races
+# Tools come from `packages:`, never an apt-get in runcmd, since that races
 # cloud-init's own package lock and deadlocks. All output goes to a FILE and is
 # dumped to the serial at the very end; writing to /dev/ttyS0 live interleaves
 # with boot spam and gets lost.

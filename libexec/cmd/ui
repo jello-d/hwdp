@@ -61,7 +61,7 @@ if [ -z "$_sh" ]; then
 fi
 
 # WHICH DENSITY to size for. Two models, and this must agree with `hwdp
-# layout`, which keys off the SAME variable -- they were inconsistent once and
+# layout`, which keys off the SAME variable; they were inconsistent once and
 # that is what produced 244ppi fonts on a 92ppi panel.
 #
 # HWDP_TARGET_PPI SET: layout has scaled every output so its LOGICAL density

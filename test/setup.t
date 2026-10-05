@@ -224,6 +224,9 @@ into a prefix the GREETER executes."
 done
 
 # AND THE LIVE TREE SURVIVES A FAILED STAGE, which is the atomicity property.
+# conventions: allow -- the pattern below MATCHES code, so its dashes are the
+# end-of-options marker of the `rm` it looks for, not prose. The detector
+# cannot tell a quoted regex from a printed sentence, so this says which.
 printf '%s' "$_cpblk" | grep -qE '^\s*rm -rf -- "\$_cdst"' \
   && fail "copy mode removes the LIVE tree directly, so a failure partway
 leaves no working tree at all. Stage into \$_cnew and swap."

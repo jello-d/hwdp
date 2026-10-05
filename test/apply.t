@@ -102,7 +102,7 @@ pass "no hooks wired is a stated no-op, and -q is silent"
 # Dropping a file in without `chmod +x` is the easiest integration mistake
 # there is, and skipping it quietly makes it indistinguishable from a hook that
 # ran and did nothing: the reaction never happens and nothing says so. An
-# earlier version of this test asserted the SILENT skip -- i.e. it pinned the
+# earlier version of this test asserted the SILENT skip, i.e. it pinned the
 # bug, which is how the same shape survived elsewhere for ten days in a test
 # that had lost its own mode bit and therefore never ran.
 : > "$T/order"

@@ -23,7 +23,7 @@ mkdir -p "$T/bin" "$T/hooks/changed.d" "$T/run" "$T/home"
 python3 -c 'import socket,sys
 s = socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$T/run/wayland-test"
 
-# Stubs. pgrep/pkill are stubbed above all so this test can never adopt -- and
+# Stubs. pgrep/pkill are stubbed above all so this test can never adopt, and
 # then, at teardown, KILL, a real kanshi on the developer's own box.
 cat > "$T/bin/kanshi" <<'EOF'
 #!/bin/sh
