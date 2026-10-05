@@ -203,7 +203,7 @@ emit_ds() {   # large design area: the old sqrt path would have downscaled here
 }
 dsgen=$(emit_ds)
 [ "$(scale_of "$dsgen" AAA111)" = 1.00 ] \
-  || fail "emit scale != 1.00 -- downscale not retired (got \
+  || fail "emit scale != 1.00, downscale not retired (got \
 '$(scale_of "$dsgen" AAA111)')"
 [ "$(scale_of "$dsgen" BBB222)" = 1.00 ] || fail "emit scale != 1.00, panel 2"
 

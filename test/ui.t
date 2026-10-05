@@ -77,7 +77,7 @@ _hi=$(run ui) || fail "ui failed on a 3840 panel: $_hi"
 for _k in KITTY_FONT MAKO_FONT LOCK_RADIUS; do
   [ -z "$(val "$_hi" "$_k")" ] \
     || fail "$_k is SHRINK-ONLY and must be empty on a hi-res panel, got
-'$(val "$_hi" "$_k")' -- a consumer would take that as an instruction to
+'$(val "$_hi" "$_k")', since a consumer would take that as an instruction to
 shrink, which is how an 'override' once made every size smaller"
 done
 for _k in TITLE_FONT CURSOR_SIZE MAGNIFY; do
@@ -120,7 +120,7 @@ printf 'LOCK_RADIUS=\nCURSOR_SIZE=\n' > "$T/profiles/$_id.ui"
 _empty=$(run ui) || fail "ui failed with empty override values: $_empty"
 [ "$(val "$_empty" LOCK_RADIUS)" = "$(val "$_lo" LOCK_RADIUS)" ] \
   || fail "an EMPTY override value cleared LOCK_RADIUS; it must be ignored,
-leaving the density default -- writing 'KEY=' to mean 'use the default' is a
+leaving the density default: writing 'KEY=' to mean 'use the default' is a
 trap, and this test exists so the trap stays documented rather than surprising"
 [ "$(val "$_empty" CURSOR_SIZE)" = "$(val "$_lo" CURSOR_SIZE)" ] \
   || fail "an EMPTY override value cleared CURSOR_SIZE"

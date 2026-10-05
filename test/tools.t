@@ -25,7 +25,7 @@ _checker() {   # <file> -> the -n syntax check for its shebang
 _group_nonempty() {   # <label> <paths...>
   _gl=$1; shift
   for _g in "$@"; do [ -e "$_g" ] && return 0; done
-  fail "the $_gl selector matched NOTHING -- it has been renamed out from under
+  fail "the $_gl selector matched NOTHING: it has been renamed out from under
 this check, which would otherwise pass while silently checking fewer files"
 }
 _group_nonempty "sourced library" "$HERE"/lib/*_lib
