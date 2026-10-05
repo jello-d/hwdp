@@ -188,6 +188,31 @@ sys install >/dev/null || fail "re-install errored"
   || fail "copy mode left a symlink, not a real file"
 [ -f "$C/lib/probe_lib" ] && [ ! -L "$C/lib" ] \
   || fail "copy mode did not copy the lib tree (the cmds cannot source)"
+
+# THE PRIVILEGED BRANCH, WHICH THIS TEST CANNOT EXECUTE (`id -u` is never 0
+# here), so it is asserted STATICALLY. Copy mode chowns the tree root:root and
+# strips group/other write, because the boot resolver reads the display set
+# through this tree as the greeter, and "Install placement" bans a tree another
+# security context executes being writable by the login user. vigilance shipped
+# a chown naming a path its own copy had stopped writing, and no test could see
+# it because no test reaches the branch.
+_cpblk=$(sed -n '/STAGED, THEN SWAPPED/,/^    done$/p' "$HERE/setup.sh")
+[ -n "$_cpblk" ] || fail "premise: cannot extract the copy-mode install block"
+printf '%s' "$_cpblk" | grep -q 'cp -a "$_root/$_cd" "$_cnew"' \
+  || fail "copy mode no longer stages through \$_cnew, so the checks below
+cannot tell whether the hardening follows the copy"
+for _pv in chown chmod; do
+  _tgts=$(printf '%s' "$_cpblk" | grep -E "^\s*$_pv -R " \
+          | grep -oE '"\$[A-Za-z_]+"' | sort -u)
+  [ "$_tgts" = '"$_cnew"' ] \
+    || fail "copy-mode $_pv -R targets [$_tgts], not \"\$_cnew\" (the path
+the copy stages into). Hardening a path the copy did not write is the defect
+that broke vigilance; hardening the LIVE tree would defeat the staging."
+done
+# AND THE LIVE TREE SURVIVES A FAILED STAGE, which is the atomicity property.
+printf '%s' "$_cpblk" | grep -qE '^\s*rm -rf -- "\$_cdst"' \
+  && fail "copy mode removes the LIVE tree directly, so a failure partway
+leaves no working tree at all. Stage into \$_cnew and swap."
 [ -x "$C/libexec/cmd/shape" ] && [ ! -L "$C/libexec" ] \
   || fail "copy mode did not copy the libexec tree"
 # Against the SOURCE dispatcher's own advertised list, not a literal count: a

@@ -378,15 +378,60 @@ do_install() {
     # EXECUTED (FHS); a COPY prefix that took only one leaves every cmd
     # unable to source its libs. The prefix is package-private (/opt/hwdp),
     # so neither dir needs the old <pkg>/ namespacing inside it.
+    # STAGED, THEN SWAPPED, so a failure never destroys a working tree. The old
+    # form was `rm -rf` then `cp` onto the live path, and vigilance's identical
+    # shape is how a half-finished privileged install left /opt flat while the
+    # rendered units still named the previous layout: the box ended up worse
+    # than before the install ran. The window shrinks to two renames rather
+    # than the length of a recursive copy; it does not close, which would need
+    # a symlink flip nobody wants under a wired path.
+    #
+    # NO GENERATION IS KEPT: rolling back is a re-install from the clone at the
+    # last proven ref, so a retained `.old` would be a second answer to "what
+    # was good", free to disagree with the first.
     for _cd in lib libexec; do
       _cdst=$PREFIX/$_cd
       case $_cdst in
       /*/"$_cd") ;;
       *) echo "$PKG: refusing to replace '$_cdst'" >&2; return 1 ;;
       esac
-      rm -rf -- "$_cdst"
-      cp -a "$_root/$_cd" "$_cdst"
-      [ "$(id -u)" = 0 ] && chown -R root:root "$_cdst" || :
+      # DERIVED FROM A PATH JUST GUARDED, which is the only form in which these
+      # names may reach `rm -rf`: the guard is immediately above.
+      _cnew=$_cdst.new
+      _cold=$_cdst.old
+      rm -rf -- "$_cnew" "$_cold"
+      if ! cp -a "$_root/$_cd" "$_cnew"; then
+        echo "$PKG: could not stage $_cd; $_cdst left as it was" >&2
+        rm -rf -- "$_cnew"; return 1
+      fi
+      if [ "$(id -u)" = 0 ]; then
+        # AND go-w IS STRIPPED, not only ownership. `cp -a` preserves the
+        # SOURCE mode, and the clone sits in a user's home under a umask that
+        # leaves 775, so a root install produced a root-owned but GROUP-writable
+        # tree: measured 22 such entries under /opt/hwdp, /opt/hwdp/bin/hwdp
+        # among them. Nothing is other-writable and only root is normally in the
+        # root group, so this was not a live escalation; it is the condition
+        # "Install placement" bans for a tree the GREETER executes, which this
+        # is (the boot resolver reads the display set through it).
+        _hard=0
+        chown -R root:root "$_cnew" || _hard=1
+        chmod -R go-w "$_cnew" || _hard=1
+        if [ "$_hard" != 0 ]; then
+          echo "$PKG: could not harden the staged $_cd; $_cdst left as it was"\
+" (a tree the greeter executes must be root-owned and not group-writable)" >&2
+          rm -rf -- "$_cnew"; return 1
+        fi
+      fi
+      if [ -e "$_cdst" ] && ! mv -- "$_cdst" "$_cold"; then
+        echo "$PKG: could not move the live $_cd aside; left as it was" >&2
+        rm -rf -- "$_cnew"; return 1
+      fi
+      if ! mv -- "$_cnew" "$_cdst"; then
+        echo "$PKG: the $_cd swap failed; restoring the previous tree" >&2
+        [ -e "$_cold" ] && mv -- "$_cold" "$_cdst"
+        return 1
+      fi
+      rm -rf -- "$_cold"
     done
   else
     # THE STRUCK ROOT IS NOT RECREATED. `~/.local/libexec/<pkg>` was a symlink
