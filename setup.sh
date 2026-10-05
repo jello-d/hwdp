@@ -214,10 +214,34 @@ _wanted_at_prefix() {
 # home therefore produced a system binary owned by the LOGIN USER, one the
 # greeter executes and the unprivileged account can rewrite at will. When root
 # is installing, root owns the result.
+# _place <src> <dst>: copy in COPY mode, symlink otherwise.
+#
+# BOTH THE OWNER AND THE MODE, and the mode half was missing. `cp -a` is
+# --preserve=all, so it carries the SOURCE's mode across even when the copy runs
+# as root, and the clone sits in a user's home under a umask leaving 775. So a
+# root install produced root-owned but GROUP-WRITABLE files.
+#
+# MEASURED, AFTER A FIX THAT MISSED THIS: adding `chmod -R go-w` to the staged
+# lib/libexec copy took /opt/hwdp from 22 group-writable entries to 2 on both
+# boxes, and the two left were exactly the paths _place handles, bin/hwdp and
+# share/man/man1/hwdp.1. Fixing one of two routes into the same prefix is the
+# one-gap-invisible-in-two-places shape this repo has worn before; vigilance's
+# own _place has done both for a while, which is why its tree reads 0.
+#
+# IT MATTERS BECAUSE THE GREETER EXECUTES THIS TREE: the boot resolver reads the
+# display set through bin/hwdp as `_greetd`, and "Install placement" bans a tree
+# another security context runs being writable by the login user. Nothing was
+# other-writable and only root is normally in the root group, so this was not a
+# live escalation; it is the condition the rule exists to prevent.
 _place() {
   if [ "${HWDP_INSTALL_COPY:-0}" = 1 ]; then
     cp -a --remove-destination "$1" "$2"
-    if [ "$(id -u)" = 0 ]; then chown -R root:root "$2"; fi
+    # ONE VERB PER LINE, at line start: no test here runs as root, so the static
+    # guard in test/setup.t reading these is the branch's only coverage.
+    if [ "$(id -u)" = 0 ]; then
+      chown -R root:root "$2"
+      chmod -R go-w "$2"
+    fi
   else
     ln -sfn "$1" "$2"
   fi

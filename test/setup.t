@@ -209,6 +209,20 @@ for _pv in chown chmod; do
 the copy stages into). Hardening a path the copy did not write is the defect
 that broke vigilance; hardening the LIVE tree would defeat the staging."
 done
+# AND _place HARDENS WHAT IT COPIES, the OTHER route into the same prefix.
+# Fixing only the staged lib/libexec copy left /opt/hwdp at 2 group-writable
+# entries on both boxes, bin/hwdp and share/man/man1/hwdp.1, which are exactly
+# what _place handles. One gap invisible in two places; asserted here so the
+# pair cannot drift again.
+_plblk=$(sed -n '/^_place() {/,/^}/p' "$HERE/setup.sh")
+[ -n "$_plblk" ] || fail "premise: cannot extract _place"
+for _pv in chown chmod; do
+  printf '%s' "$_plblk" | grep -qE "^\s*$_pv -R root:root|^\s*$_pv -R go-w" \
+    || fail "_place does not $_pv what it copies. cp -a preserves the SOURCE
+mode and owner, so a root install writes a user-owned or group-writable file
+into a prefix the GREETER executes."
+done
+
 # AND THE LIVE TREE SURVIVES A FAILED STAGE, which is the atomicity property.
 printf '%s' "$_cpblk" | grep -qE '^\s*rm -rf -- "\$_cdst"' \
   && fail "copy mode removes the LIVE tree directly, so a failure partway
