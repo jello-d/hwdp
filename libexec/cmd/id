@@ -40,8 +40,8 @@
 # TWO IDENTICAL PANELS SHARE AN EDID AND THEREFORE A PANEL ID, so they cannot
 # be told apart here and nothing downstream can either. That is a property of
 # EDID (a model with no serial number is genuinely anonymous) rather than of
-# this projection, and it is the same reason hwdp_id runs its hashes through
-# `sort -u`.
+# this projection. The SET id still COUNTS them: hwdp_id sorts without `-u`, so
+# a pair of one model is a different desk from one of it (see probe_lib).
 set -eu
 . "$HWDP_LIB/probe_lib"
 
