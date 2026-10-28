@@ -91,15 +91,38 @@ probe_layout() {
 probe_panels() { probe_run panels; }
 
 # hwdp_id: the HWDP (hardware display profile id) for the CONNECTED set. Each
-# connected connector's raw EDID is hashed, the hashes sorted-unique then hashed
-# again, so the id is the same for a monitor set regardless of order or which
-# connector each sits on (the EDID carries make/model/serial, so identical
-# models still differ and the set still pins WHICH panels). EMPTY, not the
-# hash of nothing, with nothing connected, so a display-less box yields no
-# bogus id. Provision-time code (the greeter) and session code (kanshi, the
-# drift check) share this ONE algorithm.
+# connected connector's raw EDID is hashed, the hashes SORTED then hashed again,
+# so the id is the same for a monitor set regardless of order or which connector
+# each sits on. EMPTY, not the hash of nothing, with nothing connected, so a
+# display-less box yields no bogus id. Provision-time code (the greeter) and
+# session code (kanshi, the drift check) share this ONE algorithm.
+#
+# SORTED, NOT SORTED-UNIQUE, and the difference is a monitor COUNT. `sort -u`
+# collapsed duplicate EDIDs, so one panel of a model and TWO of it hashed
+# identically: measured 7e20453f6ca7 for both. A matched pair is the ordinary
+# corporate desk, and "laptop plus one external" sharing a profile with "laptop
+# plus two identical externals" means one kanshi layout and one window store
+# serving two different desks, which for a layout is the wrong answer outright.
+#
+# IT ALSO DISAGREED WITH THE HOTPLUG DETECTOR, which is how a reader could have
+# caught it: `panel_fingerprint` has always used plain `sort`, so plugging a
+# second identical panel fired the `changed` hooks while the id those hooks
+# compare against stayed put, and an integrator keyed on the id (usher's
+# display-changed) saw no change and did nothing. One question, one algorithm.
+#
+# THE ID IS UNCHANGED FOR EVERY SET WITH DISTINCT PANELS, because `sort` and
+# `sort -u` differ only where there ARE duplicates. So this re-keys exactly the
+# sets that were already wrong and nothing else, which is why it needs no fleet
+# migration: a box with no matched pair cannot tell the difference.
+#
+# An earlier version of this comment claimed "the EDID carries make/model/
+# serial, so identical models still differ". That holds only when the serial is
+# POPULATED; a model without one is genuinely anonymous, so two such panels
+# share an EDID, share a hash, and nothing downstream can separate them. The
+# COUNT is what this fixes. Telling two anonymous panels apart is not available
+# at any layer.
 hwdp_id() {
-  _hs=$(probe_panels | cut -f1 | sort -u)
+  _hs=$(probe_panels | cut -f1 | sort)
   [ -n "$_hs" ] || return 0
   printf '%s\n' "$_hs" | sha256sum | cut -c1-12
 }

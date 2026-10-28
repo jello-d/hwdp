@@ -105,6 +105,40 @@ _set_after=$(run_id)
   || fail "the set id equals a panel id; the two would be interchangeable"
 pass "the set id is unchanged, and is not any panel's id"
 
+# --- the SET id counts panels, it does not de-duplicate them ---------------
+# `sort -u` collapsed duplicate EDIDs, so one panel of a model and TWO of it
+# hashed identically, and a matched pair is the ordinary corporate desk: one
+# kanshi layout and one window store would serve two different desks.
+_one=$(run_id)
+plant DP-7 connected 3840x2160 edid-dell      # a SECOND dell, same EDID
+_two=$(run_id)
+[ -n "$_one" ] && [ -n "$_two" ] || fail "a set id came back empty"
+[ "$_one" != "$_two" ] \
+  || fail "adding an identical panel did not change the set id ($_one)"
+pass "a second identical panel is a different desk, so a different set id"
+
+# AND NOTHING ELSE MOVED, which is what makes this migration-free: `sort` and
+# `sort -u` differ ONLY where duplicates exist, so every set of distinct panels
+# keeps the id it already had. Asserted by rebuilding the no-duplicate set and
+# requiring the id recorded before the duplicate was planted.
+rm -rf "$T/drm/card0-DP-7"
+_again=$(run_id)
+[ "$_again" = "$_one" ] \
+  || fail "a set of DISTINCT panels changed id ($_one -> $_again)"
+pass "a set with no duplicates keeps its id, so no profile is invalidated"
+
+# ...and the ORDER still does not matter, which the sort is there for and
+# which dropping -u must not have broken.
+rm -rf "$T/drm/card0-DP-3" "$T/drm/card0-eDP-1"
+plant ZZ-9 connected 2880x1800 edid-laptop
+plant AA-0 connected 3840x2160 edid-dell
+[ "$(run_id)" = "$_one" ] \
+  || fail "the set id depends on connector order or naming"
+pass "the set id is still order-blind and connector-blind"
+rm -rf "$T/drm/card0-ZZ-9" "$T/drm/card0-AA-0"
+plant DP-3 connected 3840x2160 edid-dell
+plant eDP-1 connected 2880x1800 edid-laptop
+
 # --- the documented AMBIGUITY, verified rather than asserted ---------------
 # Two panels of one model with no serial share an EDID, so they share a panel
 # id and nothing downstream can tell them apart. The verb's comment claims
