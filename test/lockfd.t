@@ -84,7 +84,7 @@ kill -0 "$_lp" 2>/dev/null \
 
 # THE ASSERTION. The orphan is alive and must NOT be holding the lock, so a
 # fresh flock has to succeed. If it does not, no new supervisor could start.
-if ( flock -n 9 ) 9>"$T/run/hwdp-watch.lock"; then
+if ( flock -n 9 ) 9>"$T/run/hwdp/watch.lock"; then
   kill "$_lp" 2>/dev/null
   pass "a hook's orphan does not inherit the supervisor's lock"
 else
@@ -93,7 +93,7 @@ else
   # cleanup kills. Without this the failure says "a hook inherited it" and
   # sends you after the wrong process.
   echo "--- holders:" >&2
-  fuser -v "$T/run/hwdp-watch.lock" 2>&1 | sed 's/^/    /' >&2
+  fuser -v "$T/run/hwdp/watch.lock" 2>&1 | sed 's/^/    /' >&2
   kill "$_lp" 2>/dev/null
   fail "a hook's orphan inherited the lock; no new supervisor could ever start"
 fi
