@@ -22,8 +22,12 @@
 harness_init() {   # <name>
   TEST_NAME=$1
   HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-  T=$(mktemp -d)
-  trap 'rm -rf "$T"' EXIT INT TERM
+  T=$(mktemp -d) || T=
+  case $T in
+    /?*) [ -d "$T" ] ;;
+    *) false ;;
+  esac || { echo "$1: mktemp -d gave no directory ('$T')" >&2; exit 1; }
+  harness_cleanup ""
 
   HOME=$T/home
   XDG_CONFIG_HOME=$T/config
@@ -42,6 +46,18 @@ harness_init() {   # <name>
   HWDP_MACHINE_HOOKS=$T/no-machine-hooks
   export HWDP_MACHINE_PROVIDERS HWDP_MACHINE_HOOKS
 }
+# Arm the EXIT trap that removes $T, optionally running <cmd> first (to stop a
+# process the test started). THE TARGET IS BAKED IN AS A LITERAL when armed:
+# a single-quoted `rm -rf "$T"` expands at FIRE time, on whatever T holds as
+# the shell exits, which is the shape that once deleted a whole checkout
+# elsewhere in this tree. Pass <cmd> with its values already expanded too
+# (`harness_cleanup "kill $_pid"`), for the same reason. Re-arming replaces.
+harness_cleanup() {   # [cmd]
+  _hc="'$T'"
+  # shellcheck disable=SC2064
+  trap "${1:+$1; }rm -rf $_hc" EXIT INT TERM
+}
+
 pass() { printf 'ok   %s%s\n' "$TEST_NAME" "${1:+ ($1)}"; }
 fail() { printf 'FAIL %s: %s\n' "$TEST_NAME" "$1" >&2; exit 1; }
 skip() { printf 'skip %s (%s)\n' "$TEST_NAME" "$1"; exit 0; }

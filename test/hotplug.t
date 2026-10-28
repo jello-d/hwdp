@@ -94,7 +94,7 @@ XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test DISPLAY= \
   HWDP_HOTPLUG_POLL=1 \
   PATH="$T/bin:$PATH" "$MGR" watch >"$T/mgr.log" 2>&1 &
 _mgr=$!
-trap 'kill "$_mgr" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+harness_cleanup "kill $_mgr 2>/dev/null"
 
 _runs() { [ -f "$T/changed.log" ] && wc -l < "$T/changed.log" || echo 0; }
 _wait_runs() {   # <target> <seconds>: poll rather than sleep a fixed time

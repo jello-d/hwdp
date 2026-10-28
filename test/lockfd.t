@@ -57,7 +57,7 @@ XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test DISPLAY= \
   HWDP_HOTPLUG_POLL=0 \
   PATH="$T/bin:$PATH" "$MGR" watch >"$T/mgr.log" 2>&1 &
 _mgr=$!
-trap 'kill "$_mgr" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+harness_cleanup "kill $_mgr 2>/dev/null"
 
 # The startup `changed` pass is enough to run the hook; no hotplug needed.
 _i=0
