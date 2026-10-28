@@ -17,10 +17,22 @@ compositor, and hardcodes no downstream tool: everything session-specific
 is a HOOK or a PROVIDER an integrator fills.
 .SH COMMANDS
 .TP
-.B hwdp id
+.B hwdp id " [--panels]"
 The display-profile id for the connected monitor set: a compound hash over the
 connected connectors' EDIDs, so it names the SET regardless of order or which
 connector each panel sits on. Empty with nothing connected. Resolves HEADLESS.
+.IP
+.B --panels
+asks the same question at a different granularity, printing
+.I "<connector> <panel-id>"
+for each connected panel: the set id says which DESK you are at, a panel id
+says which MONITOR this is. A consumer storing PER-PANEL state needs the
+second, since a connector name is the least stable thing in a docking setup
+(which port, which MST hub) while the panel it names is what the state is
+actually about. A panel id is TRUNCATED, so no set id can be rebuilt from
+panel ids and neither granularity can be derived from the other. Two
+identical panels share an EDID and therefore a panel id, which is a property
+of EDID rather than of this projection.
 .TP
 .B hwdp shape
 The workspace shape:
@@ -69,7 +81,9 @@ where the compositor's current mode does not yet exist and the panel's native
 mode is the right question. The EDID hash the provider carries is deliberately
 NOT emitted;
 .B hwdp id
-is the published way to ask for identity. Nothing connected is empty output at
+is the published way to ask for identity, and
+.B hwdp id --panels
+is that question per panel. Nothing connected is empty output at
 status 0, an answer rather than an error.
 .TP
 .B hwdp layout

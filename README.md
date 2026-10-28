@@ -14,6 +14,7 @@ executables under `libexec/cmd/`, so adding one is adding a file.
 
 ```
 hwdp id         the display-profile id for the connected monitor set
+hwdp id --panels  per-panel ids: <connector> <panel-id>, headless
 hwdp shape      the workspace shape: single | triple
 hwdp ui         per-display UI sizing, as shell-sourceable KEY=VALUE
 hwdp geometry   one line per enabled output (a stable contract)

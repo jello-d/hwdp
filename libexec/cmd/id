@@ -1,5 +1,6 @@
 #!/bin/sh
-# hwdp id: the HWDP (hardware display profile id) for the CONNECTED set.
+# hwdp id: the HWDP (hardware display profile id) for the CONNECTED set, or
+# with --panels, one id per connected panel.
 #
 # A compound id over the connected connectors' EDIDs, so it names the MONITOR
 # SET regardless of order or which connector each panel sits on. Empty, not the
@@ -8,6 +9,65 @@
 # Resolves HEADLESS by design: this is the probe a provisioning run makes from a
 # TTY to choose a greeter, and the one the greeter itself is rendered under,
 # before any session exists.
+#
+# --panels ASKS THE SAME QUESTION AT A DIFFERENT GRANULARITY, and it lives here
+# rather than on `hwdp panels` because this is the identity verb:
+#
+#     hwdp id            which DESK am I at        (the set, one line)
+#     hwdp id --panels   which MONITOR is this     (one line per connector)
+#
+#   <connector> <panel-id>
+#
+# WHY IT IS NEEDED. The set id deliberately hashes away which panel sits on
+# which connector, so a consumer that stores PER-PANEL state cannot use it.
+# usher keys a window's remembered slot on the output it was on, and in a
+# docking setup the CONNECTOR NAME is the least stable thing there is (which
+# port, which MST hub, what order the hub enumerated), while the PANEL it names
+# is exactly what the slot means. Measured: a re-created output came back on a
+# different connector within one session. Without this the alternative is a
+# sixth copy of an EDID parser in somebody else's repo, and this package has
+# already killed four.
+#
+# TRUNCATED TO 12, AND THAT IS A DESIGN CONSTRAINT RATHER THAN BREVITY. The set
+# id is built from the FULL 64-hex per-connector hashes, so a truncated panel
+# id CANNOT be used to reconstruct one. `hwdp panels` declines to emit the hash
+# at all, on the stated grounds that it is an id INGREDIENT and leaking it
+# invites a caller to build a second, subtly different set id. Publishing the
+# truncated form satisfies that objection instead of arguing with it: the one
+# dangerous use is now arithmetically unavailable, while the useful one is
+# served.
+#
+# TWO IDENTICAL PANELS SHARE AN EDID AND THEREFORE A PANEL ID, so they cannot
+# be told apart here and nothing downstream can either. That is a property of
+# EDID (a model with no serial number is genuinely anonymous) rather than of
+# this projection, and it is the same reason hwdp_id runs its hashes through
+# `sort -u`.
 set -eu
 . "$HWDP_LIB/probe_lib"
-hwdp_id
+
+case "${1:-}" in
+  -h|--help)
+    echo "usage: hwdp id [--panels]"
+    echo
+    echo "  (no args)  the display-profile id for the connected monitor set"
+    echo "  --panels   one line per connected panel, headless:"
+    echo "               <connector> <panel-id>"
+    echo
+    echo "  A panel id names ONE monitor; the set id names the desk. Neither"
+    echo "  can be derived from the other, deliberately."
+    exit 0 ;;
+  '')
+    hwdp_id ;;
+  --panels)
+    # Fields 1..2 of the provider record (edid_sha, connector). Tab separated
+    # in, space separated out, matching `hwdp panels` and `hwdp geometry` so
+    # all three read alike.
+    probe_panels | while IFS="$(printf '\t')" read -r _hash _name _rest; do
+      [ -n "${_name:-}" ] || continue
+      [ -n "${_hash:-}" ] || continue
+      printf '%s %s\n' "$_name" "$(printf '%s' "$_hash" | cut -c1-12)"
+    done ;;
+  *)
+    echo "hwdp id: unexpected argument '$1'" >&2
+    exit 2 ;;
+esac
