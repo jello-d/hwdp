@@ -94,7 +94,10 @@ hwdp ships mechanisms, not policy. An integrator wires the specifics:
   same probe `hwdp id` hashes, so anything that changes the id counts) and, on
   a change, regenerates the kanshi config, fires the hooks and reloads kanshi.
   It also watches the compositor config file. Interval is
-  `HWDP_HOTPLUG_POLL` seconds, default 4; `0` disables the poll. It runs every
+  `HWDP_HOTPLUG_POLL` seconds, default 4; `0` disables the poll. The same
+  poll restarts a kanshi that dies, and the supervisor only ever adopts,
+  reloads or stops a kanshi in its OWN session (same `XDG_RUNTIME_DIR` and
+  `WAYLAND_DISPLAY`), never another compositor's. It runs every
   executable in
   `$HWDP_HOOK_ROOT/<edge>.d/*` (default `~/.config/hwdp/hooks`) and a machine
   root `$HWDP_MACHINE_HOOKS/<edge>.d/*` (default `/etc/hwdp/hooks`), machine

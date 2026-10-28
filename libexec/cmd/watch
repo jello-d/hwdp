@@ -84,6 +84,10 @@ fifo="$_rt/watch.$$.events"
 settle_token="$_rt/watch.$$.settle"
 settle_gen=0
 
+# The kanshi this supervisor runs (or adopted), for the poller below, which is
+# a separate process and cannot read our variables.
+kanshi_pidf="$_rt/watch.$$.kanshi"
+
 # The compositor's Wayland socket. When this vanishes, Wayfire is gone.
 wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 
@@ -103,6 +107,50 @@ wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 HWDP_HOOK_TAG='hwdp watch'
 . "$HWDP_LIB/hooks_lib"
 
+# A crashed daemon lingers as a <defunct> zombie, still named, still passing
+# kill -0, until reaped, so a dead kanshi looked alive and the watchdog never
+# restarted it (the stuck-outputs bug). Judge life by process STATE.
+pid_alive() {  # 0 if the pid is running and not a zombie
+  case "$(ps -o state= -p "${1:-0}" 2>/dev/null)" in
+    ''|Z*) return 1 ;;
+    *)     return 0 ;;
+  esac
+}
+
+# THE PROCESS TABLE IS GLOBAL, so "a kanshi" is not "OUR kanshi". Matching by
+# name alone adopted, HUPed and finally KILLED (at teardown) whatever kanshi
+# the box was running, from any supervisor in any session: a nested
+# compositor, a second seat, a test sandbox. Measured: this package's own
+# suite, run on a live desktop, SIGTERMed the session's kanshi and left the
+# outputs unmanaged for an hour. So a kanshi is ours only when it talks to
+# the SAME compositor, i.e. its environment carries our XDG_RUNTIME_DIR and
+# WAYLAND_DISPLAY. Unreadable (another uid, no /proc) means not ours.
+_env_of() {  # <pid> <VAR>: the value in that process's environment
+  tr '\0' '\n' < "/proc/$1/environ" 2>/dev/null | sed -n "s/^$2=//p"
+}
+session_kanshi_pids() {  # every live, non-zombie kanshi of THIS session
+  for p in $(pgrep -x kanshi 2>/dev/null); do
+    pid_alive "$p" || continue
+    [ -r "/proc/$p/environ" ] || continue
+    [ "$(_env_of "$p" XDG_RUNTIME_DIR)" = "${XDG_RUNTIME_DIR:-}" ] || continue
+    [ "$(_env_of "$p" WAYLAND_DISPLAY)" = "${WAYLAND_DISPLAY:-}" ] || continue
+    echo "$p"
+  done
+}
+
+# Echo a live (non-zombie) kanshi's pid if this session has one; else fail.
+# Lets us adopt a running kanshi without adopting a corpse or a stranger.
+kanshi_live_pid() {
+  _p=$(session_kanshi_pids | head -n 1)
+  [ -n "$_p" ] && echo "$_p"
+}
+
+hup_kanshi() {  # reload this session's kanshi, and no one else's
+  for p in $(session_kanshi_pids); do
+    kill -HUP "$p" 2>/dev/null || true
+  done
+}
+
 # A reset can land slightly AFTER the event we reacted to. Wayfire's
 # auto_reload reconfigures outputs a beat after the file's close_write, and an
 # IPC set-config-options settles just after the call returns. A single HUP
@@ -112,8 +160,8 @@ HWDP_HOOK_TAG='hwdp watch'
 # and makes the re-apply stick. The delayed shot is backgrounded so callers
 # (and the inotify loop) stay snappy; it survives our exit by reparenting.
 nudge() {
-  pkill -HUP -x kanshi 2>/dev/null || true
-  ( sleep 0.4; pkill -HUP -x kanshi 2>/dev/null || true ) &
+  hup_kanshi
+  ( sleep 0.4; hup_kanshi ) &
 }
 
 # Daemonize: re-exec ourselves detached from the terminal/job-control so the
@@ -175,7 +223,7 @@ cleanup() {
   [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
   # Dropping the token stands down any settle still sleeping; it is detached,
   # so there is nothing of ours left to kill.
-  rm -f "$fifo" "$settle_token"
+  rm -f "$fifo" "$settle_token" "$kanshi_pidf"
   exit 0
 }
 trap '' HUP
@@ -201,25 +249,6 @@ sup_pid=$$
 ) 9>&- &
 watchdog_pid=$!
 
-# A crashed daemon lingers as a <defunct> zombie, still named, still passing
-# kill -0, until reaped, so a dead kanshi looked alive and the watchdog never
-# restarted it (the stuck-outputs bug). Judge life by process STATE.
-pid_alive() {  # 0 if the pid is running and not a zombie
-  case "$(ps -o state= -p "${1:-0}" 2>/dev/null)" in
-    ''|Z*) return 1 ;;
-    *)     return 0 ;;
-  esac
-}
-
-# Echo a live (non-zombie) kanshi's pid if one exists; else fail. Lets us adopt
-# a running kanshi without adopting a corpse.
-kanshi_live_pid() {
-  for p in $(pgrep -x kanshi 2>/dev/null); do
-    pid_alive "$p" && { echo "$p"; return 0; }
-  done
-  return 1
-}
-
 # Start kanshi and confirm it actually STAYS up. At autostart the
 # wlr-output-management global may not be advertised yet, so kanshi can exit
 # immediately; a single fire-and-forget would leave the supervisor watching
@@ -236,6 +265,7 @@ start_kanshi() {
 
   if _live=$(kanshi_live_pid); then
     kanshi_pid=$_live
+    printf '%s' "$kanshi_pid" >"$kanshi_pidf"
     return 0
   fi
 
@@ -256,6 +286,7 @@ start_kanshi() {
     kanshi_pid=$!
     sleep 0.25
     if pid_alive "$kanshi_pid"; then
+      printf '%s' "$kanshi_pid" >"$kanshi_pidf"
       return 0                       # came up and stayed up -> done immediately
     fi
     wait "$kanshi_pid" 2>/dev/null || true   # reap the crashed attempt, retry
@@ -264,6 +295,7 @@ start_kanshi() {
 
   echo "hwdp watch: kanshi failed to stay up after retries" >&2
   kanshi_pid=""
+  : >"$kanshi_pidf"
   return 1
 }
 
@@ -360,7 +392,7 @@ schedule_settle() {   # [relayout]
       # reload a file that already describes the new set.
       [ -n "$_re" ] && "$HWDP_LIBEXEC/cmd/layout" >/dev/null 2>&1
       run_hooks changed
-      pkill -HUP -x kanshi 2>/dev/null || true ) & )
+      hup_kanshi ) & )
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
@@ -389,8 +421,15 @@ cancel_settle() { rm -f "$settle_token"; }
 # The poller exits when inotifywait does, so BOTH writers die together and the
 # outer loop's "writer gone -> re-arm fresh" recovery keeps working. A poller
 # that outlived it would hold the FIFO open and the loop would never re-arm.
+#
+# AND IT IS THE KANSHI WATCHDOG, because nothing else wakes this loop between
+# events. The liveness check used to run only when an event arrived, so a
+# kanshi that died in a quiet hour stayed dead for that hour (measured, with
+# the supervisor up throughout). The poller announces each death ONCE per pid,
+# so a kanshi that cannot be restarted is not retried every few seconds.
 : "${HWDP_HOTPLUG_POLL:=4}"     # seconds; 0 disables the poll entirely
 HOTPLUG_MARK=__hwdp_hotplug__
+KANSHI_MARK=__hwdp_kanshi_gone__
 
 panel_fingerprint() {
   # cksum keeps it to one number, and sort makes it independent of the order
@@ -398,11 +437,17 @@ panel_fingerprint() {
   probe_panels 2>/dev/null | sort | cksum
 }
 
-hotplug_poll() {   # <inotify pid>: emit a marker when the connected SET changes
+hotplug_poll() {   # <inotify pid>: mark a SET change, or a kanshi death
   _watch_pid=$1
   _prev=$(panel_fingerprint)
+  _kdead=""
   while kill -0 "$_watch_pid" 2>/dev/null; do
     sleep "$HWDP_HOTPLUG_POLL"
+    _k=$(cat "$kanshi_pidf" 2>/dev/null) || _k=""
+    if [ -n "$_k" ] && [ "$_k" != "$_kdead" ] && ! pid_alive "$_k"; then
+      _kdead=$_k
+      printf '%s\n' "$KANSHI_MARK"
+    fi
     _now=$(panel_fingerprint)
     [ "$_now" = "$_prev" ] && continue
     _prev=$_now
@@ -442,6 +487,7 @@ while true; do
     # HUP alone would re-read a file that does not mention the new panel. A
     # config change needs no regeneration and does not pay for one.
     case $_ev in
+      "$KANSHI_MARK") ;;   # restarted just above; not a display change
       "$HOTPLUG_MARK")
         echo "hwdp watch: display set changed, re-generating the layout" >&2
         schedule_settle relayout ;;
