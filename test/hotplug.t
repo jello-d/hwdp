@@ -171,20 +171,23 @@ kill "$_mgr" 2>/dev/null
 #
 # This test runs with HWDP_WATCH_DAEMONIZED=1 (no re-exec), so it checks the
 # knob and the default path rather than the redirect itself: that the log
-# variable resolves under $XDG_RUNTIME_DIR and that the value is honoured.
-_lg=$(HWDP_WATCH_LOG=/tmp/custom.log sh -c '
-  . /dev/stdin <<INNER
-watch_log="\${HWDP_WATCH_LOG:-\${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
-echo "\$watch_log"
-INNER')
+# resolves inside our runtime directory and that the override is honoured.
+# It EVALUATES THE SUPERVISOR'S OWN LINES, from `_rt=` through `watch_log=`.
+# It used to evaluate a hand-typed copy of them, which kept asserting the flat
+# pre-namespace path for as long as the copy existed, whatever the code said.
+_paths=$(sed -n '/^_rt=/,/^watch_log=/p' "$HERE/libexec/cmd/watch")
+case $_paths in
+  *watch_log=*) ;;
+  *) fail "cannot find the runtime/log path lines in the supervisor" ;;
+esac
+_lg=$(HWDP_WATCH_LOG=/tmp/custom.log XDG_RUNTIME_DIR="$T/xrd" \
+  sh -c "$_paths"'
+echo "$watch_log"')
 [ "$_lg" = /tmp/custom.log ] || fail "HWDP_WATCH_LOG not honoured (got $_lg)"
-_lg=$(env -u HWDP_WATCH_LOG XDG_RUNTIME_DIR=/run/user/999 sh -c '
-  . /dev/stdin <<INNER
-watch_log="\${HWDP_WATCH_LOG:-\${XDG_RUNTIME_DIR:-/tmp}/hwdp-watch.log}"
-echo "\$watch_log"
-INNER')
-[ "$_lg" = /run/user/999/hwdp-watch.log ] \
-  || fail "the default log is not under XDG_RUNTIME_DIR (got $_lg)"
+_lg=$(env -u HWDP_WATCH_LOG XDG_RUNTIME_DIR="$T/xrd" sh -c "$_paths"'
+echo "$watch_log"')
+[ "$_lg" = "$T/xrd/hwdp/watch.log" ] \
+  || fail "the default log is not in the runtime directory (got $_lg)"
 grep -q 'watch_log' "$HERE/libexec/cmd/watch" \
   || fail "the supervisor has no log at all"
 # Scoped to the DAEMONIZE line: >/dev/null is legitimate elsewhere (silencing
