@@ -55,6 +55,33 @@ HWDP_PROVIDER_ROOT=${HWDP_PROVIDER_ROOT:-\
 ${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwdp/providers}
 HWDP_MACHINE_PROVIDERS=${HWDP_MACHINE_PROVIDERS:-/etc/hwdp/providers}
 
+# HWDP_AWK_LOGICAL: an output's LOGICAL size, the space it occupies in the
+# layout after rotation and scale, as an awk function. Prepend it to any awk
+# program that needs it; lsize() sets the globals LW and LH.
+#
+# ONE DEFINITION, because the rule has a trap and two copies had both fallen
+# into it. The compositor TRUNCATES mode/scale (wlroots divides an int by the
+# scale): measured in a nested wayfire, 2880 at 1.75 is 1645 wide, NOT 1646,
+# and 2560 at 1.5 is 1706. Geometry and the synthesized layout both ROUNDED,
+# so the layout put the next output one pixel away from where the compositor
+# ends this one, and edge-flipping's adjacency test is an exact equality. The
+# synthesized layout also ignored rotation, so a rotated output overlapped its
+# neighbour by the difference between its mode width and height.
+#
+# awk divides in double and the compositor in float. They agree for every
+# scale hwdp computes, since quarter steps are exact in binary. A hand-edited
+# scale with no binary form (1.2) can come out one pixel apart when the
+# quotient is a whole number.
+# shellcheck disable=SC2034  # read by the files that source this one
+HWDP_AWK_LOGICAL='
+function lsize(w, h, tx, s,    r) {
+  r = (tx == "90" || tx == "270" || tx == "flipped-90" || tx == "flipped-270")
+  if (s + 0 <= 0) s = 1
+  LW = int((r ? h : w) / s)
+  LH = int((r ? w : h) / s)
+}
+'
+
 # probe_run <class>: print the first answering provider's records. Returns 1
 # with no output when no provider in any root can answer.
 probe_run() {

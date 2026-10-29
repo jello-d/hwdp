@@ -49,8 +49,9 @@ done
 # Project the shared layout record onto the line contract. THIS is where the
 # ENABLED filter lives: providers report every output they can see, and what
 # counts as "an output worth a line" is each consumer's own policy; ours is
-# enabled, with a current mode. Logical size is the mode divided by scale, w/h
-# swapped for a 90/270 (or flipped-90/270) transform.
+# enabled, with a current mode. Logical size is lsize() from probe_lib: w/h
+# swapped for a 90/270 (or flipped-90/270) transform, then TRUNCATED by scale
+# exactly as the compositor does (see HWDP_AWK_LOGICAL for why not rounded).
 _snapshot() {
   if ! _rec=$(probe_layout); then
     echo "hwdp geometry: no layout provider could answer (need wlr-randr on" \
@@ -58,14 +59,13 @@ _snapshot() {
          "$HWDP_PROVIDER_ROOT/layout, or set HWDP_GEOM_BACKEND)" >&2
     return 3
   fi
-  printf '%s\n' "$_rec" | awk -F'	' '
+  printf '%s\n' "$_rec" | awk -F'	' "$HWDP_AWK_LOGICAL"'
     $12 == 1 && $3 + 0 > 0 {
       tx = $8
       rot = (tx=="90"||tx=="270"||tx=="flipped-90"||tx=="flipped-270")
       cw = $3 + 0; ch = $4 + 0
-      lw = rot ? ch : cw; lh = rot ? cw : ch
       s = ($9 + 0 > 0) ? $9 + 0 : 1
-      lw = int(lw/s + 0.5); lh = int(lh/s + 0.5)
+      lsize(cw, ch, tx, s); lw = LW; lh = LH
       orient = (lh > lw) ? "portrait" : "landscape"
       # The EDID size describes the PANEL, so it follows the panel through a
       # rotation exactly as the mode does: swap it for a 90/270 so it stays
