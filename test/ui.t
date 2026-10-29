@@ -175,3 +175,33 @@ grep -q "MIXED DPI" "$_err2" \
   && fail "with HWDP_TARGET_PPI set the panels are scaled to ONE density, so
 the mixed-DPI warning is stale advice and must not fire"
 pass "HWDP_TARGET_PPI suppresses the mixed-DPI warning"
+
+# --- a WALL of three or more never takes the low-density set ----------------
+# Three 1920 panels are each narrow, and the lodpi set would shrink a wall
+# that was calibrated with the hidpi one. This rule rode on `hwdp shape`
+# answering `single` until the shape became a desk kind (BL, EL+EP, ...);
+# it is a panel COUNT now, and two panels must still read lodpi.
+set_wall() {   # <panel count>, each 1920 wide
+  rm -rf "$T/drm"
+  _i=1
+  while [ "$_i" -le "$1" ]; do
+    mkdir -p "$T/drm/card1-DP-$_i"
+    printf 'connected\n' > "$T/drm/card1-DP-$_i/status"
+    printf 'EDID-WALL-%s' "$_i" > "$T/drm/card1-DP-$_i/edid"
+    printf '1920x1080\n' > "$T/drm/card1-DP-$_i/modes"
+    _i=$((_i + 1))
+  done
+}
+# Headless, so the kernel decides: the mixed-DPI section above left a fake
+# compositor in the user provider root, and it would answer for the wall.
+rm -f "$T/user/layout/10-stub"
+set_wall 3
+_w=$(run ui 2>/dev/null) || fail "ui failed on a wall of three"
+[ "$(val "$_w" CURSOR_SIZE)" = 48 ] \
+  || fail "a wall of three narrow panels must take hidpi: $_w"
+[ -z "$(val "$_w" KITTY_FONT)" ] || fail "a wall must not shrink kitty: $_w"
+set_wall 2
+_w=$(run ui 2>/dev/null) || fail "ui failed on two narrow panels"
+[ "$(val "$_w" CURSOR_SIZE)" = 32 ] \
+  || fail "two narrow panels are not a wall and take lodpi: $_w"
+pass "a wall of three takes the hi-res set; two narrow panels do not"

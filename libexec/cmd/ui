@@ -7,10 +7,10 @@
 # specific-first:
 #   1. an optional HWDP override file $PROFILES/<id>.ui (the same KEY=VALUE
 #      lines) wins PER KEY, hand-authored for a rig that wants exact sizes;
-#   2. else a DENSITY default: a low-res SINGLE panel (< LODPI_MAX_W wide) is
-#      `lodpi` (shrink); everything else (a hi-res single or a >=3 wall) is
-#      `hidpi`, which MIRRORS the static configs, so a hi-res display is a
-#      strict no-op.
+#   2. else a DENSITY default: a low-res panel (< LODPI_MAX_W wide) on a desk
+#      of fewer than three is `lodpi` (shrink); everything else (hi-res, or a
+#      wall of three or more) is `hidpi`, which MIRRORS the static configs,
+#      so a hi-res display is a strict no-op.
 #
 # The keys:
 #   KITTY_FONT    kitty font_size; EMPTY => leave kitty.conf's own (hidpi)
@@ -127,7 +127,9 @@ fi
 # which mirrors the static configs and is the harmless answer when we cannot
 # tell.
 [ -n "${_rw:-}" ] || _rw=$(panel_width)
-if [ "$_sh" = single ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
+# Fewer than three panels: a WALL (three or more) always takes the hi-res set,
+# the rule `shape` used to carry when it answered single | triple.
+if [ "$(panel_count)" -lt 3 ] && [ "${_rw:-99999}" -lt "$LODPI_MAX_W" ]; then
   _kitty=$UI_KITTY_LODPI; _title=$UI_TITLE_LODPI; _mako=$UI_MAKO_LODPI
   _lockr=$UI_LOCK_RADIUS_LODPI; _cursor=$UI_CURSOR_LODPI
   _magnify=$UI_MAGNIFY_LODPI

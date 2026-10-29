@@ -1,7 +1,9 @@
 #!/bin/sh
-# hwdp shape: the workspace shape for the connected set: `single` or `triple`,
-# empty with no displays. A coarsening of the id to just the panel COUNT, which
-# is what the grid, window rules and wallpaper actually key on.
+# hwdp shape: the workspace SHAPE, what KIND of desk is attached: one token per
+# display, B(uilt-in) or E(xternal) then L(andscape) or P(ortrait), joined
+# with `+` and sorted (BL, EL+EP, BL+EL+EP, EP+EP+EP). Empty with no displays.
+# The grid, workspace names, window rules and wallpaper key on it; see shape()
+# in displayset_lib for why sorted, and what a headless answer cannot know.
 set -eu
 . "$HWDP_LIB/displayset_lib"
 shape

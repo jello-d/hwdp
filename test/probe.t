@@ -34,7 +34,7 @@ run() {   # hwdp with NO compositor: no WAYLAND_DISPLAY, no DISPLAY
 # --- the regression: headless, the PANEL class still answers -----------------
 # No layout provider can answer (no compositor), so shape and the density test
 # must come from DRM sysfs rather than falling through to hidpi.
-[ "$(run shape)" = single ] || fail "shape did not fall back to panels headless"
+[ "$(run shape)" = EL ] || fail "shape did not fall back to panels headless"
 
 _ui=$(run ui) || fail "uiprofile failed headless: $_ui"
 _cs=$(printf '%s\n' "$_ui" | sed -n 's/^CURSOR_SIZE=//p')

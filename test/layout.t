@@ -228,9 +228,10 @@ rm -f "$T/profiles/$hwdp.conf"
 gen=$(run layout)
 grep -qi 'no matching layout profile' "$gen" || fail "emit did not synthesize"
 
-# --- shape: <3 panels -> single, >=3 -> triple (the panel-count coarsening) ---
-[ "$(run shape)" = single ] || fail "2 panels should be shape 'single'"
-[ "$(STUB3=1 run shape)" = triple ] || fail "3 panels should be shape 'triple'"
+# --- shape: the desk kind (two rotated externals; the wall of three) --------
+[ "$(run shape)" = EP+EP ] || fail "2 portrait externals should be EP+EP"
+[ "$(STUB3=1 run shape)" = EP+EP+EP ] \
+  || fail "the 3-panel portrait wall should be EP+EP+EP"
 
 # --- uiprofile: per-display fonts + lock ring; density + HWDP override --------
 # The stub panel is 3840 wide, so it reads hi-res under the default 2560

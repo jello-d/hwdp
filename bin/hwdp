@@ -8,7 +8,7 @@
 # grows a special case.
 #
 #   hwdp id         the id for the connected monitor set; --panels per panel
-#   hwdp shape      the workspace shape: single | triple
+#   hwdp shape      the desk kind: BL, EL+EP, EP+EP+EP ...
 #   hwdp ui         per-display UI sizing, as shell-sourceable KEY=VALUE
 #   hwdp geometry   one line per enabled output (stable contract; see --help)
 #   hwdp panels     one line per ATTACHED panel, headless: name w h

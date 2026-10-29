@@ -35,10 +35,26 @@ identical panels share an EDID and therefore a panel id, which is a property
 of EDID rather than of this projection.
 .TP
 .B hwdp shape
-The workspace shape:
-.BR single " or " triple:
-the panel COUNT coarsened, since the grid, window rules and wallpaper key
-on how many panels there are, not which. Resolves HEADLESS.
+The workspace SHAPE: what KIND of desk is attached. One token per display,
+.B B
+(built-in: an eDP, LVDS or DSI connector) or
+.B E
+(external), then
+.B L
+or
+.B P
+(landscape or portrait, after rotation), joined with
+.B +
+and sorted:
+.BR BL ", " EL+EP ", " BL+EL+EP ", " EP+EP+EP .
+Sorted rather than left to right, so rearranging panels does not change it.
+A switched-off panel is not a token. The grid, workspace names, window rules
+and wallpaper key on it. Resolves HEADLESS too, from the kernel's native
+modes, which carry no rotation: there a portrait-mounted panel reads
+.BR L .
+(It answered
+.BR single " or " triple ,
+a panel count, until 2026-10-29.)
 .TP
 .B hwdp ui
 Per-display UI sizing as shell-sourceable KEY=VALUE

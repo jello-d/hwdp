@@ -243,26 +243,67 @@ config_rects() {
     }'
 }
 
-# shape: the workspace SHAPE for the connected set, a COARSENING of the HWDP
-# id to just the panel COUNT, since the grid, names, window rules and wallpaper
-# are a function of HOW MANY panels, not which ones. A wall (>=3) is `triple`,
-# anything less is `single` (the same >=3 threshold mako uses). Empty with no
-# displays at all.
+# heads: one TAB line per display that counts, `connector \t w \t h`, with
+# w and h the LOGICAL size (after rotation and scale) so the orientation is
+# the one a user sees.
 #
 # LAYOUT first, PANELS as the fallback: in a session the compositor's view is
-# the one to act on (an output you disabled should not count toward the wall),
-# but at the greeter or from a TTY there is no compositor and the kernel's view
-# is the only truthful answer available. Each context gets the answer it can
-# actually act on, rather than the empty string that used to come back headless.
+# the one to act on (an output you switched off does not count), but at the
+# greeter or from a TTY there is no compositor and the kernel's view is the
+# only truthful answer available. HEADLESS HAS NO ROTATION: the kernel reports
+# a panel's native mode, so a portrait-mounted panel reads landscape there.
+# Every consumer of the shape runs in a session, so that is said rather than
+# guessed around (an authored profile names panels by EDID and the kernel by
+# connector, and nothing headless joins the two).
+heads() {
+  _hd=$(probe_layout | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+    $12 == 1 && $3 + 0 > 0 { lsize($3, $4, $8, $9); print $2, LW, LH }')
+  [ -n "$_hd" ] || _hd=$(probe_panels | awk -F"$TAB" -v OFS="$TAB" '
+    $2 != "" { print $2, $3 + 0, $4 + 0 }')
+  [ -n "$_hd" ] && printf '%s\n' "$_hd"
+  return 0
+}
+
+# panel_count: how many heads count, for policy that depends on HOW MANY
+# (cmd/ui: a wall of three or more never takes the low-density set).
+panel_count() {
+  heads | grep -c . || true
+}
+
+# shape: the workspace SHAPE, a DESK KIND rather than a count. One token per
+# head: `B` for a built-in panel (an eDP, LVDS or DSI connector) or `E` for an
+# external one, then `L` or `P` for landscape or portrait as the user sees it,
+# joined with `+` and SORTED, which in plain byte order is B before E and L
+# before P:
 #
-# This lives here rather than in cmd/shape because cmd/ui needs the same answer
-# in-process; shelling out to a sibling subcommand for it would be worse, and
-# a second copy of the >=3 threshold would be worse still.
+#   BL            a laptop on its own
+#   EL+EP         two externals, the built-in switched off
+#   BL+EL+EP      the same with the built-in on
+#   EP+EP+EP      a portrait wall (what `triple` always meant)
+#
+# SORTED, NOT LEFT TO RIGHT, so rearranging the panels does not change the
+# shape, and it needs no positions (which only a compositor has). Empty with
+# no displays at all. A square panel reads landscape.
+#
+# It replaced `single | triple` (2026-10-29), which keyed on the COUNT alone:
+# a laptop and a lone external were the same shape, and a landscape pair was
+# the same as a portrait one. The grid, the workspace names and the wallpaper
+# are functions of what KIND of desk this is, which the count could not say.
 shape() {
-  _sc=$(outputs | grep -c . || true)
-  [ "${_sc:-0}" -ge 1 ] || _sc=$(probe_panels | grep -c . || true)
-  [ "${_sc:-0}" -ge 1 ] || return 0
-  if [ "$_sc" -ge 3 ]; then echo triple; else echo single; fi
+  heads | awk -F"$TAB" '
+    {
+      k = ($1 ~ /^(eDP|LVDS|DSI)/) ? "B" : "E"
+      t[++n] = k (($3 + 0 > $2 + 0) ? "P" : "L")
+    }
+    END {
+      for (i = 2; i <= n; i++) {          # insertion sort, n is tiny
+        v = t[i]; j = i - 1
+        while (j > 0 && t[j] > v) { t[j + 1] = t[j]; j-- }
+        t[j + 1] = v
+      }
+      for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? "+" : ""), t[i]
+      if (n) printf "\n"
+    }'
 }
 
 # panel_width: the width in px of the first display, for density decisions.
