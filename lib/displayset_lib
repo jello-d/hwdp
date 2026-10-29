@@ -114,12 +114,107 @@ layout_fault_text() {
                         "no edge to cross\n", $2, $3 }'
 }
 
-# live_rects: the enabled outputs' LOGICAL rects as the compositor has them
-# now, in layout_faults' input format, named by connector.
+# live_rects [edid]: the enabled outputs' LOGICAL rects as the compositor has
+# them now, in layout_faults' input format, named by connector, or with `edid`
+# by the EDID name a kanshi profile keys on.
 live_rects() {
-  probe_layout | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
-    $12 == 1 && $3 + 0 > 0 {
-      lsize($3, $4, $8, $9); print $2, $10, $11, LW, LH
+  _lk=2; [ "${1:-}" = edid ] && _lk=1
+  probe_layout | awk -F"$TAB" -v OFS="$TAB" -v k="$_lk" "$HWDP_AWK_LOGICAL"'
+    $12 == 1 && $3 + 0 > 0 && $k != "" {
+      lsize($3, $4, $8, $9); print $k, $10, $11, LW, LH
+    }'
+}
+
+# profile_rects: the rects an authored profile was CAPTURED at, from the
+# `# hwdp-rect "<name>" x y w h` comments capture writes, in layout_faults'
+# format. Empty for a profile written by hand or by an older capture.
+profile_rects() {
+  awk -v OFS="$TAB" '
+    /^# hwdp-rect "/ {
+      nm = $0; sub(/^# hwdp-rect "/, "", nm); sub(/".*/, "", nm)
+      r = $0; sub(/^# hwdp-rect "[^"]*" */, "", r); split(r, a, " ")
+      print nm, a[1], a[2], a[3], a[4]
+    }'
+}
+
+# layout_repack: re-place an authored arrangement at NEW sizes, keeping its
+# shape. Reads, TAB separated,
+#   old \t name \t x \t y \t w \t h     the rects it was captured at
+#   new \t name \t w \t h               each output's size NOW
+# and prints `name \t x \t y` for every old output.
+#
+# WHY: a captured profile's positions are only right at the scales it was
+# captured at, since capture records no scale and layout injects the sticky
+# ones. Change a scale afterwards (a hand edit, or HWDP_TARGET_PPI) and the
+# outputs no longer meet: halve one panel's logical width and its neighbour
+# is left a whole half-panel away.
+#
+# THE TOPOLOGY IS KEPT, THE COORDINATES ARE RECOMPUTED. Which output sits on
+# which side of which is read from the OLD rects (they shared exact edges, or
+# capture would have refused them), then each is placed against a neighbour
+# already placed, walking out from the first. Along the shared edge the old
+# offset is kept by MEANING: top/left-aligned stays aligned, bottom/right
+# stays aligned, and anything else keeps its midpoint at the same fraction of
+# the neighbour's edge, which keeps a centred panel centred. The result is
+# shifted so the top-left is 0,0. An output the walk cannot reach (the old
+# rects did not join it) keeps its old position, and the gap check that
+# follows will say so.
+#
+# PURE (stdin to stdout).
+layout_repack() {
+  awk -F"$TAB" -v OFS="$TAB" '
+    function span(a1, a2, b1, b2,   lo, hi) {
+      lo = (a1 > b1) ? a1 : b1; hi = (a2 < b2) ? a2 : b2
+      return hi - lo
+    }
+    # <old offset> <old edge a> <old edge b> <new edge a> <new edge b>
+    function off(d, ea, eb, na, nb,   v) {
+      if (d == 0) return 0
+      if (d + eb == ea) return na - nb
+      v = (d + eb / 2) / ea * na - nb / 2
+      return (v >= 0) ? int(v + 0.5) : -int(-v + 0.5)
+    }
+    $1 == "old" {
+      n++; N[n] = $2; X[n] = $3 + 0; Y[n] = $4 + 0
+      W[n] = $5 + 0; H[n] = $6 + 0
+    }
+    $1 == "new" { NW[$2] = $3 + 0; NH[$2] = $4 + 0 }
+    END {
+      if (n == 0) exit
+      for (i = 1; i <= n; i++) {
+        w[i] = (N[i] in NW) ? NW[N[i]] : W[i]
+        h[i] = (N[i] in NH) ? NH[N[i]] : H[i]
+        px[i] = X[i]; py[i] = Y[i]
+      }
+      seen[1] = 1; q[1] = 1; qh = 1; qt = 1
+      while (qh <= qt) {
+        a = q[qh++]
+        for (b = 1; b <= n; b++) {
+          if (b in seen) continue
+          ox = span(X[a], X[a] + W[a], X[b], X[b] + W[b])
+          oy = span(Y[a], Y[a] + H[a], Y[b], Y[b] + H[b])
+          if (oy > 0 && X[a] + W[a] == X[b]) {
+            px[b] = px[a] + w[a]
+            py[b] = py[a] + off(Y[b] - Y[a], H[a], H[b], h[a], h[b])
+          } else if (oy > 0 && X[b] + W[b] == X[a]) {
+            px[b] = px[a] - w[b]
+            py[b] = py[a] + off(Y[b] - Y[a], H[a], H[b], h[a], h[b])
+          } else if (ox > 0 && Y[a] + H[a] == Y[b]) {
+            py[b] = py[a] + h[a]
+            px[b] = px[a] + off(X[b] - X[a], W[a], W[b], w[a], w[b])
+          } else if (ox > 0 && Y[b] + H[b] == Y[a]) {
+            py[b] = py[a] - h[b]
+            px[b] = px[a] + off(X[b] - X[a], W[a], W[b], w[a], w[b])
+          } else continue
+          seen[b] = 1; q[++qt] = b
+        }
+      }
+      mx = px[1]; my = py[1]
+      for (i = 2; i <= n; i++) {
+        if (px[i] < mx) mx = px[i]
+        if (py[i] < my) my = py[i]
+      }
+      for (i = 1; i <= n; i++) print N[i], px[i] - mx, py[i] - my
     }'
 }
 

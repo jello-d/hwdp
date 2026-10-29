@@ -75,6 +75,13 @@ trap 'rm -f "$_tmp"' EXIT HUP INT TERM
   _disabled | while IFS= read -r edid; do
     printf '#   %s (switched off)\n' "$edid"
   done
+  printf '# The space each output occupied at capture, at the scales of the\n'
+  printf '# moment. hwdp layout re-places the outputs from these when a scale\n'
+  printf '# changes later, keeping which sits beside which. Moving a position\n'
+  printf '# by hand switches that off for this profile (the hand edit wins).\n'
+  live_rects edid | while IFS="$TAB" read -r nm x y w h; do
+    printf '# hwdp-rect "%s" %s %s %s %s\n' "$nm" "$x" "$y" "$w" "$h"
+  done
   printf 'profile hwdp-%s {\n' "$_id"
   outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
     _t=""; [ "$tr" != normal ] && _t=" transform $tr"

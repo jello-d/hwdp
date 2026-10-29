@@ -129,6 +129,56 @@ gen_template() {
   done <"$TEMPLATE"
 }
 
+# RE-PLACE an authored profile whose sizes changed since capture, rewriting
+# $_otmp in place (see layout_repack). Only when capture left its rects AND
+# every authored position still matches them: a position that differs was
+# moved by hand, and a hand edit wins over the arithmetic, so it is left
+# exactly as written and the gap check below speaks for it instead. With
+# nothing changed this is a no-op, so the authored file comes through intact.
+repack_template() {
+  _old=$(profile_rects <"$TEMPLATE")
+  [ -n "$_old" ] || return 0
+  _now=$(config_rects <"$_otmp")
+  _v=$( { printf '%s\n' "$_old" | awk -v OFS="$TAB" '{ print "old", $0 }'
+          printf '%s\n' "$_now" | awk -v OFS="$TAB" '{ print "now", $0 }'
+        } | awk -F"$TAB" '
+    $1 == "old" { X[$2] = $3; Y[$2] = $4; W[$2] = $5; H[$2] = $6; next }
+    $1 == "now" && why == "" {
+      if (!($2 in X)) why = $2 " is not in the captured rects"
+      else if ($3 != X[$2] || $4 != Y[$2]) why = $2 " was moved by hand"
+      else if (r == "" && ($5 != W[$2] || $6 != H[$2]))
+        r = $2 " " W[$2] "x" H[$2] " -> " $5 "x" $6
+    }
+    END {
+      if (why != "") print "edited\t" why
+      else if (r != "") print "resized\t" r
+    }')
+  case $_v in
+    edited*)
+      echo "hwdp layout: authored layout left as written:" \
+        "${_v#*"$TAB"}" >&2
+      return 0 ;;
+    resized*) ;;
+    *) return 0 ;;
+  esac
+  _plan=$(mktemp "$(dirname "$OUT")/.hwdp-repack.XXXXXX")
+  { printf '%s\n' "$_old" | awk -v OFS="$TAB" '{ print "old", $0 }'
+    printf '%s\n' "$_now" | awk -F"$TAB" -v OFS="$TAB" \
+      '{ print "new", $1, $4, $5 }'
+  } | layout_repack >"$_plan"
+  _rtmp=$(mktemp "$(dirname "$OUT")/.hwdp-layout.XXXXXX")
+  awk -F"$TAB" 'NR == FNR { P[$1] = $2 "," $3; next }
+    /^[ \t]*output "/ && !/ disable([ \t]|$)/ {
+      nm = $0; sub(/^[ \t]*output "/, "", nm); sub(/".*/, "", nm)
+      if (nm in P) sub(/ position -?[0-9]+,-?[0-9]+/, " position " P[nm])
+    }
+    { print }' "$_plan" "$_otmp" >"$_rtmp"
+  mv "$_rtmp" "$_otmp"
+  rm -f "$_plan"
+  echo "hwdp layout: re-placed the authored layout for the current" \
+    "scales (${_v#*"$TAB"})" >&2
+}
+
 # No authored profile: lay the outputs out side by side, left to right, each
 # starting exactly where the previous one ENDS in the compositor's own logical
 # arithmetic (lsize: rotated, then truncated by scale). It used to advance by
@@ -166,9 +216,12 @@ mkdir -p "$(dirname "$OUT")"
 # the running session a half-written layout rather than the previous good one.
 # Temp beside the destination, for the cross-filesystem reason above.
 _otmp=$(mktemp "$(dirname "$OUT")/.hwdp-layout.XXXXXX")
-trap 'rm -f "$_map" "$_otmp"' EXIT INT TERM
+_plan=; _rtmp=   # repack_template's, when it runs
+trap 'rm -f "$_map" "$_otmp" ${_plan:+"$_plan"} ${_rtmp:+"$_rtmp"}' \
+  EXIT INT TERM
 if [ -s "$TEMPLATE" ] && grep -q 'output ' "$TEMPLATE"; then
   gen_template >"$_otmp"
+  repack_template
 else
   gen_fallback >"$_otmp"
 fi

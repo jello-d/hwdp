@@ -13,6 +13,10 @@
 #   3. `capture` left a switched-off panel OUT of the profile, and kanshi
 #      applies a profile only when it names every connected output ("no
 #      profile matched"), so the docked-laptop profile never applied.
+#   4. An authored profile's positions were only right at the scales it was
+#      captured at: change a scale afterwards and the outputs stopped meeting
+#      (layout.t's own 2.00 override left a 1080px gap). layout now re-places
+#      them from the rects capture records, keeping the arrangement's shape.
 . "$(dirname "$0")/harness_lib"
 harness_init arrange
 
@@ -49,6 +53,36 @@ _g=$(_faults 'P\t0\t0\t1080\t1920\nL\t1120\t420\t1920\t1080\n')
 [ "$_g" = "gap${TAB}L${TAB}P${TAB}40" ] \
   || fail "the gap record must name both outputs and the distance: '$_g'"
 pass "the edge-to-edge detector"
+
+# --- 1b. the re-pack, pure ----------------------------------------------------
+_rp() {   # <"old A x y w h; new A w h; ..."> -> "name x y;" per output
+  printf '%s\n' "$1" | tr ';' '\n' | sed 's/^ *//' | tr ' ' '\t' \
+    | HWDP_LIB=$HERE/lib sh -c '. "$HWDP_LIB/displayset_lib"
+      layout_repack' | tr '\t\n' ' ;'
+}
+_rp_is() {   # <label> <records> <expected>
+  _got=$(_rp "$2")
+  [ "$_got" = "$3" ] || fail "repack, $1: expected '$3', got '$_got'"
+}
+_rp_is "the neighbour follows a panel that halves" \
+  'old A 0 0 2160 3840; old B 2160 0 2160 3840; new A 1080 1920' \
+  'A 0 0;B 1080 0;'
+_rp_is "a centred landscape stays centred" \
+  'old P 0 0 1080 1920; old L 1080 420 1920 1080; new L 1280 720' \
+  'P 0 0;L 1080 600;'
+_rp_is "a bottom-aligned panel stays bottom-aligned" \
+  'old P 0 0 1080 1920; old L 1080 840 1920 1080; new L 1280 720' \
+  'P 0 0;L 1080 1200;'
+_rp_is "a panel left of the first, and the origin moves to it" \
+  'old A 2880 0 3840 2160; old B 0 0 2880 1800; new B 1645 1028' \
+  'A 1645 0;B 0 0;'
+_rp_is "a laptop centred BELOW a 4K that scales" \
+  'old E 0 0 3840 2160; old B 1097 2160 1645 1028; new E 2194 1234' \
+  'E 0 0;B 274 1234;'
+_rp_is "unchanged sizes change nothing" \
+  'old A 0 0 2160 3840; old B 2160 0 2160 3840' \
+  'A 0 0;B 2160 0;'
+pass "the re-pack keeps the shape and the alignment"
 
 # --- 2. the logical size truncates, and rotates -------------------------------
 _ls() {   # <w> <h> <transform> <scale> -> "LWxLH"
@@ -177,3 +211,40 @@ grep -q 'WARNING: .*AW2725Q DDD444 does not touch .*LAPTOP SN0001: 55px' \
   "$T/layout.err" || fail "no gap warning: $(cat "$T/layout.err")"
 [ -s "$T/out" ] || fail "a gapped profile must still produce a config"
 pass "layout warns on a gap the injected scale opened, and still writes"
+
+# --- 8. a scale change after capture RE-PLACES the outputs -----------------
+# Capture at the stub's live scales (the laptop at 1.75, 1645 wide, the 4K
+# beside it at x=1645), then move the laptop's sticky scale to 1.25 (2304
+# wide). The 4K must follow to x=2304 rather than be left overlapping it.
+printf 'Acme Corp LAPTOP SN0001\t1.75\t2880x1800@300x190\n' > "$T/sticky"
+_p=$(run capture 2>/dev/null) || fail "capture failed on the packed desk"
+grep -q '^# hwdp-rect "Acme Corp LAPTOP SN0001" 0 0 1645 1028$' "$_p" \
+  || fail "capture must record each output's rect: $(grep hwdp-rect "$_p")"
+grep -q '^# hwdp-rect "Dell Inc. AW2725Q DDD444" 1645 0 3840 2160$' "$_p" \
+  || fail "capture must record the second rect too"
+run layout >/dev/null 2>"$T/layout.err" || fail "layout failed (same scales)"
+grep -q 're-placed' "$T/layout.err" \
+  && fail "unchanged scales must leave the authored layout alone"
+grep -q 'DDD444" .*position 1645,0' "$T/out" \
+  || fail "unchanged scales must keep the authored position"
+printf 'Acme Corp LAPTOP SN0001\t1.25\t2880x1800@300x190\n' > "$T/sticky"
+run layout >/dev/null 2>"$T/layout.err" || fail "layout failed (rescaled)"
+grep -q 'DDD444" .*position 2304,0' "$T/out" \
+  || fail "the 4K must follow the rescaled laptop to 2304: $(grep DDD444 \
+"$T/out")"
+grep -q 're-placed the authored layout' "$T/layout.err" \
+  || fail "a re-place must say so: $(cat "$T/layout.err")"
+grep -q WARNING "$T/layout.err" \
+  && fail "a re-placed layout must not warn: $(cat "$T/layout.err")"
+# A position moved BY HAND wins: leave it, say why, and let the check speak.
+sed 's/\(DDD444" .*position \)1645,0/\11700,0/' "$_p" > "$_p.new"
+mv "$_p.new" "$_p"
+run layout >/dev/null 2>"$T/layout.err" || fail "layout failed (hand edit)"
+grep -q 'left as written: .*DDD444 was moved by hand' "$T/layout.err" \
+  || fail "a hand-moved position must stop the re-place: $(cat \
+"$T/layout.err")"
+grep -q 'DDD444" .*position 1700,0' "$T/out" \
+  || fail "the hand-moved position must survive"
+grep -q WARNING "$T/layout.err" \
+  || fail "the hand-moved layout overlaps at 1.25, and must be warned about"
+pass "a scale change re-places the outputs; a hand edit is left alone"
