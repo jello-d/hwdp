@@ -1,0 +1,159 @@
+#!/bin/sh
+# hwdp map: draw this desk in text. The outputs that are switched on, placed
+# and sized as the compositor has them (logical pixels, after rotation and
+# scale), each labelled with its connector, its shape token and its size;
+# this desk's surfaces drawn into them; then the shape, a legend, and anything
+# wrong with the arrangement.
+#
+#   --width N   columns to draw in (default: $COLUMNS, else 80)
+#
+# A REPORT, NOT A UI: it reads and prints, the way `usher doctor` does, so it
+# is safe to run at any time and its output can be pasted into a note. It
+# reads the surfaces through `hwdp surfaces` (the published contract) and the
+# gap check through layout_faults, so it can never disagree with either.
+#
+# Halves that carry a surface are split with dots, so a panel's border (`|`,
+# `-`) and a region's (`:`, `.`) cannot be confused. A surface's label is its
+# name and its workspace cell. A box too small for its labels truncates them;
+# the legend below always has the whole text.
+set -eu
+. "$HWDP_LIB/displayset_lib"
+
+WIDTH=${COLUMNS:-80}
+while [ $# -gt 0 ]; do
+  case $1 in
+    --width)   WIDTH=${2:-}; shift ;;
+    --width=*) WIDTH=${1#*=} ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    *) echo "hwdp map: unexpected argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+case $WIDTH in
+  ''|*[!0-9]*) echo "hwdp map: --width wants a number" >&2; exit 2 ;;
+esac
+[ "$WIDTH" -ge 20 ] || WIDTH=20
+
+if ! _live=$(probe_layout); then
+  echo "hwdp map: no layout provider could answer; the map needs a session" \
+       "(only the compositor knows where the outputs are)" >&2
+  exit 3
+fi
+
+# The surfaces as published; a broken file is reported, never drawn half.
+_srf=; _srf_rc=0
+_srf=$("$HWDP_LIBEXEC/cmd/surfaces" 2>/dev/null) || _srf_rc=$?
+
+_shape=$(shape)
+_faults=$(live_rects | layout_faults | layout_fault_text)
+
+{
+  printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+    $12 == 1 && $3 + 0 > 0 {
+      lsize($3, $4, $8, $9)
+      k = ($2 ~ /^(eDP|LVDS|DSI)/) ? "B" : "E"
+      print "out", $2, $10, $11, LW, LH, k ((LH > LW) ? "P" : "L"), $1
+    }'
+  [ -n "$_srf" ] && printf '%s\n' "$_srf" | awk -v OFS="$TAB" \
+    '{ print "srf", $1, $2, $3, $4, $5, $6, $7, $8 }'
+  :
+} | awk -F"$TAB" -v cols="$WIDTH" '
+  function put(x, y, c) {
+    if (x >= 0 && x < CW && y >= 0 && y < CH) G[y, x] = c
+  }
+  function text(x, y, s, max,   i) {
+    if (max < 1) return
+    s = substr(s, 1, max)
+    for (i = 1; i <= length(s); i++) put(x + i - 1, y, substr(s, i, 1))
+  }
+  $1 == "out" {
+    n++; C[n] = $2; X[n] = $3; Y[n] = $4; W[n] = $5; H[n] = $6
+    K[n] = $7; NM[n] = $8; IX[$2] = n
+    next
+  }
+  $1 == "srf" {
+    m++; SN[m] = $2; SC[m] = $3; SWX[m] = $4; SWY[m] = $5
+    SX[m] = $6; SY[m] = $7; SW[m] = $8; SH[m] = $9
+  }
+  END {
+    if (n == 0) { print "(no outputs switched on)"; exit }
+    minx = X[1]; miny = Y[1]; maxx = X[1] + W[1]; maxy = Y[1] + H[1]
+    for (i = 2; i <= n; i++) {
+      if (X[i] < minx) minx = X[i]; if (Y[i] < miny) miny = Y[i]
+      if (X[i] + W[i] > maxx) maxx = X[i] + W[i]
+      if (Y[i] + H[i] > maxy) maxy = Y[i] + H[i]
+    }
+    # A character cell is about twice as tall as it is wide.
+    sx = (cols - 1) / (maxx - minx); sy = sx / 2
+    CW = cols; CH = int((maxy - miny) * sy) + 1
+    for (y = 0; y < CH; y++) for (x = 0; x < CW; x++) G[y, x] = " "
+    for (i = 1; i <= n; i++) {
+      x0[i] = int((X[i] - minx) * sx)
+      x1[i] = int((X[i] + W[i] - minx) * sx)
+      y0[i] = int((Y[i] - miny) * sy)
+      y1[i] = int((Y[i] + H[i] - miny) * sy)
+      if (x1[i] >= CW) x1[i] = CW - 1; if (y1[i] >= CH) y1[i] = CH - 1
+      for (x = x0[i]; x <= x1[i]; x++) {
+        put(x, y0[i], "-"); put(x, y1[i], "-")
+      }
+      for (y = y0[i]; y <= y1[i]; y++) {
+        put(x0[i], y, "|"); put(x1[i], y, "|")
+      }
+    }
+    # Corners after every edge, so the edge of a neighbour cannot erase one.
+    for (i = 1; i <= n; i++) {
+      put(x0[i], y0[i], "+"); put(x1[i], y0[i], "+")
+      put(x0[i], y1[i], "+"); put(x1[i], y1[i], "+")
+    }
+    # Region dividers, then labels, so a label is never cut by a divider.
+    for (j = 1; j <= m; j++) {
+      i = IX[SC[j]]; if (!i) continue
+      if (SH[j] < H[i]) {                        # top or bottom half
+        my = int((y0[i] + y1[i]) / 2)
+        for (x = x0[i] + 1; x < x1[i]; x++) put(x, my, ".")
+      }
+      if (SW[j] < W[i]) {                        # left or right half
+        mx = int((x0[i] + x1[i]) / 2)
+        for (y = y0[i] + 1; y < y1[i]; y++) put(mx, y, ":")
+      }
+    }
+    for (i = 1; i <= n; i++) {
+      w = x1[i] - x0[i] - 2
+      text(x0[i] + 2, y0[i] + 1, C[i] " " K[i], w)
+      text(x0[i] + 2, y0[i] + 2, W[i] "x" H[i], w)
+    }
+    for (j = 1; j <= m; j++) {
+      i = IX[SC[j]]; if (!i) continue
+      lx = x0[i] + 2; ly = y0[i] + 3; rw = x1[i] - x0[i] - 2
+      if (SW[j] < W[i]) {
+        rw = int((x1[i] - x0[i]) / 2) - 2
+        if (SX[j] > 0) lx = int((x0[i] + x1[i]) / 2) + 2
+      }
+      if (SH[j] < H[i] && SY[j] > 0) ly = int((y0[i] + y1[i]) / 2) + 1
+      while (ly < y1[i] && G[ly, lx] != " ") ly++
+      if (ly < y1[i]) text(lx, ly, SN[j] " " SWX[j] "," SWY[j], rw)
+    }
+    for (y = 0; y < CH; y++) {
+      line = ""
+      for (x = 0; x < CW; x++) line = line G[y, x]
+      sub(/ +$/, "", line); print line
+    }
+    print ""
+    for (i = 1; i <= n; i++)
+      printf "%-6s %s  %dx%d at %d,%d  %s\n", C[i], K[i], W[i], H[i], \
+        X[i], Y[i], NM[i]
+    for (j = 1; j <= m; j++)
+      printf "  surface %-10s %s cell %d,%d  %dx%d at %d,%d\n", SN[j], \
+        SC[j], SWX[j], SWY[j], SW[j], SH[j], SX[j], SY[j]
+  }'
+
+printf '\nshape  %s\n' "${_shape:-(none)}"
+case $_srf_rc in
+  0) [ -n "$_srf" ] || printf 'surfaces  none for this desk\n' ;;
+  # shellcheck disable=SC2016  # the backticks are literal, for the reader
+  2) printf 'surfaces  BROKEN, not drawn: run `hwdp surfaces --check`\n' ;;
+  *) printf 'surfaces  unavailable (hwdp surfaces exit %s)\n' "$_srf_rc" ;;
+esac
+if [ -n "$_faults" ]; then
+  printf '%s\n' "$_faults" | sed 's/^/PROBLEM  /'
+fi

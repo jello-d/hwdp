@@ -168,6 +168,15 @@ on stderr. Needs a session (exit 3 without one).
 describes each surface in words and notes a panel name that matches nothing
 attached, and a switched-on panel no surface uses.
 .TP
+.BR "hwdp map" " [" \-\-width
+.IR N ]
+Draw this desk in text: the switched-on outputs where the compositor has them
+(logical size, after rotation and scale), each labelled with its connector,
+shape token and size; this desk's surfaces drawn into their halves (split with
+dots, so a region cannot be mistaken for a panel edge); then a legend, the
+shape, and any gap or overlap as a PROBLEM line. A report, safe at any time.
+A broken surfaces file is reported and not drawn. Needs a session.
+.TP
 .B hwdp watch
 Supervise the layout for a session (supervise-or-nudge via
 .BR flock ),

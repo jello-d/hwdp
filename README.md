@@ -22,6 +22,7 @@ hwdp panels     one line per ATTACHED panel, headless: name w h
 hwdp layout     emit the runtime kanshi config, print its path
 hwdp capture    snapshot the current arrangement into a profile
 hwdp surfaces   this desk's named surfaces (panel, half, cell), resolved
+hwdp map        draw this desk in text: outputs, surfaces, problems
 hwdp watch      supervise the layout; fire display-change hooks
 hwdp apply      fire the changed hooks now, so a config change goes live
 ```
