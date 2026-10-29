@@ -50,58 +50,11 @@ if [ -n "$_faults" ]; then
   exit 1
 fi
 
-# Attached-but-switched-off outputs the compositor still lists, by EDID name.
-_disabled() {
-  probe_layout | awk -F"$TAB" '$1 != "" && $12 == 0 { print $1 }'
-}
-_dst=$PROFILES/$_id.conf
 mkdir -p "$PROFILES"
 
-# Clean up the temp on ANY exit, including the `set -e` aborts that the writes
+# Clean up the temp on ANY exit, including the `set -e` aborts that the write
 # below can trigger, and a stray .tmp beside the profiles is confusing litter.
 _tmp=$(mktemp "$PROFILES/.$_id.conf.XXXXXX")
 trap 'rm -f "$_tmp"' EXIT HUP INT TERM
-{
-  printf '# captured by hwdp capture: layout for this monitor set.\n'
-  printf '# Outputs/transforms/positions only; the per-output scale is\n'
-  printf '# filled at session start (see hwdp layout / auto-scale).\n'
-  printf '# ROTATION GOTCHA: transform is wl_output_transform (kanshi) =\n'
-  printf '# COUNTER-CLOCKWISE; the sway greeter is CLOCKWISE, 180 degrees\n'
-  printf '# apart, so shift by 180 (90<->270) to reuse in the greeter.\n'
-  printf '# The file name is the HWDP (compound EDID-set id). Panels:\n'
-  outputs | while IFS="$TAB" read -r edid _ _ _ _ _ _ _ _; do
-    printf '#   %s\n' "$edid"
-  done
-  _disabled | while IFS= read -r edid; do
-    printf '#   %s (switched off)\n' "$edid"
-  done
-  printf '# The space each output occupied at capture, at the scales of the\n'
-  printf '# moment. hwdp layout re-places the outputs from these when a scale\n'
-  printf '# changes later, keeping which sits beside which. Moving a position\n'
-  printf '# by hand switches that off for this profile (the hand edit wins).\n'
-  live_rects edid | while IFS="$TAB" read -r nm x y w h; do
-    printf '# hwdp-rect "%s" %s %s %s %s\n' "$nm" "$x" "$y" "$w" "$h"
-  done
-  printf 'profile hwdp-%s {\n' "$_id"
-  outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
-    _t=""; [ "$tr" != normal ] && _t=" transform $tr"
-    printf '    output "%s" mode %sx%s@%.3fHz%s position %s\n' \
-      "$edid" "$rw" "$rh" "$rate" "$_t" "$pos"
-  done
-  _disabled | while IFS= read -r edid; do
-    printf '    output "%s" disable\n' "$edid"
-  done
-  printf '}\n'
-} > "$_tmp"
-
-if [ -f "$_dst" ] && cmp -s "$_tmp" "$_dst"; then
-  : # identical: leave the file (and its mtime) untouched
-elif [ -f "$_dst" ]; then
-  cp -p "$_dst" "$_dst.bak"
-  mv "$_tmp" "$_dst"
-  echo "hwdp capture: the arrangement changed; previous profile kept as" \
-    "$_dst.bak" >&2
-else
-  mv "$_tmp" "$_dst"
-fi
-printf '%s\n' "$_dst"
+placed_records | profile_text "$_id" "captured by hwdp capture" > "$_tmp"
+profile_install "$_id" "$_tmp" capture

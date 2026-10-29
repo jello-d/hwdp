@@ -270,6 +270,83 @@ panel_count() {
   heads | grep -c . || true
 }
 
+# placed_records: the switched-on outputs as profile_text wants them, from
+# the compositor's live arrangement, plus the switched-off ones. The `on` set
+# is the one outputs() selects (an EDID name and a physical size, so kanshi
+# can key it and the sticky scale can sign it).
+placed_records() {
+  probe_layout | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+    $1 != "" && $12 == 1 && $3 + 0 > 0 && $5 + 0 > 0 {
+      lsize($3, $4, $8, $9)
+      print "on", $1, $3, $4, $7, $8, $10, $11, LW, LH
+    }
+    $1 != "" && $12 == 0 { print "off", $1 }'
+}
+
+# profile_text <id> <by>: the authored profile for a placed arrangement, from
+# TAB records on stdin, in order:
+#   on  \t name \t mode_w \t mode_h \t rate \t transform \t x \t y \t w \t h
+#   off \t name
+# where w h is the LOGICAL size at x y. <by> fills the first line ("captured
+# by hwdp capture"). ONE WRITER, shared by capture and arrange, because what
+# makes a profile right is the same for both: a switched-off panel written as
+# `disable` (or kanshi never matches the profile), and the rect comments that
+# let layout re-place the outputs when a scale changes later.
+profile_text() {
+  awk -F"$TAB" -v id="$1" -v by="$2" '
+    # (RATE, not RT: RT is a gawk built-in, and an array of that name is fatal)
+    $1 == "on"  { n++; NM[n] = $2; MW[n] = $3; MH[n] = $4; RATE[n] = $5
+                  TR[n] = $6; X[n] = $7; Y[n] = $8; W[n] = $9; H[n] = $10 }
+    $1 == "off" { f++; OFF[f] = $2 }
+    END {
+      printf "# %s: layout for this monitor set.\n", by
+      print "# Outputs/transforms/positions only; the per-output scale is"
+      print "# filled at session start (see hwdp layout / auto-scale)."
+      print "# ROTATION GOTCHA: transform is wl_output_transform (kanshi) ="
+      print "# COUNTER-CLOCKWISE; the sway greeter is CLOCKWISE, 180 degrees"
+      print "# apart, so shift by 180 (90<->270) to reuse in the greeter."
+      print "# The file name is the HWDP (compound EDID-set id). Panels:"
+      for (i = 1; i <= n; i++) printf "#   %s\n", NM[i]
+      for (i = 1; i <= f; i++) printf "#   %s (switched off)\n", OFF[i]
+      print "# The space each output occupied at capture, at the scales of the"
+      print "# moment. hwdp layout re-places the outputs from these when a " \
+        "scale"
+      print "# changes later, keeping which sits beside which. Moving a " \
+        "position"
+      print "# by hand switches that off for this profile (the hand edit wins)."
+      for (i = 1; i <= n; i++)
+        printf "# hwdp-rect \"%s\" %s %s %s %s\n", NM[i], X[i], Y[i], W[i], H[i]
+      printf "profile hwdp-%s {\n", id
+      for (i = 1; i <= n; i++)
+        printf "    output \"%s\" mode %sx%s@%.3fHz%s position %s,%s\n", \
+          NM[i], MW[i], MH[i], RATE[i], \
+          (TR[i] != "normal") ? " transform " TR[i] : "", X[i], Y[i]
+      for (i = 1; i <= f; i++) printf "    output \"%s\" disable\n", OFF[i]
+      print "}"
+    }'
+}
+
+# profile_install <id> <tmp> <tool>: put <tmp> in place as the profile for
+# <id> and print its path. NEVER DESTROYS ONE SILENTLY: an identical profile is
+# left alone (mtime and all, so a re-run is a true no-op); a different one is
+# kept as <id>.conf.bak and the change announced on stderr, so stdout stays
+# the single path line callers parse. <tmp> must live in $PROFILES, so the
+# rename is atomic.
+profile_install() {
+  _pdst=$PROFILES/$1.conf
+  if [ -f "$_pdst" ] && cmp -s "$2" "$_pdst"; then
+    rm -f "$2"
+  elif [ -f "$_pdst" ]; then
+    cp -p "$_pdst" "$_pdst.bak"
+    mv "$2" "$_pdst"
+    echo "hwdp $3: the arrangement changed; previous profile kept as" \
+      "$_pdst.bak" >&2
+  else
+    mv "$2" "$_pdst"
+  fi
+  printf '%s\n' "$_pdst"
+}
+
 # shape: the workspace SHAPE, a DESK KIND rather than a count. One token per
 # head: `B` for a built-in panel (an eDP, LVDS or DSI connector) or `E` for an
 # external one, then `L` or `P` for landscape or portrait as the user sees it,
