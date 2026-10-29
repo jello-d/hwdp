@@ -114,6 +114,9 @@ resolve() {
 gen_template() {
   while IFS= read -r _l; do
     case $_l in
+      # A disabled output takes no scale: it occupies nothing, and the line is
+      # what keeps the profile MATCHING kanshi (see cmd/capture).
+      *'output "'*' disable') printf '%s\n' "$_l" ;;
       *'output "'*)
         _e=$(printf '%s' "$_l" | sed -n 's/.*output "\([^"]*\)".*/\1/p')
         _v=$(awk -F"$TAB" -v e="$_e" '$1==e{print $2;exit}' "$_map")

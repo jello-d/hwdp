@@ -22,7 +22,16 @@
 # The temp file is made INSIDE $PROFILES so the rename is atomic: across
 # filesystems `mv` degrades to copy-then-delete and stops being.
 #
-# IT REFUSES A LAYOUT WITH A GAP OR AN OVERLAP, writing nothing, because
+# A SWITCHED-OFF PANEL IS WRITTEN AS `disable`, NOT LEFT OUT. The profile is
+# chosen by `hwdp id`, which counts every ATTACHED panel, and kanshi applies a
+# profile only when it names EVERY connected output: measured in a nested
+# wayfire, a profile naming one of two connected outputs gets "no profile
+# matched" and nothing is applied, while the same profile plus `output <the
+# other> disable` applies and switches it off. Leaving it out is exactly the
+# docked laptop with its built-in panel off: a profile that silently never
+# applies at the one desk it was captured for.
+#
+# AND IT REFUSES A LAYOUT WITH A GAP OR AN OVERLAP, writing nothing, because
 # capture is where a gap made by hand would otherwise become permanent. The
 # outputs must share edges exactly, or edge flipping reads a shared inner edge
 # as two outer ones (see layout_faults). `hwdp layout` checks again once the
@@ -41,6 +50,10 @@ if [ -n "$_faults" ]; then
   exit 1
 fi
 
+# Attached-but-switched-off outputs the compositor still lists, by EDID name.
+_disabled() {
+  probe_layout | awk -F"$TAB" '$1 != "" && $12 == 0 { print $1 }'
+}
 _dst=$PROFILES/$_id.conf
 mkdir -p "$PROFILES"
 
@@ -59,11 +72,17 @@ trap 'rm -f "$_tmp"' EXIT HUP INT TERM
   outputs | while IFS="$TAB" read -r edid _ _ _ _ _ _ _ _; do
     printf '#   %s\n' "$edid"
   done
+  _disabled | while IFS= read -r edid; do
+    printf '#   %s (switched off)\n' "$edid"
+  done
   printf 'profile hwdp-%s {\n' "$_id"
   outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
     _t=""; [ "$tr" != normal ] && _t=" transform $tr"
     printf '    output "%s" mode %sx%s@%.3fHz%s position %s\n' \
       "$edid" "$rw" "$rh" "$rate" "$_t" "$pos"
+  done
+  _disabled | while IFS= read -r edid; do
+    printf '    output "%s" disable\n' "$edid"
   done
   printf '}\n'
 } > "$_tmp"

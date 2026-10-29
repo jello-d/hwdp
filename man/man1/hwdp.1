@@ -100,6 +100,9 @@ flip the workspace instead of crossing.
 .B hwdp capture
 Snapshot the current arrangement (transforms, positions, modes: no scale)
 into a profile named by the id, so a rig is onboarded by arranging it once.
+A panel that is attached but switched off is written as
+.BI "output " name " disable" ,
+because kanshi applies a profile only when it names every connected output.
 It REFUSES, writing nothing, when the outputs do not meet edge to edge, and
 names the outputs and the distance.
 .TP

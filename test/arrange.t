@@ -1,7 +1,8 @@
 #!/bin/sh
-# arrange.t - outputs must share edges EXACTLY.
+# arrange.t - outputs must share edges EXACTLY, and a switched-off panel must
+# keep its profile matching.
 #
-# Two faults, each measured in a nested wayfire before it was fixed:
+# Three faults, each measured in a nested wayfire before it was fixed:
 #
 #   1. The compositor TRUNCATES mode/scale (2880 at 1.75 is 1645 wide). The
 #      synthesized layout and `hwdp geometry` ROUNDED (1646), so packed
@@ -9,6 +10,9 @@
 #      exact equality. The synthesized layout also ignored rotation.
 #   2. Nothing checked an AUTHORED layout for gaps, and a 40px gap makes every
 #      edge exterior: the pointer flips the workspace instead of crossing.
+#   3. `capture` left a switched-off panel OUT of the profile, and kanshi
+#      applies a profile only when it names every connected output ("no
+#      profile matched"), so the docked-laptop profile never applied.
 . "$(dirname "$0")/harness_lib"
 harness_init arrange
 
@@ -148,6 +152,18 @@ fi
 grep -q 'DP-1 does not touch eDP-1: 40px' "$T/cap.err" \
   || fail "the refusal must name both outputs and the gap: $(cat "$T/cap.err")"
 pass "capture refuses a gap, says where, and writes nothing"
+
+# --- 6. capture keeps a switched-off panel, as `disable` ----------------------
+_p=$(DESK=lidoff run capture) || fail "capture failed with the lid off"
+grep -q '^    output "Acme Corp LAPTOP SN0001" disable$' "$_p" \
+  || fail "the switched-off panel must be a disable line: $(cat "$_p")"
+grep -q 'AW2725Q DDD444" mode' "$_p" || fail "the enabled panel went missing"
+# layout must keep the disable line WITHOUT a scale, even in a session where
+# the panel is still enabled (the sticky has a scale for it).
+run layout >/dev/null 2>&1 || fail "layout failed on the captured profile"
+grep -q 'LAPTOP SN0001" disable$' "$T/out" \
+  || fail "layout must keep the disable line as written: $(cat "$T/out")"
+pass "a switched-off panel is captured as disable, and layout keeps it"
 
 # --- 7. layout WARNS on a gapped authored profile, and still writes it --------
 cat > "$T/profiles/$_id.conf" <<EOF
