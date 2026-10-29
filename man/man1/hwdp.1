@@ -142,6 +142,41 @@ a non-zero overall status. It does NOT regenerate the config or signal
 .B \-q
 says nothing on success, for a provisioning run.
 .TP
+.BR "hwdp arrange" " [" \-\-dry\-run "] " \fIPLACEMENT\fR...
+Write this desk's layout from placements, then apply it. Each output is placed
+against ONE already placed, with its own alignment along that edge, so a mixed
+desk is a list:
+.IP
+.B "hwdp arrange 'DP-1 rotate 90' 'DP-2 right-of DP-1 align bottom'"
+.B "  'eDP-1 below DP-2 align center'"
+.IP
+A placement is
+.IR "out " [ "rotate 0|90|180|270" ]
+then nothing (the first, the anchor),
+.IR "right-of|left-of|above|below out " [ "align A" ],
+or
+.BR off .
+Beside a neighbour A is
+.BR top ", " center " or " bottom
+(default top); above or below one,
+.BR left ", " center " or " right
+(default left). Without
+.B rotate
+an output keeps its rotation. Every placement shares an edge by construction.
+Every switched-on output must be placed or switched off (kanshi applies a
+profile only when it names every connected output); one already off and not
+mentioned stays off. An output is a connector, read once at that moment, or a
+quoted EDID name. CONNECTORS ARE NOT STABLE (a dock or hub renumbers them), so
+the profile written is keyed by EDID name, and a placement list kept to replay
+later should use EDID names too. It writes the same profile
+.B hwdp capture
+does (the old one kept as .bak), regenerates the layout and nudges a running
+supervisor; with none running it says so instead of starting one. Refusals
+(an output left out, two in one space, an unknown name, a bad alignment) exit
+2 and write nothing.
+.B \-\-dry\-run
+prints the placements and the profile, and writes nothing.
+.TP
 .BR "hwdp surfaces" " [" \-\-check ]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each:

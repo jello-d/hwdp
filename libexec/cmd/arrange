@@ -1,0 +1,215 @@
+#!/bin/sh
+# hwdp arrange: write this desk's layout from PLACEMENTS, then apply it.
+#
+#   hwdp arrange [--dry-run] PLACEMENT...     (or one per line on stdin)
+#
+#   <out> [rotate 0|90|180|270]                                 the anchor
+#   <out> [rotate R] right-of|left-of|above|below <out> [align A]
+#   <out> off
+#
+#   hwdp arrange 'DP-1 rotate 90' 'DP-2 right-of DP-1 align bottom' \
+#                'eDP-1 below DP-2 align center'
+#
+# <out> is a connector (DP-1) or an EDID name in double quotes ("Dell Inc.
+# AW2725Q ABC123"). Beside a neighbour, A is top, center or bottom (default
+# top); above or below one, left, center or right (default left). Without
+# `rotate` an output keeps the rotation it has now.
+#
+# EACH OUTPUT IS PLACED AGAINST ONE ALREADY PLACED, with its own alignment, so
+# a mixed desk (bottom-aligned on one edge, centred on another) is just a list.
+# Every such placement shares an edge by construction, so edge flipping sees
+# the inner edges. Two outputs placed into the same space is refused.
+#
+# CONNECTORS ARE READ ONCE, NOW, and never stored: the profile written is keyed
+# by EDID name like everything else, so a monitor that comes back on another
+# port keeps its place. Do not save an `arrange` line with connectors in it to
+# replay later (a dock renumbers them); use the EDID names for that, or simply
+# keep the profile this writes.
+#
+# Every output that is switched on must be placed or switched `off`: kanshi
+# applies a profile only when it names every connected output. One that is off
+# now and not mentioned stays off. Turning one ON needs its mode, which only
+# an enabled output reports, so switch it on first (wlr-randr --output X --on).
+#
+# WRITES the authored profile (the same writer as `hwdp capture`, so the
+# `disable` lines and the rects layout re-places from are identical), keeping
+# the old one as .bak, then regenerates the layout and nudges a running
+# supervisor so it goes live. With no supervisor running it says so rather
+# than starting one. --dry-run prints the placements and the profile, and
+# writes nothing.
+set -eu
+. "$HWDP_LIB/displayset_lib"
+
+DRY=0
+case "${1:-}" in
+  --dry-run) DRY=1; shift ;;
+  -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+esac
+if [ $# -gt 0 ]; then
+  _pl=$(for _a in "$@"; do printf '%s\n' "$_a"; done)
+else
+  _pl=$(cat)
+fi
+[ -n "$_pl" ] || { echo "hwdp arrange: no placements given" >&2; exit 2; }
+
+_id=$(hwdp_id)
+[ -n "$_id" ] || { echo "hwdp arrange: no displays attached" >&2; exit 1; }
+if ! _live=$(probe_layout); then
+  echo "hwdp arrange: no layout provider could answer; arranging needs a" \
+       "session" >&2
+  exit 3
+fi
+
+# Live outputs (L) then placements (P), into one program that resolves names,
+# computes every position, and prints profile_text's records, or refuses.
+_rec=$( { printf '%s\n' "$_live" | sed "s/^/L$TAB/"
+          printf '%s\n' "$_pl" | sed "s/^/P$TAB/"
+        } | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+  function bad(m) { print "hwdp arrange: " m > "/dev/stderr"; err = 1 }
+  # Split a placement into words, a "double quoted" run counting as one.
+  function words(s,   n, c) {
+    n = 0; delete Wd
+    while (s != "") {
+      sub(/^[ \t]+/, "", s); if (s == "") break
+      if (substr(s, 1, 1) == "\"") {
+        c = index(substr(s, 2), "\"")
+        if (c == 0) { bad("unbalanced quote in: " s); return 0 }
+        Wd[++n] = substr(s, 2, c - 1); s = substr(s, c + 2)
+      } else {
+        match(s, /^[^ \t]+/); Wd[++n] = substr(s, 1, RLENGTH)
+        s = substr(s, RLENGTH + 1)
+      }
+    }
+    return n
+  }
+  # A connector or an EDID name -> the live record index, or 0.
+  function find(o) { return (o in BYC) ? BYC[o] : ((o in BYN) ? BYN[o] : 0) }
+  $1 == "L" {
+    if ($2 == "") next
+    k++; NM[k] = $2; CN[k] = $3; MW[k] = $4; MH[k] = $5; RA[k] = $8
+    TX[k] = $9; SC[k] = $10; EN[k] = ($13 == 1 && $4 + 0 > 0)
+    BYC[$3] = k; BYN[$2] = k
+    next
+  }
+  $1 == "P" {
+    line = substr($0, 3); gsub(/^[ \t]+|[ \t]+$/, "", line)
+    if (line == "" || line ~ /^#/) next
+    n = words(line); if (n == 0) next
+    o = find(Wd[1])
+    if (!o) { bad("no output named `" Wd[1] "` here"); next }
+    if (o in DONE) { bad("`" Wd[1] "` is placed twice"); next }
+    DONE[o] = 1; order[++m] = o
+    if (n == 2 && Wd[2] == "off") { OFF[o] = 1; next }
+    if (!EN[o]) {
+      bad("`" Wd[1] "` is switched off, so its mode is unknown: switch it" \
+        " on first (wlr-randr --output " CN[o] " --on)"); next
+    }
+    t = TX[o]; i = 2
+    if (Wd[i] == "rotate") {
+      r = Wd[i + 1]
+      if (r !~ /^(0|90|180|270)$/) {
+        bad("`" Wd[1] "`: rotate takes 0, 90, 180 or 270"); next
+      }
+      t = (r == 0) ? "normal" : r; i += 2
+    }
+    T[o] = t; lsize(MW[o], MH[o], t, SC[o]); W[o] = LW; H[o] = LH
+    if (i > n) {
+      if (anchor) { bad("`" Wd[1] "` needs a place: right-of, left-of," \
+        " above or below an output already placed"); next }
+      anchor = o; X[o] = 0; Y[o] = 0; next
+    }
+    side = Wd[i]; nb = find(Wd[i + 1]); al = ""
+    if (side !~ /^(right-of|left-of|above|below)$/) {
+      bad("`" Wd[1] "`: expected right-of, left-of, above or below, got `" \
+        side "`"); next
+    }
+    if (!anchor) { bad("the first placement is the anchor, so `" Wd[1] \
+      "` cannot be placed against anything yet"); next }
+    if (!nb || !(nb in X)) {
+      bad("`" Wd[1] "`: `" Wd[i + 1] "` is not an output placed above it")
+      next
+    }
+    if (i + 2 <= n) {
+      if (Wd[i + 2] != "align" || i + 3 > n || i + 4 <= n) {
+        bad("`" Wd[1] "`: expected `align <where>` at the end"); next
+      }
+      al = Wd[i + 3]
+    }
+    if (side ~ /-of$/) {
+      if (al == "") al = "top"
+      if (al !~ /^(top|center|bottom)$/) {
+        bad("`" Wd[1] "` is " side " `" Wd[i + 1] "`, so align is top," \
+          " center or bottom"); next
+      }
+      X[o] = (side == "right-of") ? X[nb] + W[nb] : X[nb] - W[o]
+      Y[o] = (al == "top") ? Y[nb] : (al == "bottom") ? \
+        Y[nb] + H[nb] - H[o] : Y[nb] + int((H[nb] - H[o]) / 2)
+    } else {
+      if (al == "") al = "left"
+      if (al !~ /^(left|center|right)$/) {
+        bad("`" Wd[1] "` is " side " `" Wd[i + 1] "`, so align is left," \
+          " center or right"); next
+      }
+      Y[o] = (side == "below") ? Y[nb] + H[nb] : Y[nb] - H[o]
+      X[o] = (al == "left") ? X[nb] : (al == "right") ? \
+        X[nb] + W[nb] - W[o] : X[nb] + int((W[nb] - W[o]) / 2)
+    }
+  }
+  END {
+    if (!anchor && !err) bad("nothing is placed: the first placement must" \
+      " be an output that stays on")
+    # Only when the rest was understood: after an unknown name, "not placed"
+    # is a consequence of that error, not a second one.
+    for (o = 1; o <= k && !err; o++)
+      if (EN[o] && !(o in DONE))
+        bad("`" CN[o] "` (" NM[o] ") is switched on but not placed: place" \
+          " it, or say `" CN[o] " off`")
+    if (err) exit 2
+    mx = my = ""
+    for (j = 1; j <= m; j++) { o = order[j]; if (o in OFF) continue
+      if (mx == "" || X[o] < mx) mx = X[o]
+      if (my == "" || Y[o] < my) my = Y[o] }
+    for (j = 1; j <= m; j++) { o = order[j]; if (o in OFF) continue
+      print "on", NM[o], MW[o], MH[o], RA[o], T[o], X[o] - mx, Y[o] - my, \
+        W[o], H[o] }
+    for (o = 1; o <= k; o++)
+      if ((o in OFF) || (!EN[o] && !(o in DONE))) print "off", NM[o]
+  }') || exit 2
+
+# Two placements into the same space: refuse rather than write an overlap.
+_faults=$(printf '%s\n' "$_rec" | awk -F"$TAB" -v OFS="$TAB" \
+  '$1 == "on" { print $2, $7, $8, $9, $10 }' | layout_faults)
+if [ -n "$_faults" ]; then
+  printf '%s\n' "$_faults" | layout_fault_text | sed 's/^/hwdp arrange: /' >&2
+  echo "hwdp arrange: NOT written: two outputs would share space" >&2
+  exit 2
+fi
+
+if [ "$DRY" = 1 ]; then
+  printf '%s\n' "$_rec" | awk -F"$TAB" '
+    $1 == "on"  { printf "%-30s %5dx%-5d at %d,%d%s\n", $2, $9, $10, $7, $8, \
+                    ($6 != "normal") ? "  rotate " $6 : "" }
+    $1 == "off" { printf "%-30s off\n", $2 }'
+  echo
+  printf '%s\n' "$_rec" | profile_text "$_id" "arranged by hwdp arrange"
+  exit 0
+fi
+
+mkdir -p "$PROFILES"
+_tmp=$(mktemp "$PROFILES/.$_id.conf.XXXXXX")
+trap 'rm -f "$_tmp"' EXIT HUP INT TERM
+printf '%s\n' "$_rec" | profile_text "$_id" "arranged by hwdp arrange" \
+  > "$_tmp"
+profile_install "$_id" "$_tmp" arrange
+
+# Apply: regenerate the runtime config, then nudge the supervisor, which
+# reloads kanshi. Never START one from here: that is the session's to do.
+"$HWDP_LIBEXEC/cmd/layout" >/dev/null
+_lock=${XDG_RUNTIME_DIR:-/tmp}/hwdp/watch.lock
+if [ -e "$_lock" ] && ! ( flock -n 9 ) 9>"$_lock" 2>/dev/null; then
+  "$HWDP_LIBEXEC/cmd/watch" >/dev/null 2>&1 || :
+  echo "hwdp arrange: applied (the supervisor reloaded kanshi)" >&2
+else
+  echo "hwdp arrange: written, but no supervisor is running to apply it;" \
+       "start one with \`hwdp watch\`" >&2
+fi
