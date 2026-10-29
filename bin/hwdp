@@ -14,6 +14,7 @@
 #   hwdp panels     one line per ATTACHED panel, headless: name w h
 #   hwdp layout     emit the runtime kanshi config, print its path
 #   hwdp capture    snapshot the current arrangement into a profile
+#   hwdp surfaces   this desk's named surfaces, resolved (--check validates)
 #   hwdp watch      supervise the layout; fire display-change hooks
 #   hwdp apply      fire the changed hooks now, so a config change goes live
 #
@@ -63,7 +64,7 @@ esac
 # doing nothing, which for a tool other scripts call is the difference between
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
-  id|shape|ui|panels|geometry|layout|capture|watch|apply) ;;
+  id|shape|ui|panels|geometry|layout|capture|watch|apply|surfaces) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;
