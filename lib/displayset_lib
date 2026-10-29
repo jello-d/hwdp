@@ -44,6 +44,110 @@ outputs() {
     }'
 }
 
+# layout_faults: read the LOGICAL rects of the enabled outputs, one per line,
+#   name \t x \t y \t w \t h
+# and print one TAB line per fault, nothing at all when the layout is sound:
+#   overlap \t A \t B \t <w>x<h>     two outputs share area
+#   gap     \t A \t B \t <px>        A touches nothing joined to the first
+#                                    output; B is its nearest, <px> away
+#   corner  \t A \t B \t 0           the same, but A meets B at a corner
+#                                    only, which shares no edge
+#
+# THE INVARIANT IS EDGE-TO-EDGE. Every output must share an edge (not a
+# corner) with the rest, so the outputs form ONE connected surface. That is
+# what edge-flipping reads: it marks an edge INTERIOR only when a neighbour's
+# edge sits at EXACTLY the same coordinate, so a 40px gap makes every edge
+# exterior and pushing the pointer at a neighbour flips the workspace instead
+# of crossing. Measured in a nested wayfire (the usher session's edge probe).
+# A vertical OFFSET is fine, a portrait beside a centred landscape still
+# shares an edge, which is why this asks about edges and not about alignment.
+#
+# PURE (stdin to stdout), so every verdict is reachable from a test.
+layout_faults() {
+  awk -F"$TAB" '
+    function find(i) { while (P[i] != i) i = P[i]; return i }
+    function span(a1, a2, b1, b2,   lo, hi) {   # overlap length, < 0 = apart
+      lo = (a1 > b1) ? a1 : b1; hi = (a2 < b2) ? a2 : b2
+      return hi - lo
+    }
+    NF >= 5 {
+      n++; N[n] = $1; X[n] = $2 + 0; Y[n] = $3 + 0
+      W[n] = $4 + 0; H[n] = $5 + 0; P[n] = n
+    }
+    END {
+      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++) {
+        ox = span(X[i], X[i] + W[i], X[j], X[j] + W[j])
+        oy = span(Y[i], Y[i] + H[i], Y[j], Y[j] + H[j])
+        # An overlap is reported AND joined: the overlap is the fault, and
+        # calling the same pair "apart" as well would be a second, false one.
+        if (ox > 0 && oy > 0)
+          printf "overlap\t%s\t%s\t%dx%d\n", N[i], N[j], ox, oy
+        if ((ox >= 0 && oy > 0) || (oy >= 0 && ox > 0)) {
+          a = find(i); b = find(j); if (a != b) P[b] = a
+        }
+      }
+      root = find(1)
+      for (i = 2; i <= n; i++) {
+        if (find(i) == root) continue
+        best = 0; bg = -1
+        for (j = 1; j <= n; j++) {
+          if (find(j) != root) continue
+          ox = span(X[i], X[i] + W[i], X[j], X[j] + W[j])
+          oy = span(Y[i], Y[i] + H[i], Y[j], Y[j] + H[j])
+          g = (-ox > -oy) ? -ox : -oy
+          if (bg < 0 || g < bg) { bg = g; best = j }
+        }
+        if (bg == 0) printf "corner\t%s\t%s\t0\n", N[i], N[best]
+        else printf "gap\t%s\t%s\t%d\n", N[i], N[best], bg
+      }
+    }'
+}
+
+# layout_fault_text: layout_faults' records as sentences, for a human.
+layout_fault_text() {
+  awk -F"$TAB" '
+    $1 == "overlap" { printf "%s and %s OVERLAP by %s\n", $2, $3, $4 }
+    $1 == "gap"     { printf "%s does not touch %s: %dpx apart, so they " \
+                        "share no edge and edge flipping treats both as " \
+                        "outer edges\n", $2, $3, $4 }
+    $1 == "corner"  { printf "%s meets %s only at a corner, so they share " \
+                        "no edge to cross\n", $2, $3 }'
+}
+
+# live_rects: the enabled outputs' LOGICAL rects as the compositor has them
+# now, in layout_faults' input format, named by connector.
+live_rects() {
+  probe_layout | awk -F"$TAB" -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+    $12 == 1 && $3 + 0 > 0 {
+      lsize($3, $4, $8, $9); print $2, $10, $11, LW, LH
+    }'
+}
+
+# config_rects: the same, read from a generated kanshi config on stdin, so the
+# check runs against what kanshi will APPLY (after hwdp layout injected the
+# scales), named by the EDID descriptor the config uses. A disabled output
+# occupies no space and is skipped.
+config_rects() {
+  awk -v OFS="$TAB" "$HWDP_AWK_LOGICAL"'
+    /^[ \t]*output "/ && !/ disable([ \t]|$)/ {
+      nm = $0; sub(/^[ \t]*output "/, "", nm); sub(/".*/, "", nm)
+      w = h = x = y = 0; tx = "normal"; s = 1
+      if (match($0, / mode [0-9]+x[0-9]+/)) {
+        m = substr($0, RSTART + 6, RLENGTH - 6); split(m, a, "x")
+        w = a[1]; h = a[2]
+      }
+      if (match($0, / position -?[0-9]+,-?[0-9]+/)) {
+        m = substr($0, RSTART + 10, RLENGTH - 10); split(m, a, ",")
+        x = a[1]; y = a[2]
+      }
+      if (match($0, / transform [a-z0-9-]+/))
+        tx = substr($0, RSTART + 11, RLENGTH - 11)
+      if (match($0, / scale [0-9.]+/))
+        s = substr($0, RSTART + 7, RLENGTH - 7)
+      if (w > 0) { lsize(w, h, tx, s); print nm, x, y, LW, LH }
+    }'
+}
+
 # shape: the workspace SHAPE for the connected set, a COARSENING of the HWDP
 # id to just the panel COUNT, since the grid, names, window rules and wallpaper
 # are a function of HOW MANY panels, not which ones. A wall (>=3) is `triple`,

@@ -169,6 +169,18 @@ if [ -s "$TEMPLATE" ] && grep -q 'output ' "$TEMPLATE"; then
 else
   gen_fallback >"$_otmp"
 fi
+# THE NO-GAP INVARIANT, checked HERE because this is the first point at which
+# the logical sizes are known: an authored profile carries positions and NO
+# scale (capture leaves it out on purpose), and the sticky scales are injected
+# just above. So a profile captured edge to edge can still come out gapped or
+# overlapping once a scale changes. WARN, never refuse: refusing would leave
+# the session with no layout at all, which is worse than an imperfect one, and
+# the warning lands in the supervisor's log where `check` can read it.
+_faults=$(config_rects <"$_otmp" | layout_faults)
+if [ -n "$_faults" ]; then
+  printf '%s\n' "$_faults" | layout_fault_text \
+    | sed 's/^/hwdp layout: WARNING: /' >&2
+fi
 # 0644: kanshi reads it as the session user, and mktemp makes it 0600.
 chmod 644 "$_otmp"
 mv "$_otmp" "$OUT"

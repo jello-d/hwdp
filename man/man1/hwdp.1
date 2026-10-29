@@ -89,11 +89,19 @@ status 0, an answer rather than an error.
 .B hwdp layout
 Emit the runtime kanshi config for the connected set and print its path: inject
 each output's sticky scale into the profile named by the id, or synthesize a
-side-by-side one when there is none.
+side-by-side one when there is none. It then checks that every output shares an
+EDGE with the rest, with no gap and no overlap, and WARNS on stderr if not; the
+config is still written. This is the first point where the logical sizes are
+known, so a profile captured edge to edge can still fail here once a scale
+changes. Edge-flipping treats an edge as interior only when a neighbour's edge
+sits at exactly the same coordinate, so even a one-pixel gap makes the pointer
+flip the workspace instead of crossing.
 .TP
 .B hwdp capture
 Snapshot the current arrangement (transforms, positions, modes: no scale)
 into a profile named by the id, so a rig is onboarded by arranging it once.
+It REFUSES, writing nothing, when the outputs do not meet edge to edge, and
+names the outputs and the distance.
 .TP
 .B hwdp apply " [" \-q ]
 Fire the

@@ -21,11 +21,26 @@
 #
 # The temp file is made INSIDE $PROFILES so the rename is atomic: across
 # filesystems `mv` degrades to copy-then-delete and stops being.
+#
+# IT REFUSES A LAYOUT WITH A GAP OR AN OVERLAP, writing nothing, because
+# capture is where a gap made by hand would otherwise become permanent. The
+# outputs must share edges exactly, or edge flipping reads a shared inner edge
+# as two outer ones (see layout_faults). `hwdp layout` checks again once the
+# scales are known.
 set -eu
 . "$HWDP_LIB/displayset_lib"
 
 _id=$(hwdp_id)
 [ -n "$_id" ] || { echo "hwdp capture: no outputs to capture" >&2; exit 1; }
+
+_faults=$(live_rects | layout_faults)
+if [ -n "$_faults" ]; then
+  printf '%s\n' "$_faults" | layout_fault_text | sed 's/^/hwdp capture: /' >&2
+  echo "hwdp capture: NOT captured. Arrange the outputs edge to edge (e.g." \
+       "wlr-randr --output <name> --pos X,Y) and capture again." >&2
+  exit 1
+fi
+
 _dst=$PROFILES/$_id.conf
 mkdir -p "$PROFILES"
 

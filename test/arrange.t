@@ -1,18 +1,50 @@
 #!/bin/sh
 # arrange.t - outputs must share edges EXACTLY.
 #
-# One fault, measured in a nested wayfire before it was fixed:
+# Two faults, each measured in a nested wayfire before it was fixed:
 #
 #   1. The compositor TRUNCATES mode/scale (2880 at 1.75 is 1645 wide). The
 #      synthesized layout and `hwdp geometry` ROUNDED (1646), so packed
 #      outputs sat a pixel apart, and edge-flipping's adjacency test is an
 #      exact equality. The synthesized layout also ignored rotation.
+#   2. Nothing checked an AUTHORED layout for gaps, and a 40px gap makes every
+#      edge exterior: the pointer flips the workspace instead of crossing.
 . "$(dirname "$0")/harness_lib"
 harness_init arrange
 
 KA=$HERE/bin/hwdp
 TAB=$(printf '\t')
 mkdir -p "$T/bin" "$T/profiles" "$T/drm"
+
+# --- 1. the detector, pure ----------------------------------------------------
+_faults() {   # <rects, printf format> -> the raw fault records
+  # shellcheck disable=SC2059
+  printf "$1" | HWDP_LIB=$HERE/lib sh -c '. "$HWDP_LIB/displayset_lib"
+    layout_faults'
+}
+_is() {   # <label> <rects> <expected kinds, space separated or empty>
+  _got=$(_faults "$2" | cut -f1 | tr '\n' ' ' | sed 's/ $//')
+  [ "$_got" = "$3" ] || fail "$1: expected '$3', got '$_got'"
+}
+_is "a portrait beside a CENTRED landscape is sound" \
+  'P\t0\t0\t1080\t1920\nL\t1080\t420\t1920\t1080\n' ''
+_is "stacked panels are sound" \
+  'A\t0\t0\t2880\t1800\nB\t0\t1800\t1920\t1080\n' ''
+_is "a chain of three is sound" \
+  'A\t0\t0\t9\t9\nB\t9\t0\t9\t9\nC\t18\t0\t9\t9\n' ''
+_is "one output is sound" 'A\t0\t0\t1920\t1080\n' ''
+_is "a 40px gap is a gap" \
+  'P\t0\t0\t1080\t1920\nL\t1120\t420\t1920\t1080\n' 'gap'
+_is "ONE pixel is a gap" \
+  'A\t0\t0\t9\t9\nB\t9\t0\t9\t9\nC\t19\t0\t9\t9\n' 'gap'
+_is "an overlap is an overlap, and not a gap as well" \
+  'A\t0\t0\t1920\t1080\nB\t1900\t0\t1920\t1080\n' 'overlap'
+_is "meeting at a corner shares no edge" \
+  'A\t0\t0\t9\t9\nB\t9\t9\t9\t9\n' 'corner'
+_g=$(_faults 'P\t0\t0\t1080\t1920\nL\t1120\t420\t1920\t1080\n')
+[ "$_g" = "gap${TAB}L${TAB}P${TAB}40" ] \
+  || fail "the gap record must name both outputs and the distance: '$_g'"
+pass "the edge-to-edge detector"
 
 # --- 2. the logical size truncates, and rotates -------------------------------
 _ls() {   # <w> <h> <transform> <scale> -> "LWxLH"
@@ -108,3 +140,24 @@ _x=$(sed -n 's/.*AW2725Q DDD444" .* position \([0-9]*\),0 .*/\1/p' "$T/out")
 at 1028, got '$_x'"
 pass "the synthesized layout packs exactly, scaled and rotated"
 
+# --- 5. capture refuses a gap, and writes nothing -----------------------------
+if DESK=gap run capture >"$T/cap.out" 2>"$T/cap.err"; then
+  fail "capture accepted a 40px gap"
+fi
+[ -e "$T/profiles/$_id.conf" ] && fail "a refused capture still wrote a profile"
+grep -q 'DP-1 does not touch eDP-1: 40px' "$T/cap.err" \
+  || fail "the refusal must name both outputs and the gap: $(cat "$T/cap.err")"
+pass "capture refuses a gap, says where, and writes nothing"
+
+# --- 7. layout WARNS on a gapped authored profile, and still writes it --------
+cat > "$T/profiles/$_id.conf" <<EOF
+profile hwdp-$_id {
+    output "Acme Corp LAPTOP SN0001" mode 2880x1800@60.000Hz position 0,0
+    output "Dell Inc. AW2725Q DDD444" mode 3840x2160@60.000Hz position 1700,0
+}
+EOF
+run layout >/dev/null 2>"$T/layout.err" || fail "layout must not refuse a gap"
+grep -q 'WARNING: .*AW2725Q DDD444 does not touch .*LAPTOP SN0001: 55px' \
+  "$T/layout.err" || fail "no gap warning: $(cat "$T/layout.err")"
+[ -s "$T/out" ] || fail "a gapped profile must still produce a config"
+pass "layout warns on a gap the injected scale opened, and still writes"
