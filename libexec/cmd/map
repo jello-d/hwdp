@@ -148,9 +148,9 @@ _faults=$(live_rects | layout_faults | layout_fault_text)
   }'
 
 printf '\nshape  %s\n' "${_shape:-(none)}"
+# shellcheck disable=SC2016  # the backticks below are literal, for the reader
 case $_srf_rc in
   0) [ -n "$_srf" ] || printf 'surfaces  none for this desk\n' ;;
-  # shellcheck disable=SC2016  # the backticks are literal, for the reader
   2) printf 'surfaces  BROKEN, not drawn: run `hwdp surfaces --check`\n' ;;
   *) printf 'surfaces  unavailable (hwdp surfaces exit %s)\n' "$_srf_rc" ;;
 esac
