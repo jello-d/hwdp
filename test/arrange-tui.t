@@ -43,6 +43,13 @@ class FakeHw:
         self.ident = on
         self.calls.append(("identify", on))
         return on
+    surf = ([], "")
+    def surfaces(self, desk):
+        return self.surf
+    def write_surfaces(self, surfaces):
+        self.calls.append(("write", [x.key() for x in surfaces]))
+        return self.rc.get("write", 0), "said no" if self.rc.get("write") \
+            else ""
 
 def desk():
     """A 4K portrait (DP-1, rotated) with a 4K landscape right of it."""
@@ -172,6 +179,69 @@ a, (p, l), hw = app()
 a.key(ord("s"), 0); a.key(9, 0); a.key(ord("s"), 0)
 check("s, select, s swaps", (l.x, p.x) == (0, 3840) and a.mark is None,
       (l.x, p.x))
+
+# --- naming surfaces ---------------------------------------------------------
+def typed(a, text):
+    for ch in text:
+        a.key(ord(ch), 0)
+
+a, (p, l), hw = app()
+a.key(ord("n"), 0)
+check("n opens the naming form", a.dialog[0] == "name")
+a.key(curses.KEY_RIGHT, 0); a.key(curses.KEY_RIGHT, 0)   # full>top>bottom
+a.key(9, 0); a.key(curses.KEY_RIGHT, 0)                   # column 1
+a.key(9, 0); a.key(9, 0)                                  # to the name
+typed(a, "comms"); a.key(10, 0)
+check("the form adds a surface", [x.key() for x in a.surfaces]
+      == [("comms", "DP-1", "bottom", 1, 0)], [x.key() for x in a.surfaces])
+check("a new surface makes the desk unsaved", a.dirty())
+a.key(ord("n"), 0)
+a.key(9, 0); a.key(curses.KEY_RIGHT, 0); a.key(9, 0); a.key(9, 0)
+typed(a, "comms"); a.key(10, 0)
+check("a name used twice is refused in the form",
+      a.dialog and "taken" in a.form["err"], a.form)
+a.key(curses.KEY_BACKSPACE, 0); typed(a, "x"); a.key(10, 0)
+check("all of a monitor over its bottom half is refused",
+      a.dialog and "taken" in a.form["err"], a.form)
+a.key(27, 0)
+a.key(ord("n"), 0); a.key(curses.KEY_RIGHT, 0)            # top
+a.key(9, 0); a.key(curses.KEY_RIGHT, 0); a.key(9, 0); a.key(9, 0)
+typed(a, "mail"); a.key(10, 0)
+check("the opposite half in the same cell is fine", len(a.surfaces) == 2,
+      a.form)
+a.key(ord("d"), 0); a.key(ord("1"), 0)
+check("d then a number removes that surface",
+      [x.name for x in a.surfaces] == ["mail"], [x.name for x in a.surfaces])
+a.key(10, 0); a.key(ord("s"), 0)
+check("saving writes the surfaces, and not an unchanged layout",
+      a.done and hw.last()[0] == "write"
+      and not any(c[0] is None for c in hw.calls), hw.calls)
+
+a, (p, l), hw = app()
+hw.rc["write"] = 2
+a.key(ord("n"), 0); a.key(9, 0); a.key(9, 0); a.key(9, 0)
+typed(a, "x"); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
+check("a refused surfaces write stays and says so", not a.done
+      and a.msg.startswith("surfaces not saved"), a.msg)
+
+d, outs, hw = desk()
+hw.surf = (None, "a broken line")
+a = tui.App(d, hw)
+a.key(ord("n"), 0)
+check("a file hwdp refuses is not edited on top of",
+      a.dialog is None and "cannot be edited" in a.msg, a.msg)
+
+# The region comes back from `hwdp surfaces`' rect, against the output size.
+r = tui.Hwdp()
+r._run = lambda *a, **k: (0, "t DP-1 0 0 0 0 2160 1920\n"
+                              "b DP-1 1 0 0 1920 2160 1920\n"
+                              "f DP-2 0 0 0 0 3840 2160\n"
+                              "rt DP-2 2 0 1920 0 1920 2160\n", "")
+got, _ = r.surfaces(desk()[0])
+check("regions are read back from the rects",
+      [(x.name, x.region, x.cx) for x in got] ==
+      [("t", "top", 0), ("b", "bottom", 1), ("f", "full", 0),
+       ("rt", "right", 2)], [(x.name, x.region) for x in got])
 
 print("\n".join(fails) if fails else "ALL-OK")
 PY

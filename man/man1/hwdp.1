@@ -202,13 +202,20 @@ nothing snaps back,
 locking it and Esc undoing it;
 .B o
 switches it off or back on;
+.B n
+names a surface on it (a part, a workspace cell, a name) in a small form, and
+.B d
+removes one;
 .B i
 toggles a label on every monitor (see
 .BR "hwdp identify" ),
 always taken down when the tool exits;
 .B p
 previews live with a countdown that reverts unless kept; Enter offers save
-and exit, save and continue, or cancel; q or Esc with unsaved changes asks
+and exit, save and continue, or cancel, and saves the layout and then the
+surfaces (through
+.BR "hwdp surfaces \-\-write" );
+q or Esc with unsaved changes asks
 first, and reverts a kept preview. It needs python3 (curses), and saves
 through the scripted form above.
 .TP
@@ -268,6 +275,15 @@ on stderr. Needs a session (exit 3 without one).
 .B \-\-check
 describes each surface in words and notes a panel name that matches nothing
 attached, and a switched-on panel no surface uses.
+.B \-\-write
+REPLACES the file from
+.I "surface <name> <connector> cell <x> <y> [region]"
+lines on stdin, the one writer of it: connectors are resolved to EDID names
+then and there, lines for a panel that is not switched on now are KEPT (a
+tool sees only the panels in front of it), the result is validated first and
+refused whole (exit 2) if broken, and the old file is kept under
+.IR ~/.local/state/hwdp/surfaces ,
+never beside it.
 .TP
 .BR "hwdp map" " [" \-\-width
 .IR N ]

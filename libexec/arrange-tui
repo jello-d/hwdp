@@ -275,6 +275,35 @@ class Hwdp:
         rc, out, err = self._run(*(argv + list(placements)))
         return rc, (err.strip().splitlines() or [""])[-1]
 
+    def surfaces(self, desk):
+        """This desk's surfaces as the tool edits them, or (None, why) when
+        the file cannot be read safely. Read through `hwdp surfaces`, the
+        published answer, never by parsing the file."""
+        rc, out, err = self._run(os.path.join(self.libexec, "cmd",
+                                              "surfaces"))
+        if rc != 0:
+            return None, (err.strip().splitlines() or ["exit %d" % rc])[-1]
+        size = {o.conn: (o.w, o.h) for o in desk.outs}
+        found = []
+        for line in out.splitlines():
+            f = line.split()
+            name, conn, cx, cy, x, y, w, h = f[0], f[1], *map(int, f[2:])
+            W, H = size.get(conn, (w, h))
+            region = ("full" if (w, h) == (W, H) else
+                      ("top" if y == 0 else "bottom") if h < H else
+                      ("left" if x == 0 else "right"))
+            found.append(Surface(name, conn, region, cx, cy))
+        return found, ""
+
+    def write_surfaces(self, surfaces):
+        lines = "".join("surface %s %s cell %d %d %s\n"
+                        % (s.name, s.conn, s.cx, s.cy, s.region)
+                        for s in surfaces)
+        rc, out, err = self._run(os.path.join(self.libexec, "cmd",
+                                              "surfaces"), "--write",
+                                 stdin=lines)
+        return rc, (err.strip().splitlines() or [""])[-1]
+
     def identify(self, on):
         if on and self.overlay is None:
             self.overlay = subprocess.Popen(
@@ -290,6 +319,37 @@ class Hwdp:
                 self.overlay.kill()
             self.overlay = None
         return self.overlay is not None
+
+
+# --- surfaces: named parts of a monitor --------------------------------------
+
+REGIONS = ("full", "top", "bottom", "left", "right")
+
+
+class Surface:
+    def __init__(self, name, conn, region, cx, cy):
+        self.name, self.conn, self.region = name, conn, region
+        self.cx, self.cy = cx, cy
+
+    def key(self):
+        return (self.name, self.conn, self.region, self.cx, self.cy)
+
+
+def clashes(a, b):
+    """The same part of one monitor in one cell; opposite halves do not.
+    The writer decides; this only answers the form at once."""
+    if (a.conn, a.cx, a.cy) != (b.conn, b.cx, b.cy):
+        return False
+    pair = {a.region, b.region}
+    return not (pair == {"top", "bottom"} or pair == {"left", "right"})
+
+
+def region_rect(region, w, h):
+    """Where a region sits inside a w x h output (halves, as hwdp does)."""
+    return {"full": (0, 0, w, h), "top": (0, 0, w, h // 2),
+            "bottom": (0, h // 2, w, h - h // 2),
+            "left": (0, 0, w // 2, h),
+            "right": (w // 2, 0, w - w // 2, h)}[region]
 
 
 # --- the controller: what a key means ---------------------------------------
@@ -318,13 +378,27 @@ class App:
         self.msg = ""
         self.ident = False
         self.done = False
+        self.form = None          # the naming form, while it is up
+        surf, why = hw.surfaces(desk)
+        # A file `hwdp surfaces` refuses is NOT edited on top of: rewriting
+        # it from what the tool could read would drop what it could not.
+        self.names_blocked = why if surf is None else ""
+        self.surfaces = surf or []
+        self.saved_surfaces = self._surface_keys()
 
     @property
     def cur(self):
         return self.desk.outs[self.sel]
 
+    def _surface_keys(self):
+        return sorted(x.key() for x in self.surfaces)
+
     def dirty(self):
-        return self.desk.placements() != self.saved or self.live_unsaved
+        return (self.desk.placements() != self.saved or self.live_unsaved
+                or self._surface_keys() != self.saved_surfaces)
+
+    def on_cur(self):
+        return [x for x in self.surfaces if x.conn == self.cur.conn]
 
     # Dialogs first: while one is up, it owns the keyboard.
     def key(self, k, now):
@@ -337,7 +411,8 @@ class App:
         action = {ord("r"): self._rotate, ord("s"): self._swap,
                   ord("m"): self._move_mode, ord("o"): self._toggle_on,
                   ord("i"): self._identify, ord("p"): self._preview,
-                  ord("q"): self._quit}.get(k)
+                  ord("q"): self._quit, ord("n"): self._name,
+                  ord("d"): self._delete}.get(k)
         if action:
             return action(now)
         if k in ENTER:
@@ -448,15 +523,80 @@ class App:
         self.msg = why
 
     def _save(self, now, then_exit):
-        rc, why = self.hw.arrange(None, self.desk.placements())
+        """The layout, then the surfaces; done only if both landed."""
         self.dialog = None
-        if rc != 0:
-            self.msg = why or "not saved (%d)" % rc
-            return
-        self.saved = self.desk.placements()
-        self.live_unsaved = False
+        if self.desk.placements() != self.saved or self.live_unsaved:
+            rc, why = self.hw.arrange(None, self.desk.placements())
+            if rc != 0:
+                self.msg = why or "not saved (%d)" % rc
+                return
+            self.saved = self.desk.placements()
+            self.live_unsaved = False
+        if self._surface_keys() != self.saved_surfaces:
+            rc, why = self.hw.write_surfaces(self.surfaces)
+            if rc != 0:
+                self.msg = "surfaces not saved: " + (why or "exit %d" % rc)
+                return
+            self.saved_surfaces = self._surface_keys()
         self.msg = "saved"
         self.done = then_exit
+
+    # --- naming ---------------------------------------------------------
+    def _name(self, now):
+        if self.names_blocked:
+            self.msg = ("surfaces cannot be edited: " + self.names_blocked +
+                        " (see hwdp surfaces --check)")
+        elif not self.cur.on:
+            self.msg = "%s is off" % self.cur.conn
+        else:
+            self.form = {"field": 0, "region": 0, "cx": 0, "cy": 0,
+                         "name": "", "err": ""}
+            self.dialog = ("name", None)
+
+    def _form_key(self, k):
+        f = self.form
+        if k == ESC:
+            self.form, self.dialog = None, None
+        elif k in ENTER:
+            self._form_add()
+        elif k in (9, curses.KEY_DOWN):
+            f["field"] = (f["field"] + 1) % 4
+        elif k in (curses.KEY_BTAB, curses.KEY_UP):
+            f["field"] = (f["field"] - 1) % 4
+        elif k in (curses.KEY_LEFT, curses.KEY_RIGHT) and f["field"] < 3:
+            d = 1 if k == curses.KEY_RIGHT else -1
+            if f["field"] == 0:
+                f["region"] = (f["region"] + d) % len(REGIONS)
+            else:
+                c = "cx" if f["field"] == 1 else "cy"
+                f[c] = max(0, f[c] + d)
+        elif f["field"] == 3 and k in (curses.KEY_BACKSPACE, 127, 8):
+            f["name"] = f["name"][:-1]
+        elif f["field"] == 3 and 0 < k < 256 and \
+                (chr(k).isalnum() or chr(k) in "_-"):
+            f["name"] += chr(k)
+
+    def _form_add(self):
+        f = self.form
+        new = Surface(f["name"], self.cur.conn, REGIONS[f["region"]],
+                      f["cx"], f["cy"])
+        if not new.name:
+            f["err"] = "give it a name"
+        elif any(x.name == new.name for x in self.surfaces):
+            f["err"] = "the name %s is taken" % new.name
+        elif any(clashes(new, x) for x in self.surfaces):
+            f["err"] = "that part of %s in that cell is taken" % new.conn
+        else:
+            self.surfaces.append(new)
+            self.form, self.dialog = None, None
+            self.msg = "surface %s: %s of %s, cell %d %d" % (
+                new.name, new.region, new.conn, new.cx, new.cy)
+
+    def _delete(self, now):
+        if not self.on_cur():
+            self.msg = "no surfaces on %s" % self.cur.conn
+        else:
+            self.dialog = ("delete", None)
 
     def _quit(self, now):
         if self.dirty():
@@ -478,6 +618,18 @@ class App:
 
     def _dialog_key(self, k, now):
         kind = self.dialog[0]
+        if kind == "name":
+            return self._form_key(k)
+        if kind == "delete":
+            mine = self.on_cur()
+            if k == ESC:
+                self.dialog = None
+            elif ord("1") <= k <= ord("9") and k - ord("1") < len(mine):
+                gone = mine[k - ord("1")]
+                self.surfaces.remove(gone)
+                self.dialog = None
+                self.msg = "surface %s removed" % gone.name
+            return
         if kind == "save":
             if k == ord("s"):
                 self._save(now, True)
@@ -506,7 +658,7 @@ class App:
 # --- the view: drawing only --------------------------------------------------
 
 HELP = ("Tab/arrows select  r rotate  s swap  m move  o off/on  i identify"
-        "  p preview  Enter save  q quit")
+        "  n name  d delete  p preview  Enter save  q quit")
 
 
 def put(scr, y, x, text, attr=0):
@@ -548,11 +700,52 @@ def draw_desk(scr, app, top, rows, cols):
                                   "at %d,%d" % (o.x, o.y))):
             if i + 1 < h - 1:
                 put(scr, y0 + 1 + i, x0 + 2, line[:w - 4], attr)
+        draw_surfaces(scr, app, o, x0, y0, w, h, attr)
+
+
+def draw_surfaces(scr, app, o, x0, y0, w, h, attr):
+    """Each surface in its half: dots split top/bottom, colons left/right
+    (as `hwdp map` draws them), its name and cell in the corner."""
+    used = {}
+    for sf in (x for x in app.surfaces if x.conn == o.conn):
+        rx, ry, rw, rh = region_rect(sf.region, w, h)
+        if sf.region in ("top", "bottom"):
+            put(scr, y0 + h // 2, x0 + 1, "." * (w - 2), attr)
+        elif sf.region in ("left", "right"):
+            for r in range(1, h - 1):
+                put(scr, y0 + r, x0 + w // 2, ":", attr)
+        row = y0 + ry + (4 if ry == 0 else 1)
+        row += used.get((rx, ry), 0)
+        used[(rx, ry)] = used.get((rx, ry), 0) + 1
+        if row < y0 + h - 1:
+            put(scr, row, x0 + rx + 2, ("%s %d,%d" % (sf.name, sf.cx, sf.cy))
+                [:max(0, rw - 3)], attr | curses.A_UNDERLINE)
+
+
+def form_lines(app):
+    f = app.form
+    mark = ["  "] * 4
+    mark[f["field"]] = "> "
+    return ["Name a surface on %s" % app.cur.conn, "",
+            mark[0] + "part   < %s >" % REGIONS[f["region"]],
+            mark[1] + "column < %d >" % f["cx"],
+            mark[2] + "row    < %d >" % f["cy"],
+            mark[3] + "name   " + f["name"] + "_", "",
+            f["err"] or "Tab next  arrows change  Enter add  Esc cancel"]
 
 
 def draw_dialog(scr, app, now):
     kind, deadline = app.dialog
-    text = {
+    if kind == "name":
+        text = form_lines(app)
+    elif kind == "delete":
+        text = (["Remove which surface on %s?" % app.cur.conn, ""] +
+                ["%d  %s (%s, cell %d %d)" % (i + 1, x.name, x.region,
+                                              x.cx, x.cy)
+                 for i, x in enumerate(app.on_cur()[:9])] +
+                ["", "Esc  keep them all"])
+    else:
+        text = {
         "save": ["Save this layout?", "",
                  "s  save and exit", "c  save and continue",
                  "Esc  cancel"],
@@ -563,6 +756,10 @@ def draw_dialog(scr, app, now):
                  "reverting in %ds" % max(0, int(deadline - now + 0.99))
                  if deadline else ""],
     }[kind]
+    box(scr, text)
+
+
+def box(scr, text):
     h, w = scr.getmaxyx()
     bw = max(len(t) for t in text) + 6
     y0, x0 = max(0, (h - len(text) - 2) // 2), max(0, (w - bw) // 2)
