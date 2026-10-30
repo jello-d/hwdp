@@ -149,3 +149,43 @@ _rc=$?
 [ "$_rc" -eq 3 ] || fail "no session: exit $_rc, expected 3"
 grep -q 'need a session' "$T/err" || fail "no session: $(cat "$T/err")"
 pass "without a session it says so (exit 3)"
+
+# --- --write: the one writer of the file --------------------------------------
+# Connectors in, EDID names out; lines for a panel that is not switched on now
+# survive; the old file goes to the STATE dir; a broken result is refused
+# whole with the file untouched; no temp dir is left behind.
+wr() {
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+    WAYLAND_DISPLAY="${WL-wayland-test}" \
+    HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \
+    HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" \
+    LAPTOP_ON="${LAPTOP_ON:-yes}" sh "$KA" surfaces --write
+}
+rm -f "$F"
+printf 'surface comms DP-1 cell 0 0 bottom\nsurface code DP-2 cell 1 0\n' \
+  | wr >/dev/null || fail "--write refused valid lines"
+grep -qx 'surface comms "Dell PORTRAIT SN2" cell 0 0 bottom' "$F" \
+  || fail "--write must name the panel by EDID: $(cat "$F")"
+_o=$(run 2>/dev/null)
+[ "$(_line comms)" = "comms DP-1 0 0 0 1920 2160 1920" ] \
+  || fail "the written file does not resolve: $(_line comms)"
+printf 'surface away "Nope ELSEWHERE SN8" cell 3 3 top\n' >> "$F"
+printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null \
+  || fail "a rewrite failed"
+grep -q '^surface away "Nope ELSEWHERE SN8" cell 3 3 top$' "$F" \
+  || fail "a panel not switched on lost its surface in a rewrite"
+grep -q comms "$F" && fail "a rewrite must REPLACE the switched-on panels"
+[ -f "$T/home/.local/state/hwdp/surfaces/$_id.conf.bak" ] \
+  || fail "the old file must be kept in the state dir"
+_before=$(cksum < "$F")
+if printf 'surface a DP-2 cell 0 0\nsurface b DP-2 cell 0 0 top\n' \
+    | wr >/dev/null 2>"$T/err"; then fail "--write accepted a clash"
+else _rc=$?; fi
+[ "$_rc" -eq 2 ] && [ "$(cksum < "$F")" = "$_before" ] \
+  || fail "a broken result must be exit 2 and leave the file alone"
+grep -q 'NOT written' "$T/err" || fail "the refusal must say so"
+if printf 'surface a DP-9 cell 0 0\n' | wr >/dev/null 2>&1; then
+  fail "--write accepted an unknown output"
+fi
+ls -A "$T/surf" | grep -q '^\.write' && fail "a temp dir was left behind"
+pass "--write: resolves, keeps the unseen, backs up, refuses whole"

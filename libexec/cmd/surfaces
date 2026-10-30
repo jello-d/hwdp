@@ -10,6 +10,7 @@
 # WS_X WS_Y is the workspace cell the surface is meant for, passed through.
 #
 #   --check   validate the file and report, in words, instead of resolving
+#   --write   replace this desk's file from lines on stdin (see write_file)
 #
 # A SURFACE IS A NAME FOR "THIS PANEL, THIS PART OF IT, THIS CELL", authored
 # per desk in $HWDP_SURFACES/<hwdp-id>.conf (default ~/.config/hwdp/surfaces):
@@ -47,17 +48,103 @@ MODE=emit
 case "${1:-}" in
   '') ;;
   --check) MODE=check ;;
+  --write) MODE='write' ;;
   -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
   *) echo "hwdp surfaces: unexpected argument '$1'" >&2; exit 2 ;;
 esac
 
 SURF=${HWDP_SURFACES:-${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwdp/surfaces}
+
+# write_file: REPLACE this desk's surfaces from lines on stdin,
+#   surface <name> <connector | "EDID name"> cell <x> <y> [region]
+# the ONE writer of the file, so the layout tool never edits it as text.
+#   - a connector is resolved to its EDID name NOW, as `arrange` does: the
+#     file keys panels by name, because connectors move between ports;
+#   - lines already in the file for a panel that is NOT switched on now are
+#     KEPT: a tool sees only the panels in front of it, and rewriting the
+#     file must not silently drop a surface it could not see;
+#   - the result is validated by this same command before it replaces
+#     anything, and refused whole (exit 2) if broken;
+#   - the old file is kept as a .bak in the state dir, never beside it (the
+#     surfaces dir may be recorded whole, as muster captures profiles).
+write_file() {
+  if ! _live=$(probe_layout); then
+    echo "hwdp surfaces: writing needs a session (to resolve connectors)" >&2
+    return 3
+  fi
+  mkdir -p "$SURF"
+  _wd=$(mktemp -d "$SURF/.write.XXXXXX") || _wd=
+  case $_wd in
+    "$SURF"/.write.?*) [ -d "$_wd" ] ;;
+    *) false ;;
+  esac || { echo "hwdp surfaces: no temp dir in $SURF" >&2; return 1; }
+  _wq="'$_wd'"
+  # shellcheck disable=SC2064  # the literal path, baked in when armed
+  trap "rm -rf $_wq" EXIT INT TERM
+
+  # connector -> EDID name, for the outputs switched on now.
+  printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" \
+    '$1 != "" && $12 == 1 { print $2, $1 }' > "$_wd/names"
+  # The given lines, connectors resolved; refused whole on any bad line.
+  awk -F"$TAB" '
+    NR == FNR { N[$1] = $2; next }
+    /^[ \t]*(#|$)/ { next }
+    {
+      line = $0; sub(/^[ \t]+/, "", line)
+      if (line !~ /^surface[ \t]/) {
+        print "hwdp surfaces: --write: not a surface line: " $0 \
+          > "/dev/stderr"; bad = 1; next
+      }
+      rest = line; sub(/^surface[ \t]+[^ \t]+[ \t]+/, "", rest)
+      if (rest ~ /^"/) { print line; next }
+      conn = rest; sub(/[ \t].*/, "", conn); sub(/^[^ \t]+/, "", rest)
+      if (!(conn in N)) {
+        print "hwdp surfaces: --write: no switched-on output named `" \
+          conn "`" > "/dev/stderr"; bad = 1; next
+      }
+      nm = line; sub(/^surface[ \t]+/, "", nm); sub(/[ \t].*/, "", nm)
+      print "surface " nm " \"" N[conn] "\"" rest
+    }
+    END { if (bad) exit 2 }' "$_wd/names" - > "$_wd/given" || return 2
+  # Lines for panels NOT switched on now survive the rewrite untouched.
+  : > "$_wd/kept"
+  if [ -f "$_file" ]; then
+    awk -F"$TAB" 'NR == FNR { ON[$2] = 1; next }
+      match($0, /^[ \t]*surface[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
+        p = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", p)
+        sub(/"$/, "", p); if (!(p in ON)) print
+      }' "$_wd/names" "$_file" > "$_wd/kept"
+  fi
+  { echo "# this desk's surfaces, written by hwdp surfaces --write:"
+    echo "#   surface <name> \"<EDID name>\" cell <x> <y> [region]"
+    echo "#   region: top bottom left right full (halves; default full)"
+    cat "$_wd/given" "$_wd/kept"
+  } > "$_wd/$_id.conf"
+  # Validated by this same command, against the candidate, before anything
+  # is replaced.
+  if ! HWDP_SURFACES=$_wd "$0" >/dev/null 2>"$_wd/err"; then
+    sed 's/^/  /' "$_wd/err" >&2
+    echo "hwdp surfaces: --write: NOT written, the result would be broken" >&2
+    return 2
+  fi
+  if [ -f "$_file" ] && ! cmp -s "$_wd/$_id.conf" "$_file"; then
+    _bk=${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/surfaces
+    mkdir -p "$_bk"
+    cp -p "$_file" "$_bk/$_id.conf.bak"
+  fi
+  mv "$_wd/$_id.conf" "$_file"
+  printf '%s\n' "$_file"
+}
 _id=$(hwdp_id)
 if [ -z "$_id" ]; then
   [ "$MODE" = check ] && echo "hwdp surfaces: no displays attached"
   exit 0
 fi
 _file=$SURF/$_id.conf
+if [ "$MODE" = write ]; then
+  write_file
+  exit $?
+fi
 if [ ! -f "$_file" ]; then
   [ "$MODE" = check ] && echo "no surfaces for this desk ($_file)"
   exit 0
