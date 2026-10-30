@@ -58,7 +58,7 @@ _apply() {
   return 1
 }
 
-MODE=write
+MODE='write'
 case "${1:-}" in
   --dry-run)     MODE=dry; shift ;;
   --preview)     MODE=preview; shift ;;
