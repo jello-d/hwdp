@@ -1,0 +1,650 @@
+#!/usr/bin/env python3
+"""hwdp arrange, interactively: lay out this desk by moving boxes around.
+
+`hwdp arrange` with no placements, at a terminal, lands here. ONE layout on
+screen, the live one, edited in place:
+
+    Tab / arrows  select a monitor          r  rotate it a quarter turn
+    s             swap (mark, then swap)    o  switch it off / back on
+    m             move mode: arrows slide it along its neighbours in coarse
+                  steps, shift+arrow one pixel; m locks it, Esc undoes
+    i             a label on every monitor, saying which one it is
+    p             preview live, with a countdown that reverts unless kept
+    Enter         save (and exit, or keep going)       q / Esc  quit
+
+THIS FILE ONLY DRAWS AND DECIDES WHAT A KEY MEANS. The arithmetic is hwdp's:
+sizes come from `hwdp geometry` (a quarter turn just swaps them), re-packing
+after a rotate or a swap is the shell's layout_repack, and saving and
+previewing go through `hwdp arrange`, whose edge check is the final word.
+The one thing duplicated here is the touch/overlap test, because move mode
+asks it of many candidate positions per keystroke; it only GUIDES a move.
+"""
+import curses
+import os
+import subprocess
+import sys
+import time
+
+QUARTER = ("normal", "90", "180", "270")
+ROTATED = ("90", "270", "flipped-90", "flipped-270")
+PREVIEW_SECONDS = 15
+
+
+def here():
+    """The package's own dirs, from the dispatcher's environment or our own
+    path (a checkout run directly)."""
+    root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    return (os.environ.get("HWDP_LIBEXEC", os.path.join(root, "libexec")),
+            os.environ.get("HWDP_LIB", os.path.join(root, "lib")))
+
+
+# --- the model ---------------------------------------------------------------
+
+class Output:
+    def __init__(self, conn, transform, x, y, lw, lh):
+        self.conn = conn
+        self.transform = transform
+        self.x, self.y = x, y
+        self.on = True
+        # The UNROTATED logical size: a quarter turn swaps it, exactly,
+        # because the compositor's truncation applies to each axis alone.
+        if transform in ROTATED:
+            self.bw, self.bh = lh, lw
+        else:
+            self.bw, self.bh = lw, lh
+
+    @property
+    def w(self):
+        return self.bh if self.transform in ROTATED else self.bw
+
+    @property
+    def h(self):
+        return self.bw if self.transform in ROTATED else self.bh
+
+    def rect(self):
+        return (self.x, self.y, self.w, self.h)
+
+    def token(self):
+        kind = "B" if self.conn.startswith(("eDP", "LVDS", "DSI")) else "E"
+        return kind + ("P" if self.h > self.w else "L")
+
+    def degrees(self):
+        t = self.transform.replace("flipped-", "")
+        return "0" if t == "normal" else t
+
+
+def span(a1, a2, b1, b2):
+    """Overlap length of two ranges; 0 means they meet, below 0 apart."""
+    return min(a2, b2) - max(a1, b1)
+
+
+def overlaps(a, b):
+    return (span(a[0], a[0] + a[2], b[0], b[0] + b[2]) > 0 and
+            span(a[1], a[1] + a[3], b[1], b[1] + b[3]) > 0)
+
+
+def touches(a, b):
+    """Share an EDGE (not just a corner), the layout_faults rule."""
+    ox = span(a[0], a[0] + a[2], b[0], b[0] + b[2])
+    oy = span(a[1], a[1] + a[3], b[1], b[1] + b[3])
+    return (ox == 0 and oy > 0) or (oy == 0 and ox > 0)
+
+
+class Desk:
+    def __init__(self, outputs, repack):
+        self.outs = outputs
+        self.repack = repack            # (old rects, new sizes) -> positions
+
+    def on(self):
+        return [o for o in self.outs if o.on]
+
+    def normalise(self):
+        on = self.on()
+        if not on:
+            return
+        mx = min(o.x for o in on)
+        my = min(o.y for o in on)
+        for o in on:
+            o.x -= mx
+            o.y -= my
+
+    def _relay(self, old):
+        """Re-place every output at its CURRENT size, keeping the topology
+        the OLD rects describe (layout_repack)."""
+        new = {o.conn: (o.w, o.h) for o in self.on()}
+        pos = self.repack(old, new)
+        for o in self.on():
+            if o.conn in pos:
+                o.x, o.y = pos[o.conn]
+        self.normalise()
+
+    def rotate(self, o):
+        old = {p.conn: p.rect() for p in self.on()}
+        base = o.transform.replace("flipped-", "")
+        i = QUARTER.index(base) if base in QUARTER else 0
+        o.transform = QUARTER[(i + 1) % 4]
+        self._relay(old)
+
+    def swap(self, a, b):
+        """Exchange the PLACES of two outputs, then re-pack at their own
+        sizes, so a portrait and a landscape can trade sides."""
+        old = {p.conn: p.rect() for p in self.on()}
+        old[a.conn], old[b.conn] = old[b.conn], old[a.conn]
+        self._relay(old)
+
+    def faults(self):
+        """True when the outputs that are on do not form one edge-joined,
+        non-overlapping surface. A guide; `hwdp arrange` decides."""
+        on = [o.rect() for o in self.on()]
+        for i in range(len(on)):
+            for j in range(i + 1, len(on)):
+                if overlaps(on[i], on[j]):
+                    return True
+        seen, todo = {0}, [0]
+        while todo:
+            i = todo.pop()
+            for j in range(len(on)):
+                if j not in seen and touches(on[i], on[j]):
+                    seen.add(j)
+                    todo.append(j)
+        return len(seen) != len(on)
+
+    def placements(self):
+        lines = []
+        for o in self.outs:
+            if o.on:
+                lines.append("%s rotate %s at %d,%d"
+                             % (o.conn, o.degrees(), o.x, o.y))
+            else:
+                lines.append("%s off" % o.conn)
+        return lines
+
+
+# --- move mode ---------------------------------------------------------------
+
+def valid_spots(mover, others):
+    """Every position along every other output's edges where the mover
+    touches it, as (along-axis range) generators: (side, fixed, lo, hi)."""
+    w, h = mover.w, mover.h
+    for n in others:
+        nx, ny, nw, nh = n.rect()
+        yield ("x", nx + nw, ny - h + 1, ny + nh - 1)     # right of n
+        yield ("x", nx - w, ny - h + 1, ny + nh - 1)      # left of n
+        yield ("y", ny + nh, nx - w + 1, nx + nw - 1)     # below n
+        yield ("y", ny - h, nx - w + 1, nx + nw - 1)      # above n
+
+
+def nearest_valid(mover, others, cx, cy):
+    """The touching, non-overlapping position nearest (cx, cy)."""
+    best = None
+    for axis, fixed, lo, hi in valid_spots(mover, others):
+        if axis == "x":
+            x, y = fixed, min(max(cy, lo), hi)
+        else:
+            x, y = min(max(cx, lo), hi), fixed
+        r = (x, y, mover.w, mover.h)
+        if any(overlaps(r, n.rect()) for n in others):
+            continue
+        d = (x - cx) ** 2 + (y - cy) ** 2
+        if best is None or d < best[0]:
+            best = (d, x, y)
+    return None if best is None else best[1:]
+
+
+def step(desk, mover, dx, dy):
+    """Move one step. A step that stays touching and clear is taken. One
+    INTO a neighbour jumps to that neighbour's far side when there is room
+    there (how a monitor gets past another). One that leaves it touching
+    nothing snaps back to the nearest touching position."""
+    others = [o for o in desk.on() if o is not mover]
+    if not others:
+        return
+    cx, cy = mover.x + dx, mover.y + dy
+    cand = (cx, cy, mover.w, mover.h)
+    hit = [n for n in others if overlaps(cand, n.rect())]
+    if hit:
+        n = hit[0]
+        if dx:
+            cx = n.x - mover.w if dx < 0 else n.x + n.w
+        else:
+            cy = n.y - mover.h if dy < 0 else n.y + n.h
+        cand = (cx, cy, mover.w, mover.h)
+    if any(overlaps(cand, n.rect()) for n in others) or \
+            not any(touches(cand, n.rect()) for n in others):
+        spot = nearest_valid(mover, others, cx, cy)
+        if spot is None:
+            return
+        cx, cy = spot
+    mover.x, mover.y = cx, cy
+    desk.normalise()
+
+
+# --- talking to hwdp ---------------------------------------------------------
+
+class Hwdp:
+    """Every call out of this tool, in one place, so a test replaces it."""
+
+    def __init__(self):
+        self.libexec, self.lib = here()
+        self.overlay = None
+
+    def _run(self, *argv, stdin=None):
+        # The package's dirs go to every child explicitly: displayset_lib
+        # refuses to load without HWDP_LIB, and only the dispatcher exports
+        # it, so a tool started any other way could not re-pack at all.
+        env = dict(os.environ, HWDP_LIB=self.lib, HWDP_LIBEXEC=self.libexec)
+        p = subprocess.run(argv, input=stdin, capture_output=True,
+                           text=True, env=env)
+        return p.returncode, p.stdout, p.stderr
+
+    def geometry(self):
+        rc, out, err = self._run(os.path.join(self.libexec, "cmd",
+                                              "geometry"), "--now")
+        if rc != 0 or not out.strip():
+            raise SystemExit("hwdp arrange: no outputs to arrange (it needs"
+                             " a session)\n" + err)
+        outs = []
+        for line in out.splitlines():
+            f = line.split()
+            outs.append(Output(f[0], f[3], int(f[5]), int(f[6]),
+                               int(f[7]), int(f[8])))
+        return outs
+
+    def repack(self, old, new):
+        lines = ["old\t%s\t%d\t%d\t%d\t%d" % ((n,) + r)
+                 for n, r in old.items()]
+        lines += ["new\t%s\t%d\t%d" % ((n,) + s) for n, s in new.items()]
+        rc, out, err = self._run(
+            "sh", "-c", '. "$1/displayset_lib"; layout_repack', "_",
+            self.lib, stdin="\n".join(lines) + "\n")
+        # LOUD: an empty answer here once meant "nothing moves", which left
+        # a rotated monitor overlapping its neighbour with no word said.
+        if rc != 0 or not out.strip():
+            raise RuntimeError("hwdp arrange: layout_repack failed (%d): %s"
+                               % (rc, err.strip()))
+        pos = {}
+        for line in out.splitlines():
+            n, x, y = line.split("\t")
+            pos[n] = (int(x), int(y))
+        return pos
+
+    def arrange(self, mode, placements):
+        argv = [os.path.join(self.libexec, "cmd", "arrange")]
+        if mode:
+            argv.append(mode)
+        rc, out, err = self._run(*(argv + list(placements)))
+        return rc, (err.strip().splitlines() or [""])[-1]
+
+    def identify(self, on):
+        if on and self.overlay is None:
+            self.overlay = subprocess.Popen(
+                [os.path.join(self.libexec, "cmd", "identify"),
+                 "--parent", str(os.getpid())],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        elif not on and self.overlay is not None:
+            self.overlay.terminate()
+            try:
+                self.overlay.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.overlay.kill()
+            self.overlay = None
+        return self.overlay is not None
+
+
+# --- the controller: what a key means ---------------------------------------
+
+ARROWS = {curses.KEY_LEFT: (-1, 0), curses.KEY_RIGHT: (1, 0),
+          curses.KEY_UP: (0, -1), curses.KEY_DOWN: (0, 1),
+          ord("h"): (-1, 0), ord("l"): (1, 0),
+          ord("k"): (0, -1), ord("j"): (0, 1)}
+FINE = {curses.KEY_SLEFT: (-1, 0), curses.KEY_SRIGHT: (1, 0),
+        curses.KEY_SR: (0, -1), curses.KEY_SF: (0, 1),
+        ord("H"): (-1, 0), ord("L"): (1, 0),
+        ord("K"): (0, -1), ord("J"): (0, 1)}
+ESC = 27
+ENTER = (10, 13, curses.KEY_ENTER)
+
+
+class App:
+    def __init__(self, desk, hw):
+        self.desk, self.hw = desk, hw
+        self.sel = 0
+        self.mark = None          # the output marked for a swap
+        self.moving = None        # (output, x, y) it started the move at
+        self.saved = desk.placements()
+        self.live_unsaved = False  # a preview was KEPT but not saved
+        self.dialog = None        # ("save"|"quit"|"keep", deadline)
+        self.msg = ""
+        self.ident = False
+        self.done = False
+
+    @property
+    def cur(self):
+        return self.desk.outs[self.sel]
+
+    def dirty(self):
+        return self.desk.placements() != self.saved or self.live_unsaved
+
+    # Dialogs first: while one is up, it owns the keyboard.
+    def key(self, k, now):
+        if self.dialog:
+            return self._dialog_key(k, now)
+        if self.moving and (k in ARROWS or k in FINE):
+            return self._move(k)
+        if k in ARROWS or k in (9, curses.KEY_BTAB):
+            return self._select(k)
+        action = {ord("r"): self._rotate, ord("s"): self._swap,
+                  ord("m"): self._move_mode, ord("o"): self._toggle_on,
+                  ord("i"): self._identify, ord("p"): self._preview,
+                  ord("q"): self._quit}.get(k)
+        if action:
+            return action(now)
+        if k in ENTER:
+            self.dialog = ("save", None)
+        elif k == ESC:
+            return self._escape(now)
+
+    def tick(self, now):
+        if self.dialog and self.dialog[0] == "keep" and now >= self.dialog[1]:
+            self._revert("no answer: reverted")
+
+    def _select(self, k):
+        n = len(self.desk.outs)
+        if k == 9:
+            self.sel = (self.sel + 1) % n
+            return
+        if k == curses.KEY_BTAB:
+            self.sel = (self.sel - 1) % n
+            return
+        dx, dy = ARROWS[k]
+        c = self.cur
+        cx, cy = c.x + c.w / 2, c.y + c.h / 2
+        best = None
+        for i, o in enumerate(self.desk.outs):
+            if o is c or not o.on:
+                continue
+            ox, oy = o.x + o.w / 2 - cx, o.y + o.h / 2 - cy
+            ahead = ox * dx + oy * dy
+            if ahead <= 0:
+                continue
+            d = ahead + 2 * abs(ox * dy + oy * dx)
+            if best is None or d < best[0]:
+                best = (d, i)
+        if best:
+            self.sel = best[1]
+
+    def _rotate(self, now):
+        if self.cur.on:
+            self.desk.rotate(self.cur)
+            self.msg = "%s rotated" % self.cur.conn
+
+    def _swap(self, now):
+        c = self.cur
+        if not c.on:
+            self.msg = "%s is off" % c.conn
+        elif self.mark is None or self.mark is c:
+            self.mark = None if self.mark is c else c
+            self.msg = ("%s marked: select another and press s"
+                        % c.conn) if self.mark else ""
+        else:
+            self.desk.swap(self.mark, c)
+            self.msg = "swapped %s and %s" % (self.mark.conn, c.conn)
+            self.mark = None
+
+    def _move_mode(self, now):
+        c = self.cur
+        if self.moving:
+            self.moving = None
+            self.msg = "%s locked at %d,%d" % (c.conn, c.x, c.y)
+        elif c.on:
+            self.moving = (c, c.x, c.y)
+            self.msg = ("moving %s: arrows step, shift+arrow one pixel,"
+                        " m locks, Esc undoes" % c.conn)
+
+    def _move(self, k):
+        o = self.moving[0]
+        if k in FINE:
+            dx, dy = FINE[k]
+        else:
+            dx, dy = ARROWS[k]
+            dx *= max(1, round(o.w / 8))
+            dy *= max(1, round(o.h / 8))
+        step(self.desk, o, dx, dy)
+
+    def _toggle_on(self, now):
+        c = self.cur
+        if c.on and len(self.desk.on()) == 1:
+            self.msg = "the last monitor on cannot be switched off"
+            return
+        c.on = not c.on
+        if c.on:
+            spot = nearest_valid(c, [o for o in self.desk.on()
+                                     if o is not c], c.x, c.y)
+            if spot:
+                c.x, c.y = spot
+        self.desk.normalise()
+        self.msg = "%s switched %s" % (c.conn, "on" if c.on else "off")
+
+    def _identify(self, now):
+        self.ident = self.hw.identify(not self.ident)
+        if not self.ident:
+            self.msg = "labels off"
+
+    def _preview(self, now):
+        if self.desk.faults():
+            self.msg = "the monitors must meet edge to edge first"
+            return
+        rc, why = self.hw.arrange("--preview", self.desk.placements())
+        if rc == 0:
+            self.dialog = ("keep", now + PREVIEW_SECONDS)
+        else:
+            self.msg = why or "preview failed (%d)" % rc
+
+    def _revert(self, why):
+        self.hw.arrange("--revert", [])
+        self.live_unsaved = False
+        self.dialog = None
+        self.msg = why
+
+    def _save(self, now, then_exit):
+        rc, why = self.hw.arrange(None, self.desk.placements())
+        self.dialog = None
+        if rc != 0:
+            self.msg = why or "not saved (%d)" % rc
+            return
+        self.saved = self.desk.placements()
+        self.live_unsaved = False
+        self.msg = "saved"
+        self.done = then_exit
+
+    def _quit(self, now):
+        if self.dirty():
+            self.dialog = ("quit", None)
+        else:
+            self.done = True
+
+    def _escape(self, now):
+        if self.moving:
+            o, x, y = self.moving
+            o.x, o.y = x, y
+            self.moving = None
+            self.desk.normalise()
+            self.msg = "move undone"
+        elif self.mark:
+            self.mark, self.msg = None, ""
+        else:
+            self._quit(now)
+
+    def _dialog_key(self, k, now):
+        kind = self.dialog[0]
+        if kind == "save":
+            if k == ord("s"):
+                self._save(now, True)
+            elif k == ord("c"):
+                self._save(now, False)
+            elif k in (ESC, ord("n")):
+                self.dialog = None
+        elif kind == "quit":
+            if k in (ord("q"), ord("y")):
+                if self.live_unsaved:
+                    self.hw.arrange("--revert", [])
+                self.done = True
+            elif k == ord("s"):
+                self._save(now, True)
+            elif k in (ESC, ord("n")):
+                self.dialog = None
+        elif kind == "keep":
+            if k in (ord("y"), ord("k")) or k in ENTER:
+                self.live_unsaved = True
+                self.dialog = None
+                self.msg = "kept live; Enter saves it"
+            elif k in (ESC, ord("n")):
+                self._revert("reverted")
+
+
+# --- the view: drawing only --------------------------------------------------
+
+HELP = ("Tab/arrows select  r rotate  s swap  m move  o off/on  i identify"
+        "  p preview  Enter save  q quit")
+
+
+def put(scr, y, x, text, attr=0):
+    h, w = scr.getmaxyx()
+    if 0 <= y < h and x < w:
+        try:
+            scr.addstr(y, max(0, x), text[:max(0, w - x - 1)], attr)
+        except curses.error:
+            pass
+
+
+def draw_desk(scr, app, top, rows, cols):
+    on = app.desk.on()
+    if not on:
+        return
+    mx = min(o.x for o in on)
+    my = min(o.y for o in on)
+    bw = max(o.x + o.w for o in on) - mx
+    bh = max(o.y + o.h for o in on) - my
+    sc = min((cols - 2) / bw, (rows - 2) * 2 / bh)
+    for o in on:
+        x0 = int((o.x - mx) * sc) + 1
+        y0 = int((o.y - my) * sc / 2) + top
+        w = max(4, int(o.w * sc))
+        h = max(3, int(o.h * sc / 2))
+        attr = curses.color_pair(0)
+        if app.moving and app.moving[0] is o:
+            attr = curses.color_pair(3) | curses.A_BOLD
+        elif app.mark is o:
+            attr = curses.color_pair(2) | curses.A_BOLD
+        elif app.cur is o:
+            attr = curses.color_pair(1) | curses.A_BOLD
+        put(scr, y0, x0, "+" + "-" * (w - 2) + "+", attr)
+        for r in range(1, h - 1):
+            put(scr, y0 + r, x0, "|" + " " * (w - 2) + "|", attr)
+        put(scr, y0 + h - 1, x0, "+" + "-" * (w - 2) + "+", attr)
+        for i, line in enumerate(("%s %s" % (o.conn, o.token()),
+                                  "%dx%d" % (o.w, o.h),
+                                  "at %d,%d" % (o.x, o.y))):
+            if i + 1 < h - 1:
+                put(scr, y0 + 1 + i, x0 + 2, line[:w - 4], attr)
+
+
+def draw_dialog(scr, app, now):
+    kind, deadline = app.dialog
+    text = {
+        "save": ["Save this layout?", "",
+                 "s  save and exit", "c  save and continue",
+                 "Esc  cancel"],
+        "quit": ["Changes have not been saved.", "",
+                 "q  quit anyway", "s  save and exit", "Esc  go back"],
+        "keep": ["Keep this setting?", "",
+                 "y  keep it (Enter saves it later)", "n  revert now",
+                 "reverting in %ds" % max(0, int(deadline - now + 0.99))
+                 if deadline else ""],
+    }[kind]
+    h, w = scr.getmaxyx()
+    bw = max(len(t) for t in text) + 6
+    y0, x0 = max(0, (h - len(text) - 2) // 2), max(0, (w - bw) // 2)
+    attr = curses.color_pair(4) | curses.A_BOLD
+    put(scr, y0, x0, "+" + "-" * (bw - 2) + "+", attr)
+    for i, t in enumerate(text):
+        put(scr, y0 + 1 + i, x0, "|  " + t.ljust(bw - 5) + "|", attr)
+    put(scr, y0 + len(text) + 1, x0, "+" + "-" * (bw - 2) + "+", attr)
+
+
+def render(scr, app, now):
+    scr.erase()
+    h, w = scr.getmaxyx()
+    state = "MOVE" if app.moving else ("swap: pick the other" if app.mark
+                                      else "select")
+    put(scr, 0, 1, "hwdp arrange  [%s]%s%s" % (
+        state, "  labels on" if app.ident else "",
+        "  (unsaved)" if app.dirty() else ""), curses.A_BOLD)
+    draw_desk(scr, app, 2, h - 6, w - 1)
+    off = [o.conn for o in app.desk.outs if not o.on]
+    if off:
+        put(scr, h - 4, 1, "off: " + "  ".join(off),
+            curses.color_pair(1) if not app.cur.on else 0)
+    if app.desk.faults():
+        put(scr, h - 3, 1, "the monitors do not meet edge to edge",
+            curses.color_pair(4) | curses.A_BOLD)
+    put(scr, h - 2, 1, app.msg)
+    put(scr, h - 1, 1, HELP, curses.A_DIM)
+    if app.dialog:
+        draw_dialog(scr, app, now)
+    scr.refresh()
+
+
+def run(scr, app):
+    curses.curs_set(0)
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
+    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_GREEN)
+    curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_RED)
+    scr.keypad(True)
+    scr.timeout(250)
+    while not app.done:
+        now = time.monotonic()
+        render(scr, app, now)
+        k = scr.getch()
+        if k == -1:
+            app.tick(time.monotonic())
+        else:
+            app.key(k, time.monotonic())
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.split("\n\n")[1])
+        return 0
+    if len(argv) > 1:
+        print("hwdp arrange: the interactive tool takes no arguments",
+              file=sys.stderr)
+        return 2
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print("hwdp arrange: the interactive tool needs a terminal; give"
+              " placements to script it", file=sys.stderr)
+        return 2
+    os.environ.setdefault("ESCDELAY", "25")
+    hw = Hwdp()
+    app = App(Desk(hw.geometry(), hw.repack), hw)
+
+    def leave(*_):
+        raise SystemExit(130)
+    import signal
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, leave)
+    # The overlay goes whatever ends this: a quit, an exception, a signal.
+    # (A SIGKILL cannot run this; the overlay watches our pid for that.)
+    try:
+        curses.wrapper(run, app)
+    finally:
+        hw.identify(False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -178,6 +178,38 @@ supervisor; with none running it says so instead of starting one. Refusals
 2 and write nothing.
 .B \-\-dry\-run
 prints the placements and the profile, and writes nothing.
+.B \-\-preview
+applies them LIVE without saving anything, and
+.B \-\-revert
+puts back what is saved (both exit 5 with no supervisor running).
+.IP
+WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE layout tool: the
+live layout drawn as boxes, edited in place. Tab or the arrows select a
+monitor;
+.B r
+rotates it a quarter turn (its neighbours re-pack to its new edge);
+.B s
+marks it and
+.B s
+on another swaps their places;
+.B m
+enters move mode, where the arrows slide it along its neighbours in steps of
+an eighth of its size and shift+arrow by one pixel, a step into a neighbour
+jumps to that neighbour's far side, and one that would leave it touching
+nothing snaps back,
+.B m
+locking it and Esc undoing it;
+.B o
+switches it off or back on;
+.B i
+toggles a label on every monitor (see
+.BR "hwdp identify" ),
+always taken down when the tool exits;
+.B p
+previews live with a countdown that reverts unless kept; Enter offers save
+and exit, save and continue, or cancel; q or Esc with unsaved changes asks
+first, and reverts a kept preview. It needs python3 (curses), and saves
+through the scripted form above.
 .TP
 .BR "hwdp identify" " [" \-\-seconds
 .IR N "] [" \-\-parent

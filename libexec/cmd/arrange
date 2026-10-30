@@ -8,6 +8,10 @@
 #   <out> [rotate R] at X,Y                       an exact position
 #   <out> off
 #
+#   hwdp arrange                  (at a terminal) the interactive layout tool
+#   hwdp arrange --preview ...    apply live WITHOUT saving
+#   hwdp arrange --revert         put back what is saved
+#
 #   hwdp arrange 'DP-1 rotate 90' 'DP-2 right-of DP-1 align bottom' \
 #                'eDP-1 below DP-2 align center'
 #
@@ -41,11 +45,40 @@
 set -eu
 . "$HWDP_LIB/displayset_lib"
 
-DRY=0
+# Regenerate the runtime config (from the saved profile, or from TEMPLATE
+# when one is set) and nudge the supervisor, which reloads kanshi. Never
+# START one from here: that is the session's to do. 0 if it went live.
+_apply() {
+  "$HWDP_LIBEXEC/cmd/layout" >/dev/null
+  _lock=${XDG_RUNTIME_DIR:-/tmp}/hwdp/watch.lock
+  if [ -e "$_lock" ] && ! ( flock -n 9 ) 9>"$_lock" 2>/dev/null; then
+    "$HWDP_LIBEXEC/cmd/watch" >/dev/null 2>&1 || :
+    return 0
+  fi
+  return 1
+}
+
+MODE=write
 case "${1:-}" in
-  --dry-run) DRY=1; shift ;;
+  --dry-run)     MODE=dry; shift ;;
+  --preview)     MODE=preview; shift ;;
+  --revert)      MODE=revert; shift ;;
+  --interactive) MODE=tui; shift ;;
   -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
 esac
+
+# With no placements and a person at the keyboard, this is the interactive
+# layout tool; the scripted form below is what it saves through.
+if [ "$MODE" = tui ] || { [ $# -eq 0 ] && [ "$MODE" = write ] && [ -t 0 ]; }
+then
+  exec "$HWDP_LIBEXEC/arrange-tui" "$@"
+fi
+# --revert: put back what is SAVED, after a --preview the person declined.
+if [ "$MODE" = revert ]; then
+  _apply && exit 0
+  echo "hwdp arrange: no supervisor is running to revert through" >&2
+  exit 5
+fi
 if [ $# -gt 0 ]; then
   _pl=$(for _a in "$@"; do printf '%s\n' "$_a"; done)
 else
@@ -198,7 +231,7 @@ if [ -n "$_faults" ]; then
   exit 2
 fi
 
-if [ "$DRY" = 1 ]; then
+if [ "$MODE" = dry ]; then
   printf '%s\n' "$_rec" | awk -F"$TAB" '
     $1 == "on"  { printf "%-30s %5dx%-5d at %d,%d%s\n", $2, $9, $10, $7, $8, \
                     ($6 != "normal") ? "  rotate " $6 : "" }
@@ -206,6 +239,24 @@ if [ "$DRY" = 1 ]; then
   echo
   printf '%s\n' "$_rec" | profile_text "$_id" "arranged by hwdp arrange"
   exit 0
+fi
+
+# --preview: apply the arrangement LIVE without saving it: the profile goes
+# to a temporary template that only this regeneration reads, and nothing
+# under $PROFILES changes and no `mapped` fires. `--revert` undoes it.
+if [ "$MODE" = preview ]; then
+  _rtd=${XDG_RUNTIME_DIR:-/tmp}/hwdp
+  mkdir -p "$_rtd"
+  _ptmp=$(mktemp "$_rtd/.preview.XXXXXX")
+  trap 'rm -f "$_ptmp"' EXIT HUP INT TERM
+  printf '%s\n' "$_rec" | profile_text "$_id" "previewed by hwdp arrange" \
+    > "$_ptmp"
+  if KANSHI_TEMPLATE=$_ptmp _apply; then
+    echo "hwdp arrange: previewing (not saved; --revert puts it back)" >&2
+    exit 0
+  fi
+  echo "hwdp arrange: no supervisor is running to preview through" >&2
+  exit 5
 fi
 
 mkdir -p "$PROFILES"
@@ -222,12 +273,8 @@ HWDP_HOOK_TAG='hwdp arrange'
 . "$HWDP_LIB/hooks_lib"
 run_hooks mapped
 
-# Apply: regenerate the runtime config, then nudge the supervisor, which
-# reloads kanshi. Never START one from here: that is the session's to do.
-"$HWDP_LIBEXEC/cmd/layout" >/dev/null
-_lock=${XDG_RUNTIME_DIR:-/tmp}/hwdp/watch.lock
-if [ -e "$_lock" ] && ! ( flock -n 9 ) 9>"$_lock" 2>/dev/null; then
-  "$HWDP_LIBEXEC/cmd/watch" >/dev/null 2>&1 || :
+# Apply it: regenerate from the profile just written, and nudge.
+if _apply; then
   echo "hwdp arrange: applied (the supervisor reloaded kanshi)" >&2
 else
   echo "hwdp arrange: written, but no supervisor is running to apply it;" \

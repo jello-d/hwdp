@@ -21,7 +21,9 @@ hwdp geometry   one line per enabled output (a stable contract)
 hwdp panels     one line per ATTACHED panel, headless: name w h
 hwdp layout     emit the runtime kanshi config, print its path
 hwdp capture    snapshot the current arrangement into a profile
-hwdp arrange    write and apply a layout from placements (beside, align)
+hwdp arrange    write and apply a layout from placements; with none, at a
+                terminal, the interactive layout tool (rotate, swap, move,
+                preview with a revert countdown, labels on every monitor)
 hwdp surfaces   this desk's named surfaces (panel, half, cell), resolved
 hwdp map        draw this desk in text: outputs, surfaces, problems
 hwdp identify   a bright label on every monitor saying which it is
