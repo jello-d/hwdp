@@ -88,6 +88,10 @@ settle_gen=0
 # a separate process and cannot read our variables.
 kanshi_pidf="$_rt/watch.$$.kanshi"
 
+# The `unmapped` timer's generation token, the same mechanism as the settle's.
+unmapped_token="$_rt/watch.$$.unmapped"
+unmapped_gen=0
+
 # The compositor's Wayland socket. When this vanishes, Wayfire is gone.
 wl_sock="${XDG_RUNTIME_DIR:-/tmp}/${WAYLAND_DISPLAY:-wayland-1}"
 
@@ -223,7 +227,7 @@ cleanup() {
   [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
   # Dropping the token stands down any settle still sleeping; it is detached,
   # so there is nothing of ours left to kill.
-  rm -f "$fifo" "$settle_token" "$kanshi_pidf"
+  rm -f "$fifo" "$settle_token" "$kanshi_pidf" "$unmapped_token"
   exit 0
 }
 trap '' HUP
@@ -299,6 +303,30 @@ start_kanshi() {
   return 1
 }
 
+# schedule_unmapped: fire the `unmapped` edge once the connected set has held
+# still for HWDP_UNMAPPED_SETTLE seconds (default 30) and still has no
+# authored profile. Armed at startup (a login) and on every hotplug, and
+# re-armed by each one, so plugging monitors in one at a time fires it ONCE,
+# for the desk that results. Detached and token-cancelled like the settle,
+# for the same reasons: no zombie, and teardown stands it down by removing
+# the token. Whether a desk NEEDS a profile is `hwdp profile --missing`, so
+# the supervisor and any reminder the integrator sets up agree by
+# construction. Fired again at the next login or hotplug if it is still
+# unmapped: there is no "declined" state, by the user's decision.
+schedule_unmapped() {
+  unmapped_gen=$((unmapped_gen + 1))
+  printf '%s' "$unmapped_gen" >"$unmapped_token"
+  _ug=$unmapped_gen
+  ( ( sleep "${HWDP_UNMAPPED_SETTLE:-30}"
+      [ "$(cat "$unmapped_token" 2>/dev/null)" = "$_ug" ] || exit 0
+      "$HWDP_LIBEXEC/cmd/profile" --missing >/dev/null 2>&1 || exit 0
+      HWDP_ID=$(hwdp_id) || exit 0
+      export HWDP_ID
+      echo "hwdp watch: this desk ($HWDP_ID) has no layout profile;" \
+        "firing unmapped" >&2
+      run_hooks unmapped ) 9>&- & )
+}
+
 # React to the layout coming up via the `pre`/`changed` hooks. The pre pass runs
 # BEFORE kanshi so anything it sets (e.g. "on created" window rules) lands
 # before the autostart apps map their first window; backgrounded so it never
@@ -312,6 +340,7 @@ start_kanshi
 
 wait "$runtime_pid" 2>/dev/null || true
 run_hooks changed
+schedule_unmapped
 
 # Degrade gracefully without inotifywait: kanshi runs, auto-reapply is lost,
 # manual `hwdp watch` (nudge) still works. Still respawn kanshi if it dies, and
@@ -490,7 +519,8 @@ while true; do
       "$KANSHI_MARK") ;;   # restarted just above; not a display change
       "$HOTPLUG_MARK")
         echo "hwdp watch: display set changed, re-generating the layout" >&2
-        schedule_settle relayout ;;
+        schedule_settle relayout
+        schedule_unmapped ;;
       *) schedule_settle ;;
     esac
   done

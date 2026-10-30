@@ -179,6 +179,16 @@ supervisor; with none running it says so instead of starting one. Refusals
 .B \-\-dry\-run
 prints the placements and the profile, and writes nothing.
 .TP
+.BR "hwdp profile" " [" \-\-missing ]
+The authored layout profile for the connected set: its path, exit 0, or exit
+1 when there is none. A desk NEEDS one when
+.B HWDP_MAP_MIN
+(2) or more panels are attached and none names the set; one panel has nothing
+to arrange.
+.B \-\-missing
+answers that as a reminder's recheck wants it: 0 still needed, 1 not, 2 when
+it cannot tell (no displays). Headless.
+.TP
 .BR "hwdp surfaces" " [" \-\-check ]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each:
@@ -220,7 +230,7 @@ Supervise the layout for a session (supervise-or-nudge via
 regenerate the config through
 .BR "hwdp layout" ,
 and re-apply on compositor-config changes. It fires display-change HOOKS from
-.IR <root>/<edge>.d/* " (edges: " pre ", " changed )
+.IR <root>/<edge>.d/* " (edges: " pre ", " changed ", " unmapped ", " mapped )
 so an integrator wires the reactions; it knows nothing of any specific
 compositor tool.
 .PP
@@ -346,6 +356,17 @@ and/or
 directory whose executables are tried in filename order; the first to exit 0
 with output wins, and one that cannot answer in this environment exits
 non-zero and is skipped.
+.TP
+.B HWDP_UNMAPPED_SETTLE
+Seconds the connected set must hold still before
+.B hwdp watch
+fires
+.B unmapped
+(default 30). Each hotplug restarts it, so monitors plugged in one at a time
+are announced once, for the desk that results.
+.TP
+.B HWDP_MAP_MIN
+How many attached panels make a desk need a profile (default 2).
 .TP
 .B HWDP_SURFACES
 The directory holding the surface files (default

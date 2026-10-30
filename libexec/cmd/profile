@@ -1,0 +1,48 @@
+#!/bin/sh
+# hwdp profile: the authored layout profile for the connected set.
+#
+#   hwdp profile             print its path; exit 0 if there is one, 1 if not
+#   hwdp profile --missing   exit 0 if this desk still NEEDS one, 1 if it has
+#                            one (or needs none), 2 if it cannot tell
+#
+# A desk NEEDS a profile when HWDP_MAP_MIN or more panels are ATTACHED (default
+# 2) and no profile names this set. One panel has nothing to arrange, so a
+# laptop alone, or one monitor, never needs one. Attached, not enabled, and
+# answered HEADLESS: the set is the one `hwdp id` names, and the question is
+# asked from timers and login scripts that may have no compositor.
+#
+# --missing speaks the "still needed?" convention a reminder can re-run to
+# clear itself: 0 still needed, 1 resolved, 2 or more indeterminate (no
+# displays at all, which is no evidence either way). The integrator decides
+# what to remind with; hwdp only answers.
+set -eu
+. "$HWDP_LIB/displayset_lib"
+
+MISSING=0
+case "${1:-}" in
+  '') ;;
+  --missing) MISSING=1 ;;
+  -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+  *) echo "hwdp profile: unexpected argument '$1'" >&2; exit 2 ;;
+esac
+
+_id=$(hwdp_id)
+if [ -z "$_id" ]; then
+  [ "$MISSING" = 1 ] && exit 2
+  echo "hwdp profile: no displays attached" >&2
+  exit 1
+fi
+_p=$PROFILES/$_id.conf
+
+if [ "$MISSING" = 1 ]; then
+  [ -s "$_p" ] && exit 1
+  _n=$(probe_panels | grep -c . || true)
+  [ "${_n:-0}" -ge "${HWDP_MAP_MIN:-2}" ] && exit 0
+  exit 1
+fi
+if [ -s "$_p" ]; then
+  printf '%s\n' "$_p"
+  exit 0
+fi
+echo "hwdp profile: none for this desk ($_p)" >&2
+exit 1

@@ -7,7 +7,8 @@
 #   cmd/watch   fires `pre` and `changed` as the display layout comes up and
 #               changes: the normal path, driven by real display events;
 #   cmd/apply   fires `changed` on demand, for a change that produced no
-#               display event at all (see that file for why one is needed).
+#               display event at all (see that file for why one is needed);
+#   cmd/arrange and cmd/capture fire `mapped` when they record a profile.
 #
 # ONE implementation, because two would drift: the reason this is a file rather
 # than a copy in each tool is that the fd-9 rule below is invisible at the call
@@ -18,6 +19,15 @@
 #             window rules can land before autostart apps map their first
 #             window)
 #   changed   fired after kanshi is up AND after every config-change burst
+#   unmapped  fired by `watch` when the connected set has held still for
+#             HWDP_UNMAPPED_SETTLE seconds (30) with no authored profile
+#             though it needs one (`hwdp profile --missing`): at startup,
+#             and after a hotplug. HWDP_ID names the desk. Fired again at the
+#             next login or hotplug while it stays unmapped.
+#   mapped    fired when `hwdp arrange` or `hwdp capture` records a profile
+#             (an unchanged one included). HWDP_ID and HWDP_PROFILE are set.
+#             The pair lets an integrator raise a reminder on one and clear
+#             it on the other; hwdp itself reminds nobody.
 #
 # Hooks live in <root>/<edge>.d/* (executable), machine root first then user,
 # each sorted by name, fail-soft. Hooks are expected IDEMPOTENT: the startup
@@ -78,7 +88,7 @@ run_hooks() {   # <edge>; sets HWDP_HOOK_FAILURES
       if [ ! -x "$_h" ]; then
         HWDP_HOOK_FAILURES=$((HWDP_HOOK_FAILURES + 1))
         echo "${HWDP_HOOK_TAG:-hwdp}: hook $_edge.d/$(basename "$_h") is NOT" \
-             "EXECUTABLE -- it did not run (chmod +x, or rename it with a" \
+             "EXECUTABLE, so it did not run (chmod +x, or rename it with a" \
              "leading dot to disable it deliberately)" >&2
         continue
       fi

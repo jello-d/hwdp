@@ -105,7 +105,11 @@ hwdp ships mechanisms, not policy. An integrator wires the specifics:
   `$HWDP_HOOK_ROOT/<edge>.d/*` (default `~/.config/hwdp/hooks`) and a machine
   root `$HWDP_MACHINE_HOOKS/<edge>.d/*` (default `/etc/hwdp/hooks`), machine
   first then user, fail-soft. Edges: `pre` (before kanshi starts, backgrounded)
-  and `changed` (after kanshi is up and on every config-change burst).
+  and `changed` (after kanshi is up and on every config-change burst);
+  `unmapped` (a desk that needs a layout profile and has none, once the set
+  has held still `HWDP_UNMAPPED_SETTLE` seconds, at login and after a
+  hotplug) and `mapped` (`arrange` or `capture` recorded one), so an
+  integrator can remind on the one and clear the reminder on the other.
 
   `hwdp apply` fires `changed` **on demand**, because every other path into the
   hooks needs a display event and not everything hwdp reports is a function of
