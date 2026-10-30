@@ -11,17 +11,28 @@
 # `current` on a mode line. This is the ONE parser now; the duplicate that used
 # to live in display-geometry is what let the bug be fixed in one place and stay
 # live in the other.
+#
+# A MISSING EDID FIELD IS "Unknown", kanshi's spelling, never wlr-randr's
+# "(null)". The name is what a kanshi profile matches on, and kanshi(5) says a
+# missing make, model or serial "needs to be populated with the string
+# Unknown". wlr-randr prints it as "(null)", and copying that made a name
+# kanshi could never match: on a laptop whose panel has no serial (manifold),
+# kanshi logged "no profile matched" for every config hwdp generated and
+# applied none, unnoticed because one panel at its native mode looks the same
+# either way. Measured in a nested wayfire: "(null) (null) (null)" no match,
+# "Unknown Unknown Unknown" applied.
 set -u
 [ -n "${WAYLAND_DISPLAY:-}" ] || exit 1
 command -v wlr-randr >/dev/null 2>&1 || exit 1
 
 wlr-randr 2>/dev/null | awk '
   BEGIN { OFS = "\t" }
+  function field(v) { return (v == "" || v == "(null)") ? "Unknown" : v }
   function flush(   nm) {
     if (conn == "") return
     nm = ""
     if (make != "" || model != "" || serial != "")
-      nm = make " " model " " serial
+      nm = field(make) " " field(model) " " field(serial)
     print nm, conn, rw, rh, mmw, mmh, rate, tr, sc, px, py, en
   }
   /^[^ \t]/           { flush(); conn = $1

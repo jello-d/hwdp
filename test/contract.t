@@ -53,6 +53,46 @@ _n=$(printf '%s\n' "$_out" | _fields)
 [ "$_n" -eq 12 ] || fail "wlr-randr provider emits $_n fields, the layout \
 record is 12"
 
+# A MISSING EDID field is named "Unknown", as kanshi matches it, never
+# wlr-randr's "(null)": manifold's panel has no serial, and with "(null)" in
+# the name kanshi matched no config hwdp ever generated there.
+mkdir -p "$T/null"
+cat > "$T/null/wlr-randr" <<'EOF'
+#!/bin/sh
+cat <<'OUT'
+eDP-1 "Samsung Display Corp. 0x419F (eDP-1)"
+  Make: Samsung Display Corp.
+  Model: 0x419F
+  Serial: (null)
+  Physical size: 300x190 mm
+  Enabled: yes
+  Modes:
+    2880x1800 px, 120.000000 Hz (preferred, current)
+  Position: 0,0
+  Transform: normal
+  Scale: 1.000000
+WL-1 "Wayland output 1"
+  Make: (null)
+  Model: (null)
+  Serial: (null)
+  Enabled: yes
+  Modes:
+    1280x720 px (current)
+  Position: 2880,0
+  Transform: normal
+  Scale: 1.000000
+OUT
+EOF
+chmod +x "$T/null/wlr-randr"
+_names=$(PATH="$T/null:$PATH" WAYLAND_DISPLAY=wayland-test \
+  "$P/layout/10-wlr-randr" | cut -f1)
+printf '%s\n' "$_names" | grep -qx 'Samsung Display Corp. 0x419F Unknown' \
+  || fail "a missing serial must be named Unknown: $_names"
+printf '%s\n' "$_names" | grep -qx 'Unknown Unknown Unknown' \
+  || fail "all-missing fields must be Unknown Unknown Unknown: $_names"
+printf '%s\n' "$_names" | grep -q '(null)' \
+  && fail "(null) must never reach a name kanshi matches on: $_names"
+
 _out=$(PATH="$T/bin:$PATH" DISPLAY=:0 "$P/layout/20-xrandr")
 [ -n "$_out" ] || fail "the xrandr provider answered nothing"
 _n=$(printf '%s\n' "$_out" | _fields)
