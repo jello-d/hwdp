@@ -151,7 +151,7 @@ _manifest_old=$_lib/.$PKG-installed
 # External runtime deps. HARD (the suite's core needs them) vs SOFT (a feature
 # degrades without them): reported distinctly by check.
 DEPS_HARD="kanshi wlr-randr awk sha256sum"
-DEPS_SOFT="inotifywait gamescope xrandr bc"
+DEPS_SOFT="inotifywait gamescope xrandr bc python3"
 # wallpaper-slicer needs ONE of these, not all of them, which a flat list
 # cannot say, hence its own check below.
 DEPS_IMAGE="magick convert vips"
@@ -680,7 +680,8 @@ do_check() {
   for _d in $DEPS_SOFT; do
     command -v "$_d" >/dev/null 2>&1 && ok "dep $_d present" \
       || warn "dep $_d absent (a feature degrades: inotify=auto-reapply," \
-              "gamescope+bc=run-scaled, xrandr=X11 geometry)"; done
+              "gamescope+bc=run-scaled, xrandr=X11 geometry," \
+              "python3=identify labels and the layout tool)"; done
   # ANY of the three will do, so report the one that would be used rather than
   # warning three times about tools the user deliberately does not have.
   _img=

@@ -1,0 +1,68 @@
+#!/bin/sh
+# hwdp identify: put a label on every switched-on monitor, saying which one
+# it is (connector, shape token, logical size), so a person can match the
+# boxes in `hwdp map` or the layout tool to the glass in front of them.
+#
+#   hwdp identify [--seconds N] [--parent PID]
+#
+# Runs until SIGTERM or SIGINT, N seconds, or PID going away (the layout tool
+# passes its own, so a tool killed outright still takes the labels with it).
+#
+# DRAWING IS A PROVIDER, like the display probes: executables under
+# <root>/identify/, user ($HWDP_PROVIDER_ROOT) then machine then shipped, each
+# answering `probe` (exit 0 if it can run here) and `show`, which reads
+# `X Y W H TEXT` per output on stdin. The first whose probe passes is EXEC'd,
+# so the pid a caller holds is the overlay itself. The shipped one uses GTK
+# layer shell; an integrator with a better way drops in its own.
+set -eu
+. "$HWDP_LIB/probe_lib"
+
+_secs=; _parent=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --seconds) _secs=${2:-}; shift ;;
+    --parent)  _parent=${2:-}; shift ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    *) echo "hwdp identify: unexpected argument '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+for _n in "$_secs" "$_parent"; do
+  case $_n in
+    *[!0-9]*) echo "hwdp identify: --seconds and --parent take numbers" >&2
+              exit 2 ;;
+  esac
+done
+
+if ! _geo=$("$HWDP_LIBEXEC/cmd/geometry" --now 2>/dev/null) \
+   || [ -z "$_geo" ]; then
+  echo "hwdp identify: no outputs to label (it needs a session)" >&2
+  exit 3
+fi
+# NAME MODE_W MODE_H TRANSFORM SCALE POS_X POS_Y LOG_W LOG_H ...
+_labels=$(printf '%s\n' "$_geo" | awk '{
+  k = ($1 ~ /^(eDP|LVDS|DSI)/) ? "B" : "E"
+  printf "%d %d %d %d %s  %s%s  %dx%d\n", $6, $7, $8, $9, $1, k, \
+    ($9 > $8) ? "P" : "L", $8, $9 }')
+
+_rt=${XDG_RUNTIME_DIR:-/tmp}/hwdp
+mkdir -p "$_rt" 2>/dev/null || _rt=${XDG_RUNTIME_DIR:-/tmp}
+for _root in "$HWDP_PROVIDER_ROOT" "$HWDP_MACHINE_PROVIDERS" \
+             "$HWDP_LIBEXEC/providers"; do
+  for _p in "$_root"/identify/*; do
+    [ -f "$_p" ] && [ -x "$_p" ] || continue
+    "$_p" probe >/dev/null 2>&1 || continue
+    # The labels go in on a file already opened and unlinked, so exec keeps
+    # this pid and no temp file is left behind whatever happens next.
+    _tmp=$(mktemp "$_rt/.identify.XXXXXX")
+    printf '%s\n' "$_labels" >"$_tmp"
+    exec 3<"$_tmp"
+    rm -f "$_tmp"
+    # shellcheck disable=SC2093  # ending here is the point: the pid is theirs
+    exec "$_p" show ${_secs:+--seconds "$_secs"} \
+      ${_parent:+--parent "$_parent"} <&3
+  done
+done
+echo "hwdp identify: no identify provider can run here (the shipped one" \
+     "needs python3-gi with GTK 3 and GtkLayerShell)" >&2
+exit 4

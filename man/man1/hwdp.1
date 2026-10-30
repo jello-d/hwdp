@@ -179,6 +179,27 @@ supervisor; with none running it says so instead of starting one. Refusals
 .B \-\-dry\-run
 prints the placements and the profile, and writes nothing.
 .TP
+.BR "hwdp identify" " [" \-\-seconds
+.IR N "] [" \-\-parent
+.IR PID ]
+Put a bright label on every switched-on monitor saying which one it is
+(connector, shape token, logical size), so the boxes in
+.B hwdp map
+or the layout tool can be matched to the glass. Runs until SIGTERM or SIGINT,
+.I N
+seconds, or
+.I PID
+going away. The drawing is a PROVIDER under
+.IR <root>/identify/ ,
+user then machine then shipped, each answering
+.B probe
+and
+.BR show ;
+the first whose probe passes is exec'd, so the caller's pid is the overlay.
+The shipped one uses GTK layer shell (python3-gi with GTK 3 and
+GtkLayerShell): a frameless, click-through window on the overlay layer.
+Exit 3 with no session, 4 when no provider can run.
+.TP
 .BR "hwdp profile" " [" \-\-missing ]
 The authored layout profile for the connected set: its path, exit 0, or exit
 1 when there is none. A desk NEEDS one when

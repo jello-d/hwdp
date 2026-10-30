@@ -18,6 +18,7 @@
 #   hwdp profile    this desk's authored profile; --missing: does it need one
 #   hwdp surfaces   this desk's named surfaces, resolved (--check validates)
 #   hwdp map        draw this desk in text: outputs, surfaces, problems
+#   hwdp identify   label every monitor on its glass (--seconds N)
 #   hwdp watch      supervise the layout; fire display-change hooks
 #   hwdp apply      fire the changed hooks now, so a config change goes live
 #
@@ -68,7 +69,7 @@ esac
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
   id|shape|ui|panels|geometry|layout|capture|watch|apply) ;;
-  surfaces|map|arrange|profile) ;;
+  surfaces|map|arrange|profile|identify) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;

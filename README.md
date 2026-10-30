@@ -24,6 +24,7 @@ hwdp capture    snapshot the current arrangement into a profile
 hwdp arrange    write and apply a layout from placements (beside, align)
 hwdp surfaces   this desk's named surfaces (panel, half, cell), resolved
 hwdp map        draw this desk in text: outputs, surfaces, problems
+hwdp identify   a bright label on every monitor saying which it is
 hwdp watch      supervise the layout; fire display-change hooks
 hwdp apply      fire the changed hooks now, so a config change goes live
 ```

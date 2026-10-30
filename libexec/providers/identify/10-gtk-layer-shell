@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""identify provider: a bright label on every monitor, via GTK layer shell.
+
+    10-gtk-layer-shell probe
+    10-gtk-layer-shell show [--seconds N] [--parent PID]   labels on stdin
+
+`probe` exits 0 when this can run here (python3-gi with GTK 3 and
+GtkLayerShell, and a Wayland session), else non-zero, quickly and quietly,
+so the next provider is tried.
+
+`show` reads one label per line on stdin, `X Y W H TEXT`, the logical rect
+of an output and what to write on it, and puts a frameless, always-on-top,
+click-through window in the top-left corner of the monitor at that rect. A
+monitor that matches no line gets its own model name. It runs until SIGTERM
+or SIGINT, N seconds, or the PARENT process going away: a picker killed with
+SIGKILL cannot run its own cleanup, so the overlay watches for that itself.
+
+Layer shell is the protocol for exactly this (an overlay layer, anchored to
+an output, no compositor-specific code), which is why it is the shipped way.
+"""
+import os
+import signal
+import sys
+
+
+def can_run():
+    """Can this run HERE: the libraries, a compositor that answers, and one
+    that speaks layer shell. A probe that only checked WAYLAND_DISPLAY and the
+    imports said yes with no compositor behind the name, and `show` then
+    failed, so the caller reported a broken provider rather than trying the
+    next one or saying none can run."""
+    wd = os.environ.get("WAYLAND_DISPLAY")
+    if not wd:
+        return False
+    sock = wd if wd.startswith("/") else os.path.join(
+        os.environ.get("XDG_RUNTIME_DIR", ""), wd)
+    if not os.path.exists(sock):
+        return False
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("GtkLayerShell", "0.1")
+        from gi.repository import Gtk, GtkLayerShell
+    except (ImportError, ValueError):
+        return False
+    if not Gtk.init_check(None)[0]:
+        return False
+    return GtkLayerShell.is_supported()
+
+
+def parse_labels(stream):
+    labels = []
+    for line in stream:
+        parts = line.rstrip("\n").split(" ", 4)
+        if len(parts) < 5:
+            continue
+        try:
+            x, y, w, h = (int(p) for p in parts[:4])
+        except ValueError:
+            continue
+        labels.append(((x, y, w, h), parts[4]))
+    return labels
+
+
+CSS = b"""
+window { background-color: #ff2fd6; }
+label { color: #000000; font-size: 40px; font-weight: bold;
+        padding: 18px 30px; }
+"""
+
+
+def show(labels, seconds, parent):
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("GtkLayerShell", "0.1")
+    from gi.repository import Gdk, GLib, Gtk, GtkLayerShell
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    display = Gdk.Display.get_default()
+    windows = []
+    for i in range(display.get_n_monitors()):
+        mon = display.get_monitor(i)
+        g = mon.get_geometry()
+        text = next((t for (r, t) in labels
+                     if r == (g.x, g.y, g.width, g.height)),
+                    mon.get_model() or "monitor %d" % (i + 1))
+        win = Gtk.Window()
+        GtkLayerShell.init_for_window(win)
+        GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+        GtkLayerShell.set_monitor(win, mon)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, True)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.LEFT, True)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.TOP, 40)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, 40)
+        GtkLayerShell.set_keyboard_mode(
+            win, GtkLayerShell.KeyboardMode.NONE)
+        win.add(Gtk.Label(label=text))
+        win.show_all()
+        # Click-through: an empty input region, so the label never eats a
+        # click meant for the window beneath it.
+        import cairo
+        win.input_shape_combine_region(cairo.Region())
+        windows.append(win)
+
+    def stop(*_):
+        Gtk.main_quit()
+        return False
+
+    def parent_alive():
+        if parent and not os.path.exists("/proc/%d" % parent):
+            return stop()
+        return True
+
+    try:  # GLibUnix is the current home; older PyGObject has only GLib's
+        gi.require_version("GLibUnix", "2.0")
+        from gi.repository import GLibUnix
+        add_signal = GLibUnix.signal_add
+    except (ImportError, ValueError, AttributeError):
+        add_signal = GLib.unix_signal_add
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        add_signal(GLib.PRIORITY_DEFAULT, sig, stop)
+    GLib.timeout_add_seconds(1, parent_alive)
+    if seconds:
+        GLib.timeout_add_seconds(seconds, stop)
+    Gtk.main()
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] not in ("probe", "show"):
+        print("usage: %s probe | show [--seconds N] [--parent PID]"
+              % argv[0], file=sys.stderr)
+        return 2
+    if argv[1] == "probe":
+        return 0 if can_run() else 1
+    seconds = parent = 0
+    args = argv[2:]
+    while args:
+        opt = args.pop(0)
+        if opt in ("--seconds", "--parent") and args:
+            val = int(args.pop(0))
+            if opt == "--seconds":
+                seconds = val
+            else:
+                parent = val
+        else:
+            print("identify: unexpected argument %r" % opt, file=sys.stderr)
+            return 2
+    if not can_run():
+        return 1
+    show(parse_labels(sys.stdin), seconds, parent)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
