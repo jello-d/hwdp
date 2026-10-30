@@ -132,7 +132,8 @@ out2=$(run capture)
 [ "$(cksum < "$out")" = "$_sum" ] || fail "an unchanged re-capture rewrote it"
 [ "$(stat -c %Y "$out")" = "$_before" ] \
   || fail "an unchanged re-capture touched the profile"
-[ -e "$out.bak" ] && fail "an unchanged re-capture made a needless backup" || :
+B=$T/home/.local/state/hwdp/profiles/$hwdp.conf.bak
+[ -e "$B" ] && fail "an unchanged re-capture made a needless backup" || :
 
 # When the file DOES differ from what capture would write (a hand edit is the
 # case that matters) the old one is kept and the overwrite is announced.
@@ -142,8 +143,9 @@ printf '# my own notes\n' >> "$out"
 _edited=$(cksum < "$out")
 out3=$(run capture 2>"$T/cap.err") || fail "re-capture over an edit errored"
 [ "$out3" = "$out" ] || fail "re-capture wrote a different path"
-[ -f "$out.bak" ] || fail "capture destroyed a hand-edited profile"
-[ "$(cksum < "$out.bak")" = "$_edited" ] \
+[ -f "$B" ] || fail "capture destroyed a hand-edited profile"
+[ -e "$out.bak" ] && fail "the backup must not sit beside the profile"
+[ "$(cksum < "$B")" = "$_edited" ] \
   || fail "the backup is not the file that was replaced"
 grep -q 'previous profile kept as' "$T/cap.err" \
   || fail "capture overwrote a profile without saying so"
@@ -155,7 +157,7 @@ grep -q "profile hwdp-$hwdp" "$out" || fail "the rewritten profile is malformed"
 # reading the path still gets one clean line.
 [ "$(printf '%s' "$out3" | grep -c .)" -eq 1 ] \
   || fail "capture put more than the path on stdout"
-rm -f "$out.bak"
+rm -f "$B"
 grep -q '^ *output .* scale ' "$out" \
   && fail "captured output line must NOT carry a scale"
 

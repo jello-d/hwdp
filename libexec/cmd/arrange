@@ -38,7 +38,7 @@
 #
 # WRITES the authored profile (the same writer as `hwdp capture`, so the
 # `disable` lines and the rects layout re-places from are identical), keeping
-# the old one as .bak, then regenerates the layout and nudges a running
+# the old one as a .bak in the state dir, then regenerates and nudges a running
 # supervisor so it goes live. With no supervisor running it says so rather
 # than starting one. --dry-run prints the placements and the profile, and
 # writes nothing.

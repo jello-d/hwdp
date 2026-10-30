@@ -16,8 +16,10 @@
 #
 #   unchanged  the file is left ALONE and the path printed (idempotent, so
 #              re-capturing an unchanged rig is a genuine no-op)
-#   changed    the previous file is kept as <id>.conf.bak and the change is
-#              announced on stderr; stdout stays just the path
+#   changed    the previous file is kept as <id>.conf.bak in the state
+#              dir ($XDG_STATE_HOME/hwdp/profiles), never beside it, and
+#              the change is announced on stderr; stdout stays just the
+#              path
 #
 # The temp file is made INSIDE $PROFILES so the rename is atomic: across
 # filesystems `mv` degrades to copy-then-delete and stops being.

@@ -172,7 +172,8 @@ quoted EDID name. CONNECTORS ARE NOT STABLE (a dock or hub renumbers them), so
 the profile written is keyed by EDID name, and a placement list kept to replay
 later should use EDID names too. It writes the same profile
 .B hwdp capture
-does (the old one kept as .bak), regenerates the layout and nudges a running
+does (the old one kept as a .bak under ~/.local/state/hwdp/profiles, never
+beside the profile), regenerates the layout and nudges a running
 supervisor; with none running it says so instead of starting one. Refusals
 (an output left out, two in one space, an unknown name, a bad alignment) exit
 2 and write nothing.

@@ -329,18 +329,26 @@ profile_text() {
 # profile_install <id> <tmp> <tool>: put <tmp> in place as the profile for
 # <id> and print its path. NEVER DESTROYS ONE SILENTLY: an identical profile is
 # left alone (mtime and all, so a re-run is a true no-op); a different one is
-# kept as <id>.conf.bak and the change announced on stderr, so stdout stays
-# the single path line callers parse. <tmp> must live in $PROFILES, so the
-# rename is atomic.
+# kept as $BACKUPS/<id>.conf.bak and the change announced on stderr, so stdout
+# stays the single path line callers parse. <tmp> must live in $PROFILES, so
+# the rename is atomic.
+#
+# THE BACKUP IS STATE, SO IT LIVES IN THE STATE DIR, NOT BESIDE THE PROFILE.
+# An integrator may treat $PROFILES as a directory to RECORD (this fleet's
+# muster captures every new file there into its config repo, then places it
+# on every box), and a .bak beside the profile would be recorded as a layout.
+# Nothing but profiles is ever left in $PROFILES.
+BACKUPS=${HWDP_BACKUPS:-${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/profiles}
 profile_install() {
   _pdst=$PROFILES/$1.conf
   if [ -f "$_pdst" ] && cmp -s "$2" "$_pdst"; then
     rm -f "$2"
   elif [ -f "$_pdst" ]; then
-    cp -p "$_pdst" "$_pdst.bak"
+    mkdir -p "$BACKUPS"
+    cp -p "$_pdst" "$BACKUPS/$1.conf.bak"
     mv "$2" "$_pdst"
     echo "hwdp $3: the arrangement changed; previous profile kept as" \
-      "$_pdst.bak" >&2
+      "$BACKUPS/$1.conf.bak" >&2
   else
     mv "$2" "$_pdst"
   fi

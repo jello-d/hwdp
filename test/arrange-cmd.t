@@ -135,14 +135,20 @@ grep -q 'no supervisor is running' "$T/err" \
   || fail "with no supervisor it must say so: $(cat "$T/err")"
 grep -q 'SN-DP-2" .*position 2160,840 ' "$T/out" \
   || fail "layout did not pick the written profile up: $(cat "$T/out")"
-# An identical re-run is a no-op; a different one keeps a .bak.
+# An identical re-run is a no-op; a different one keeps a .bak, in the STATE
+# dir: the profiles dir may be recorded whole (muster captures it), and a
+# backup there would be recorded as a layout.
+B=$T/home/.local/state/hwdp/profiles/$_id.conf.bak
 _sum=$(cksum < "$P")
 run DP-1 'DP-2 right-of DP-1 align center' 'eDP-1 off' >/dev/null 2>&1
-[ "$(cksum < "$P")" = "$_sum" ] && [ ! -e "$P.bak" ] \
+[ "$(cksum < "$P")" = "$_sum" ] && [ ! -e "$B" ] \
   || fail "an identical arrange must leave the profile alone"
 run DP-1 'DP-2 right-of DP-1 align bottom' 'eDP-1 off' >/dev/null 2>"$T/err"
-[ -e "$P.bak" ] && grep -q 'previous profile kept' "$T/err" \
+[ -e "$B" ] && grep -q 'previous profile kept' "$T/err" \
   || fail "a changed arrange must keep a .bak and say so"
+[ "$(ls -A "$T/profiles")" = "$_id.conf" ] \
+  || fail "only profiles may be left in the profiles dir: $(ls -A \
+"$T/profiles")"
 pass "writes the kind of profile capture does; layout picks it up; .bak"
 
 # --- every refusal is exit 2 and writes NOTHING -------------------------------
