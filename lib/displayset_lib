@@ -270,6 +270,50 @@ panel_count() {
   heads | grep -c . || true
 }
 
+# --- a laptop's own panel, as a ROLE --------------------------------------
+# At a desk (a built-in plus externals, see desk_id) the built-in panel is
+# recorded as "@builtin", never by its EDID name, so the desk's profile and
+# surfaces serve whichever laptop is plugged in. Readers substitute the live
+# built-in for it. Nowhere else is it rewritten: a laptop alone keeps its
+# own panel's name, exactly as before.
+BUILTIN_ROLE='@builtin'
+
+# builtin_name: the EDID name of the built-in panel the compositor lists,
+# switched on or off; empty with none. The first, should there be two.
+builtin_name() {
+  probe_layout | awk -F"$TAB" -v re="$HWDP_BUILTIN_RE" '
+    $2 ~ re && $1 != "" { print $1; exit }'
+}
+
+# docked: 0 when this set is a DESK, a built-in plus externals.
+docked() {
+  [ "$(desk_id)" != "$(hwdp_id)" ]
+}
+
+# desk_names: filter TAB records (`on|off \t name \t ...`, profile_text's
+# input) so the built-in is named by its role when docked; a no-op otherwise.
+desk_names() {
+  if docked && _bn=$(builtin_name) && [ -n "$_bn" ]; then
+    awk -F"$TAB" -v OFS="$TAB" -v b="$_bn" -v r="$BUILTIN_ROLE" \
+      '$2 == b { $2 = r } { print }'
+  else
+    cat
+  fi
+}
+
+# profile_for: the authored profile this desk READS, by path: the desk-id
+# file, else one written under the exact id before desk ids existed; the
+# desk-id path when there is neither (where a writer will put it).
+profile_for() {
+  _pd=$PROFILES/$(desk_id).conf
+  _pe=$PROFILES/$(hwdp_id).conf
+  if [ -s "$_pd" ] || [ ! -s "$_pe" ]; then
+    printf '%s\n' "$_pd"
+  else
+    printf '%s\n' "$_pe"
+  fi
+}
+
 # placed_records: the switched-on outputs as profile_text wants them, from
 # the compositor's live arrangement, plus the switched-off ones. The `on` set
 # is the one outputs() selects (an EDID name and a physical size, so kanshi
@@ -317,10 +361,16 @@ profile_text() {
       for (i = 1; i <= n; i++)
         printf "# hwdp-rect \"%s\" %s %s %s %s\n", NM[i], X[i], Y[i], W[i], H[i]
       printf "profile hwdp-%s {\n", id
+      # The built-in ROLE carries no mode: the mode belongs to whichever
+      # laptop is present, and layout fills it in from the live one.
       for (i = 1; i <= n; i++)
-        printf "    output \"%s\" mode %sx%s@%.3fHz%s position %s,%s\n", \
-          NM[i], MW[i], MH[i], RATE[i], \
-          (TR[i] != "normal") ? " transform " TR[i] : "", X[i], Y[i]
+        if (NM[i] == "@builtin")
+          printf "    output \"%s\" position %s,%s%s\n", NM[i], X[i], Y[i], \
+            (TR[i] != "normal") ? " transform " TR[i] : ""
+        else
+          printf "    output \"%s\" mode %sx%s@%.3fHz%s position %s,%s\n", \
+            NM[i], MW[i], MH[i], RATE[i], \
+            (TR[i] != "normal") ? " transform " TR[i] : "", X[i], Y[i]
       for (i = 1; i <= f; i++) printf "    output \"%s\" disable\n", OFF[i]
       print "}"
     }'
@@ -375,9 +425,9 @@ profile_install() {
 # the same as a portrait one. The grid, the workspace names and the wallpaper
 # are functions of what KIND of desk this is, which the count could not say.
 shape() {
-  heads | awk -F"$TAB" '
+  heads | awk -F"$TAB" -v re="$HWDP_BUILTIN_RE" '
     {
-      k = ($1 ~ /^(eDP|LVDS|DSI)/) ? "B" : "E"
+      k = ($1 ~ re) ? "B" : "E"
       t[++n] = k (($3 + 0 > $2 + 0) ? "P" : "L")
     }
     END {

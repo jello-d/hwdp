@@ -17,7 +17,7 @@ compositor, and hardcodes no downstream tool: everything session-specific
 is a HOOK or a PROVIDER an integrator fills.
 .SH COMMANDS
 .TP
-.B hwdp id " [--panels]"
+.B hwdp id " [--panels | --desk]"
 The display-profile id for the connected monitor set: a compound hash over the
 connected connectors' EDIDs, so it names the SET regardless of order or which
 connector each panel sits on. Empty with nothing connected. Resolves HEADLESS.
@@ -33,6 +33,21 @@ actually about. A panel id is TRUNCATED, so no set id can be rebuilt from
 panel ids and neither granularity can be derived from the other. Two
 identical panels share an EDID and therefore a panel id, which is a property
 of EDID rather than of this projection.
+.IP
+.B --desk
+is the id a DESK is filed by. Where a laptop's own panel (an eDP, LVDS or DSI
+connector) sits with external monitors, it counts as a ROLE rather than as
+that panel, so another laptop plugged into the same monitors gets the same
+desk id. Anywhere else it equals the plain id: a laptop alone keeps its
+panel-specific id, and a wall of externals has no built-in to abstract. A
+desk's layout profile and surfaces are filed under it, the built-in written
+as
+.B @builtin
+with no mode;
+.B hwdp layout
+fills in whichever laptop is present, its name and native mode, and
+re-places the desk for that panel's size. A profile filed under the plain id
+before desk ids existed is still read when there is no desk-id one.
 .TP
 .B hwdp shape
 The workspace SHAPE: what KIND of desk is attached. One token per display,

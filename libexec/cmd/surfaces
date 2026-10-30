@@ -82,9 +82,11 @@ write_file() {
   # shellcheck disable=SC2064  # the literal path, baked in when armed
   trap "rm -rf $_wq" EXIT INT TERM
 
-  # connector -> EDID name, for the outputs switched on now.
-  printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" \
-    '$1 != "" && $12 == 1 { print $2, $1 }' > "$_wd/names"
+  # connector -> EDID name, for the outputs switched on now; at a desk the
+  # built-in by its ROLE, so the file serves whichever laptop is docked.
+  printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" -v b="$_bn" \
+    '$1 != "" && $12 == 1 { print $2, ($1 == b) ? "@builtin" : $1 }' \
+    > "$_wd/names"
   # The given lines, connectors resolved; refused whole on any bad line.
   awk -F"$TAB" '
     NR == FNR { N[$1] = $2; next }
@@ -119,7 +121,7 @@ write_file() {
     echo "#   surface <name> \"<EDID name>\" cell <x> <y> [region]"
     echo "#   region: top bottom left right full (halves; default full)"
     cat "$_wd/given" "$_wd/kept"
-  } > "$_wd/$_id.conf"
+  } > "$_wd/$_desk.conf"
   # Validated by this same command, against the candidate, before anything
   # is replaced.
   if ! HWDP_SURFACES=$_wd "$0" >/dev/null 2>"$_wd/err"; then
@@ -127,20 +129,27 @@ write_file() {
     echo "hwdp surfaces: --write: NOT written, the result would be broken" >&2
     return 2
   fi
-  if [ -f "$_file" ] && ! cmp -s "$_wd/$_id.conf" "$_file"; then
+  if [ -f "$_file" ] && ! cmp -s "$_wd/$_desk.conf" "$_file"; then
     _bk=${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/surfaces
     mkdir -p "$_bk"
-    cp -p "$_file" "$_bk/$_id.conf.bak"
+    cp -p "$_file" "$_bk/$_desk.conf.bak"
   fi
-  mv "$_wd/$_id.conf" "$_file"
-  printf '%s\n' "$_file"
+  mv "$_wd/$_desk.conf" "$SURF/$_desk.conf"
+  printf '%s\n' "$SURF/$_desk.conf"
 }
 _id=$(hwdp_id)
 if [ -z "$_id" ]; then
   [ "$MODE" = check ] && echo "hwdp surfaces: no displays attached"
   exit 0
 fi
-_file=$SURF/$_id.conf
+# Filed under the DESK id (see desk_id); one written under the exact id before
+# desk ids existed is still read when the desk-id file is absent. At a desk
+# the built-in panel is named by its role, @builtin, resolved to whichever
+# laptop is docked now.
+_desk=$(desk_id)
+_file=$SURF/$_desk.conf
+[ -f "$_file" ] || [ ! -f "$SURF/$_id.conf" ] || _file=$SURF/$_id.conf
+_bn=; docked && _bn=$(builtin_name)
 if [ "$MODE" = write ]; then
   write_file
   exit $?
@@ -158,7 +167,7 @@ fi
 
 # The live table first (TAB records, as probe_layout gives them), then the
 # file, parsed by hand because a panel name is quoted and holds spaces.
-printf '%s\n' "$_live" | awk -v mode="$MODE" -v file="$_file" \
+printf '%s\n' "$_live" | awk -v mode="$MODE" -v file="$_file" -v bn="$_bn" \
   "$HWDP_AWK_LOGICAL"'
   function err(m) { E[++ne] = file ":" FNR ": " m }
   function note(m) { O[++no] = m }
@@ -182,10 +191,14 @@ printf '%s\n' "$_live" | awk -v mode="$MODE" -v file="$_file" \
   FILENAME == "-" {
     split($0, f, "\t")
     if (f[1] == "") next
-    ATT[f[1]] = 1
-    if (f[12] == 1 && f[3] + 0 > 0) {
-      ON[f[1]] = f[2]; lsize(f[3], f[4], f[8], f[9])
-      LWD[f[1]] = LW; LHT[f[1]] = LH
+    # At a desk the built-in answers to its role as well as its name.
+    na = (bn != "" && f[1] == bn) ? 2 : 1; AL[1] = f[1]; AL[2] = "@builtin"
+    for (q = 1; q <= na; q++) {
+      ATT[AL[q]] = 1
+      if (f[12] == 1 && f[3] + 0 > 0) {
+        ON[AL[q]] = f[2]; lsize(f[3], f[4], f[8], f[9])
+        LWD[AL[q]] = LW; LHT[AL[q]] = LH
+      }
     }
     next
   }
@@ -252,7 +265,7 @@ printf '%s\n' "$_live" | awk -v mode="$MODE" -v file="$_file" \
           RW, RH, RX, RY, SX[i], SY[i]
     }
     if (mode == "check")
-      for (p in ON) if (!(p in USED))
+      for (p in ON) if (!(p in USED) && !(bn != "" && p == bn))
         note("\"" p "\" (" ON[p] ") is switched on and has no surface")
     for (i = 1; i <= no; i++)
       if (mode == "emit") print "hwdp surfaces: " O[i] > "/dev/stderr"

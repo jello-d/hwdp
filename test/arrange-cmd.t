@@ -53,8 +53,8 @@ run() {
     sh "$KA" arrange "$@"
 }
 _id=$(env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
-  HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id)
-P=$T/profiles/$_id.conf
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --desk)
+P=$T/profiles/$_id.conf    # a laptop beside externals: the DESK id
 
 # The position --dry-run reports for one output: "x,y".
 _at() {   # <dry-run text> <serial>
@@ -125,8 +125,8 @@ _o=$(run DP-1 'DP-2 right-of DP-1 align center' 'eDP-1 off' 2>"$T/err") \
   || fail "arrange failed to write: $(cat "$T/err")"
 [ "$_o" = "$P" ] || fail "stdout must be the profile path, got '$_o'"
 grep -q '^profile hwdp-'"$_id"' {$' "$P" || fail "the profile is misnamed"
-grep -q '^    output "Acme MODEL SN-eDP-1" disable$' "$P" \
-  || fail "an off output must be a disable line: $(cat "$P")"
+grep -q '^    output "@builtin" disable$' "$P" \
+  || fail "an off built-in must be a disable line, by ROLE: $(cat "$P")"
 grep -q '^# hwdp-rect "Acme MODEL SN-DP-2" 2160 840 3840 2160$' "$P" \
   || fail "the rects layout re-places from must be written"
 grep -q 'SN-DP-1" mode 3840x2160@60.000Hz transform 90 position 0,0$' "$P" \
@@ -206,7 +206,7 @@ pass "exact positions: fine offsets accepted, gaps and corners refused"
 # --- a switched-off output not mentioned stays off ----------------------------
 _d=$(LAPTOP=no run --dry-run DP-1 'DP-2 right-of DP-1') \
   || fail "an unmentioned switched-off output must not be required"
-printf '%s\n' "$_d" | grep -q '^    output "Acme MODEL SN-eDP-1" disable$' \
+printf '%s\n' "$_d" | grep -q '^    output "@builtin" disable$' \
   || fail "it must still be written as disable, or kanshi never matches"
 pass "a switched-off output nobody mentions stays off, as disable"
 

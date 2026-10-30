@@ -155,6 +155,8 @@ run() {
 }
 _id=$(run id)
 [ -n "$_id" ] || fail "no hwdp id from the stub desk"
+# A laptop panel beside an external: a DESK, filed under the desk id.
+_desk=$(run id --desk)
 
 # --- 3. geometry publishes the compositor's width -----------------------------
 _lw=$(run geometry --now | awk '$1 == "eDP-1" { print $8 }')
@@ -182,15 +184,17 @@ pass "the synthesized layout packs exactly, scaled and rotated"
 if DESK=gap run capture >"$T/cap.out" 2>"$T/cap.err"; then
   fail "capture accepted a 40px gap"
 fi
-[ -e "$T/profiles/$_id.conf" ] && fail "a refused capture still wrote a profile"
+[ -e "$T/profiles/$_desk.conf" ] \
+  && fail "a refused capture still wrote a profile"
 grep -q 'DP-1 does not touch eDP-1: 40px' "$T/cap.err" \
   || fail "the refusal must name both outputs and the gap: $(cat "$T/cap.err")"
 pass "capture refuses a gap, says where, and writes nothing"
 
 # --- 6. capture keeps a switched-off panel, as `disable` ----------------------
 _p=$(DESK=lidoff run capture) || fail "capture failed with the lid off"
-grep -q '^    output "Acme Corp LAPTOP SN0001" disable$' "$_p" \
-  || fail "the switched-off panel must be a disable line: $(cat "$_p")"
+grep -q '^    output "@builtin" disable$' "$_p" \
+  || fail "the switched-off built-in must be a disable line, by ROLE: \
+$(cat "$_p")"
 grep -q 'AW2725Q DDD444" mode' "$_p" || fail "the enabled panel went missing"
 # layout must keep the disable line WITHOUT a scale, even in a session where
 # the panel is still enabled (the sticky has a scale for it).
@@ -200,8 +204,8 @@ grep -q 'LAPTOP SN0001" disable$' "$T/out" \
 pass "a switched-off panel is captured as disable, and layout keeps it"
 
 # --- 7. layout WARNS on a gapped authored profile, and still writes it --------
-cat > "$T/profiles/$_id.conf" <<EOF
-profile hwdp-$_id {
+cat > "$T/profiles/$_desk.conf" <<EOF
+profile hwdp-$_desk {
     output "Acme Corp LAPTOP SN0001" mode 2880x1800@60.000Hz position 0,0
     output "Dell Inc. AW2725Q DDD444" mode 3840x2160@60.000Hz position 1700,0
 }
@@ -218,7 +222,7 @@ pass "layout warns on a gap the injected scale opened, and still writes"
 # wide). The 4K must follow to x=2304 rather than be left overlapping it.
 printf 'Acme Corp LAPTOP SN0001\t1.75\t2880x1800@300x190\n' > "$T/sticky"
 _p=$(run capture 2>/dev/null) || fail "capture failed on the packed desk"
-grep -q '^# hwdp-rect "Acme Corp LAPTOP SN0001" 0 0 1645 1028$' "$_p" \
+grep -q '^# hwdp-rect "@builtin" 0 0 1645 1028$' "$_p" \
   || fail "capture must record each output's rect: $(grep hwdp-rect "$_p")"
 grep -q '^# hwdp-rect "Dell Inc. AW2725Q DDD444" 1645 0 3840 2160$' "$_p" \
   || fail "capture must record the second rect too"

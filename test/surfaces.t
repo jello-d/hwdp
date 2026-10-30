@@ -161,27 +161,31 @@ wr() {
     HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" \
     LAPTOP_ON="${LAPTOP_ON:-yes}" sh "$KA" surfaces --write
 }
-rm -f "$F"
+# The stub desk is a laptop panel beside externals, so --write files it under
+# the DESK id; the hand-written $F above is the exact-id (legacy) path.
+FD=$T/surf/$(env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --desk).conf
+rm -f "$FD"
 printf 'surface comms DP-1 cell 0 0 bottom\nsurface code DP-2 cell 1 0\n' \
   | wr >/dev/null || fail "--write refused valid lines"
-grep -qx 'surface comms "Dell PORTRAIT SN2" cell 0 0 bottom' "$F" \
-  || fail "--write must name the panel by EDID: $(cat "$F")"
+grep -qx 'surface comms "Dell PORTRAIT SN2" cell 0 0 bottom' "$FD" \
+  || fail "--write must name the panel by EDID: $(cat "$FD")"
 _o=$(run 2>/dev/null)
 [ "$(_line comms)" = "comms DP-1 0 0 0 1920 2160 1920" ] \
   || fail "the written file does not resolve: $(_line comms)"
-printf 'surface away "Nope ELSEWHERE SN8" cell 3 3 top\n' >> "$F"
+printf 'surface away "Nope ELSEWHERE SN8" cell 3 3 top\n' >> "$FD"
 printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null \
   || fail "a rewrite failed"
-grep -q '^surface away "Nope ELSEWHERE SN8" cell 3 3 top$' "$F" \
+grep -q '^surface away "Nope ELSEWHERE SN8" cell 3 3 top$' "$FD" \
   || fail "a panel not switched on lost its surface in a rewrite"
-grep -q comms "$F" && fail "a rewrite must REPLACE the switched-on panels"
-[ -f "$T/home/.local/state/hwdp/surfaces/$_id.conf.bak" ] \
+grep -q comms "$FD" && fail "a rewrite must REPLACE the switched-on panels"
+[ -f "$T/home/.local/state/hwdp/surfaces/$(basename "$FD").bak" ] \
   || fail "the old file must be kept in the state dir"
-_before=$(cksum < "$F")
+_before=$(cksum < "$FD")
 if printf 'surface a DP-2 cell 0 0\nsurface b DP-2 cell 0 0 top\n' \
     | wr >/dev/null 2>"$T/err"; then fail "--write accepted a clash"
 else _rc=$?; fi
-[ "$_rc" -eq 2 ] && [ "$(cksum < "$F")" = "$_before" ] \
+[ "$_rc" -eq 2 ] && [ "$(cksum < "$FD")" = "$_before" ] \
   || fail "a broken result must be exit 2 and leave the file alone"
 grep -q 'NOT written' "$T/err" || fail "the refusal must say so"
 if printf 'surface a DP-9 cell 0 0\n' | wr >/dev/null 2>&1; then

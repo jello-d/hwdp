@@ -15,6 +15,8 @@
 #
 #     hwdp id            which DESK am I at        (the set, one line)
 #     hwdp id --panels   which MONITOR is this     (one line per connector)
+#     hwdp id --desk     the same desk from ANY laptop (see desk_id): what
+#                        a desk's layout profile and surfaces are filed by
 #
 #   <connector> <panel-id>
 #
@@ -47,9 +49,12 @@ set -eu
 
 case "${1:-}" in
   -h|--help)
-    echo "usage: hwdp id [--panels]"
+    echo "usage: hwdp id [--panels | --desk]"
     echo
     echo "  (no args)  the display-profile id for the connected monitor set"
+    echo "  --desk     the DESK id: as above, except that where a laptop's"
+    echo "             own panel sits with externals it counts as a ROLE,"
+    echo "             so another laptop at the same desk gets the same id"
     echo "  --panels   one line per connected panel, headless:"
     echo "               <connector> <panel-id>"
     echo
@@ -58,6 +63,8 @@ case "${1:-}" in
     exit 0 ;;
   '')
     hwdp_id ;;
+  --desk)
+    desk_id ;;
   --panels)
     # Fields 1..2 of the provider record (edid_sha, connector). Tab separated
     # in, space separated out, matching `hwdp panels` and `hwdp geometry` so

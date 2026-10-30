@@ -153,3 +153,29 @@ hwdp_id() {
   [ -n "$_hs" ] || return 0
   printf '%s\n' "$_hs" | sha256sum | cut -c1-12
 }
+
+# HWDP_BUILTIN_RE: the connectors a laptop's OWN panel sits on. One pattern,
+# for the shape token (B), the desk id below, and the layout tool.
+# shellcheck disable=SC2034  # read by the files that source this one
+HWDP_BUILTIN_RE='^(eDP|LVDS|DSI)'
+
+# desk_id: the id a DESK is known by, so a layout recorded from one laptop
+# is found by another plugged into the same monitors. Where the set holds a
+# built-in panel AND at least one external, each built-in contributes its
+# ROLE ("builtin") instead of its EDID hash: manifold and its successor at
+# the same desk get the same id, though their own panels differ. Anywhere
+# else it IS hwdp_id: a laptop alone keeps its panel-specific id (the
+# greeter sizes for that exact panel) and a wall of externals has no
+# built-in to abstract, so every id that existed before this is unchanged.
+desk_id() {
+  _dp=$(probe_panels)
+  [ -n "$_dp" ] || return 0
+  _dk=$(printf '%s\n' "$_dp" | awk -F'	' -v re="$HWDP_BUILTIN_RE" '
+    $2 ~ re { b++ } $2 !~ re { e++ } END { print (b && e) ? "dock" : "" }')
+  if [ -z "$_dk" ]; then
+    hwdp_id
+    return 0
+  fi
+  printf '%s\n' "$_dp" | awk -F'	' -v re="$HWDP_BUILTIN_RE" \
+    '{ print ($2 ~ re) ? "builtin" : $1 }' | sort | sha256sum | cut -c1-12
+}

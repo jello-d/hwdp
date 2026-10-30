@@ -43,6 +43,8 @@ set -eu
 
 _id=$(hwdp_id)
 [ -n "$_id" ] || { echo "hwdp capture: no outputs to capture" >&2; exit 1; }
+# Written under the DESK id, the built-in as its role (see desk_id).
+_desk=$(desk_id)
 
 _faults=$(live_rects | layout_faults)
 if [ -n "$_faults" ]; then
@@ -56,13 +58,14 @@ mkdir -p "$PROFILES"
 
 # Clean up the temp on ANY exit, including the `set -e` aborts that the write
 # below can trigger, and a stray .tmp beside the profiles is confusing litter.
-_tmp=$(mktemp "$PROFILES/.$_id.conf.XXXXXX")
+_tmp=$(mktemp "$PROFILES/.$_desk.conf.XXXXXX")
 trap 'rm -f "$_tmp"' EXIT HUP INT TERM
-placed_records | profile_text "$_id" "captured by hwdp capture" > "$_tmp"
-profile_install "$_id" "$_tmp" capture
+placed_records | desk_names \
+  | profile_text "$_desk" "captured by hwdp capture" > "$_tmp"
+profile_install "$_desk" "$_tmp" capture
 
 # A profile is recorded: tell the integrator (see the `mapped` edge).
-HWDP_ID=$_id; HWDP_PROFILE=$PROFILES/$_id.conf; export HWDP_ID HWDP_PROFILE
+HWDP_ID=$_id; HWDP_PROFILE=$PROFILES/$_desk.conf; export HWDP_ID HWDP_PROFILE
 # shellcheck disable=SC2034  # read by hooks_lib, sourced next
 HWDP_HOOK_TAG='hwdp capture'
 . "$HWDP_LIB/hooks_lib"

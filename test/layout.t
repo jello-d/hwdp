@@ -109,10 +109,15 @@ printf disconnected > "$T/drm/card1-DP-2/status"
 [ "$(run id)" = "$hwdp" ] \
   || fail "hwdp did not exclude the disconnected panel"
 
+# The stub DRM has a laptop panel (eDP-1) beside externals, so this is a DESK:
+# its profile is filed under the desk id (see desk_id in probe_lib).
+desk=$(run id --desk)
+[ -n "$desk" ] && [ "$desk" != "$hwdp" ] \
+  || fail "a built-in beside externals must have its own desk id"
 # --- capture: writes profiles/<hwdp>.conf, scale-free, both panels -----------
 out=$(run capture)
-[ "$out" = "$T/profiles/$hwdp.conf" ] || fail "capture wrote wrong path: $out"
-grep -q "profile hwdp-$hwdp" "$out" || fail "captured profile not named by hwdp"
+[ "$out" = "$T/profiles/$desk.conf" ] || fail "capture wrote wrong path: $out"
+grep -q "profile hwdp-$desk" "$out" || fail "captured profile not named by hwdp"
 grep -q 'AW2725Q AAA111' "$out" || fail "captured profile missing panel 1"
 grep -q 'AW2725Q BBB222' "$out" || fail "captured profile missing panel 2"
 grep -q 'transform 270' "$out" || fail "captured profile lost a transform"
@@ -132,7 +137,7 @@ out2=$(run capture)
 [ "$(cksum < "$out")" = "$_sum" ] || fail "an unchanged re-capture rewrote it"
 [ "$(stat -c %Y "$out")" = "$_before" ] \
   || fail "an unchanged re-capture touched the profile"
-B=$T/home/.local/state/hwdp/profiles/$hwdp.conf.bak
+B=$T/home/.local/state/hwdp/profiles/$desk.conf.bak
 [ -e "$B" ] && fail "an unchanged re-capture made a needless backup" || :
 
 # When the file DOES differ from what capture would write (a hand edit is the
@@ -151,7 +156,7 @@ grep -q 'previous profile kept as' "$T/cap.err" \
   || fail "capture overwrote a profile without saying so"
 grep -q 'my own notes' "$out" \
   && fail "the edit survived into the new profile" || :
-grep -q "profile hwdp-$hwdp" "$out" || fail "the rewritten profile is malformed"
+grep -q "profile hwdp-$desk" "$out" || fail "the rewritten profile is malformed"
 
 # stdout stays JUST the path: the announcement went to stderr, so a caller
 # reading the path still gets one clean line.
@@ -163,7 +168,7 @@ grep -q '^ *output .* scale ' "$out" \
 
 # --- emit: selects the matching profile and injects scale --------------------
 gen=$(run layout)                            # emit prints the OUT path
-grep -q "profile hwdp-$hwdp" "$gen" || fail "emit did not pick the hwdp profile"
+grep -q "profile hwdp-$desk" "$gen" || fail "emit did not pick the hwdp profile"
 
 # The runtime config is LIVE: kanshi watches it and `hwdp watch` restarts kanshi
 # when it changes, so it is generated into a temp beside itself and renamed.
@@ -226,7 +231,7 @@ gen=$(run layout)
   || fail "changed signature did not recompute (kept the stale override)"
 
 # --- emit: no matching profile -> synthesize ---------------------------------
-rm -f "$T/profiles/$hwdp.conf"
+rm -f "$T/profiles/$desk.conf"
 gen=$(run layout)
 grep -qi 'no matching layout profile' "$gen" || fail "emit did not synthesize"
 

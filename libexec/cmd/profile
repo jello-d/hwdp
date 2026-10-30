@@ -32,7 +32,7 @@ if [ -z "$_id" ]; then
   echo "hwdp profile: no displays attached" >&2
   exit 1
 fi
-_p=$PROFILES/$_id.conf
+_p=$(profile_for)
 
 if [ "$MISSING" = 1 ]; then
   [ -s "$_p" ] && exit 1

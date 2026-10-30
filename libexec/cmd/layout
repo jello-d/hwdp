@@ -112,7 +112,21 @@ resolve() {
 # Inject each output's scale into the authored profile, leaving every other line
 # of it alone.
 gen_template() {
+  # A DESK's profile names the laptop's own panel by role (@builtin, see
+  # desk_id): fill in the live built-in's name, and its native mode, since
+  # the mode belongs to whichever laptop is plugged in, not to the desk.
+  _bn=$(builtin_name)
+  _bm=$(awk -F"$TAB" -v b="$_bn" \
+    '$1 == b { printf "%sx%s@%.3fHz", $4, $5, $6; exit }' "$_map")
   while IFS= read -r _l; do
+    case $_l in
+      *'output "@builtin"'*)
+        _l=$(printf '%s\n' "$_l" | awk -v b="$_bn" -v m="$_bm" '{
+          sub(/"@builtin"/, "\"" b "\"")
+          if (m != "" && $0 !~ / mode / && $0 !~ / disable$/)
+            sub(/" /, "\" mode " m " ")
+          print }') ;;
+    esac
     case $_l in
       # A disabled output takes no scale: it occupies nothing, and the line is
       # what keeps the profile MATCHING kanshi (see cmd/capture).
@@ -139,6 +153,11 @@ repack_template() {
   _old=$(profile_rects <"$TEMPLATE")
   [ -n "$_old" ] || return 0
   _now=$(config_rects <"$_otmp")
+  # The desk's rects name the built-in by role; the generated config by the
+  # live panel's name. Compare and re-place in the role's terms.
+  _bn=; grep -q '^# hwdp-rect "@builtin"' "$TEMPLATE" && _bn=$(builtin_name)
+  [ -n "$_bn" ] && _now=$(printf '%s\n' "$_now" | awk -F"$TAB" \
+    -v OFS="$TAB" -v b="$_bn" '$1 == b { $1 = "@builtin" } { print }')
   _v=$( { printf '%s\n' "$_old" | awk -v OFS="$TAB" '{ print "old", $0 }'
           printf '%s\n' "$_now" | awk -v OFS="$TAB" '{ print "now", $0 }'
         } | awk -F"$TAB" '
@@ -167,9 +186,10 @@ repack_template() {
       '{ print "new", $1, $4, $5 }'
   } | layout_repack >"$_plan"
   _rtmp=$(mktemp "$(dirname "$OUT")/.hwdp-layout.XXXXXX")
-  awk -F"$TAB" 'NR == FNR { P[$1] = $2 "," $3; next }
+  awk -F"$TAB" -v b="${_bn:-}" 'NR == FNR { P[$1] = $2 "," $3; next }
     /^[ \t]*output "/ && !/ disable([ \t]|$)/ {
       nm = $0; sub(/^[ \t]*output "/, "", nm); sub(/".*/, "", nm)
+      if (nm == b && ("@builtin" in P)) nm = "@builtin"
       if (nm in P) sub(/ position -?[0-9]+,-?[0-9]+/, " position " P[nm])
     }
     { print }' "$_plan" "$_otmp" >"$_rtmp"
@@ -200,7 +220,7 @@ gen_fallback() {
   printf '}\n'
 }
 
-TEMPLATE=${KANSHI_TEMPLATE:-$PROFILES/$(hwdp_id).conf}
+TEMPLATE=${KANSHI_TEMPLATE:-$(profile_for)}
 _map=$(mktemp)
 trap 'rm -f "$_map"' EXIT INT TERM
 outputs | while IFS="$TAB" read -r edid name rw rh mmw mmh rate tr pos; do
