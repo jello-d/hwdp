@@ -178,6 +178,25 @@ LAPTOP=no _refuse "a switched-off output placed" "switch it on first" \
 _refuse "everything off" "nothing is placed" 'DP-1 off' 'DP-2 off' 'eDP-1 off'
 pass "every refusal exits 2, says why, and writes nothing"
 
+# --- `at X,Y`: exact positions, for fine placement ---------------------------
+# A landscape 500px down the portrait edge: no handy label says that, and the
+# interactive helper's fine moves need it.
+_d=$(run --dry-run 'DP-1 at 0,0' 'DP-2 at 2160,500' 'eDP-1 off') \
+  || fail "an exact, edge-sharing position was refused: $_d"
+[ "$(_at "$_d" DP-2)" = 2160,500 ] || fail "at: DP-2 $(_at "$_d" DP-2)"
+# Mixed with a relative placement against it, and normalised to 0,0.
+_d=$(run --dry-run 'DP-2 at 100,100' 'DP-1 left-of DP-2' \
+  'eDP-1 below DP-2 align right') || fail "at mixed with relative: $_d"
+[ "$(_at "$_d" DP-1)" = 0,0 ] && [ "$(_at "$_d" DP-2)" = 2160,0 ] \
+  || fail "at + left-of: DP-1 $(_at "$_d" DP-1), DP-2 $(_at "$_d" DP-2)"
+_refuse "an exact position leaving a gap" "does not touch" \
+  'DP-1 at 0,0' 'DP-2 at 2200,0' 'eDP-1 off'
+_refuse "an exact position meeting only at a corner" "only at a corner" \
+  'DP-1 at 0,0' 'DP-2 at 2160,3840' 'eDP-1 off'
+_refuse "a malformed position" "expected \`at X,Y\`" \
+  'DP-1 at 0;0' 'DP-2 off' 'eDP-1 off'
+pass "exact positions: fine offsets accepted, gaps and corners refused"
+
 # --- a switched-off output not mentioned stays off ----------------------------
 _d=$(LAPTOP=no run --dry-run DP-1 'DP-2 right-of DP-1') \
   || fail "an unmentioned switched-off output must not be required"

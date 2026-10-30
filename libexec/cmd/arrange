@@ -5,6 +5,7 @@
 #
 #   <out> [rotate 0|90|180|270]                                 the anchor
 #   <out> [rotate R] right-of|left-of|above|below <out> [align A]
+#   <out> [rotate R] at X,Y                       an exact position
 #   <out> off
 #
 #   hwdp arrange 'DP-1 rotate 90' 'DP-2 right-of DP-1 align bottom' \
@@ -118,6 +119,16 @@ _rec=$( { printf '%s\n' "$_live" | sed "s/^/L$TAB/"
         " above or below an output already placed"); next }
       anchor = o; X[o] = 0; Y[o] = 0; next
     }
+    # `at X,Y`: an exact position, for the fine placement the interactive
+    # helper makes. It may leave a gap, which the edge check below refuses.
+    if (Wd[i] == "at") {
+      if (i + 1 != n || Wd[n] !~ /^-?[0-9]+,-?[0-9]+$/) {
+        bad("`" Wd[1] "`: expected `at X,Y` (whole logical pixels)"); next
+      }
+      split(Wd[n], q, ","); X[o] = q[1] + 0; Y[o] = q[2] + 0
+      if (!anchor) anchor = o
+      next
+    }
     side = Wd[i]; nb = find(Wd[i + 1]); al = ""
     if (side !~ /^(right-of|left-of|above|below)$/) {
       bad("`" Wd[1] "`: expected right-of, left-of, above or below, got `" \
@@ -176,12 +187,14 @@ _rec=$( { printf '%s\n' "$_live" | sed "s/^/L$TAB/"
       if ((o in OFF) || (!EN[o] && !(o in DONE))) print "off", NM[o]
   }') || exit 2
 
-# Two placements into the same space: refuse rather than write an overlap.
+# Refuse anything that does not meet edge to edge: two placements into one
+# space, or an `at` position that leaves a gap or only meets at a corner.
 _faults=$(printf '%s\n' "$_rec" | awk -F"$TAB" -v OFS="$TAB" \
   '$1 == "on" { print $2, $7, $8, $9, $10 }' | layout_faults)
 if [ -n "$_faults" ]; then
   printf '%s\n' "$_faults" | layout_fault_text | sed 's/^/hwdp arrange: /' >&2
-  echo "hwdp arrange: NOT written: two outputs would share space" >&2
+  echo "hwdp arrange: NOT written: the outputs must meet edge to edge," \
+       "without overlapping" >&2
   exit 2
 fi
 

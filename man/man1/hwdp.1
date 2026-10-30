@@ -154,7 +154,9 @@ A placement is
 .IR "out " [ "rotate 0|90|180|270" ]
 then nothing (the first, the anchor),
 .IR "right-of|left-of|above|below out " [ "align A" ],
-or
+.I "at X,Y"
+(an exact position in logical pixels, for fine placement; it must still meet
+its neighbours edge to edge), or
 .BR off .
 Beside a neighbour A is
 .BR top ", " center " or " bottom
