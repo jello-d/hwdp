@@ -296,6 +296,29 @@ def step(desk, mover, dx, dy, snap=True):
     desk.normalise()
 
 
+def contacts(mover, others):
+    """In words, what the mover is flush against and how it lines up, so
+    a snap is visible as well as made."""
+    said = []
+    for n in others:
+        if not touches(mover.rect(), n.rect()):
+            continue
+        if mover.x == n.x + n.w or mover.x + mover.w == n.x:
+            side = "right of" if mover.x == n.x + n.w else "left of"
+            ax, ends = "y", ("tops", "bottoms")
+        else:
+            side = "below" if mover.y == n.y + n.h else "above"
+            ax, ends = "x", ("lefts", "rights")
+        (ms, ml), (ns, nl) = axis(mover, ax), axis(n, ax)
+        how = [e + " aligned" for e, hit in
+               zip(ends, (ms == ns, ms + ml == ns + nl)) if hit]
+        if not how and abs(2 * ms + ml - 2 * ns - nl) <= 1:
+            how = ["centred"]
+        said.append("%s %s: %s" % (side, n.conn, " and ".join(how)
+                                   or "offset %+d" % (ms - ns)))
+    return "  ".join(said) or "touching nothing"
+
+
 def near_misses(desk, reach):
     """Facing edges of two outputs that are on, apart by less than REACH and
     overlapping along the edge: valid (each touches something) but a strip
@@ -604,6 +627,9 @@ class App:
             dx, dy = ARROWS[k]
             dx, dy = dx * STEP, dy * STEP
         step(self.desk, o, dx, dy, snap=k not in FINE)
+        self.msg = "%s %d,%d  %s" % (
+            o.conn, o.x, o.y,
+            contacts(o, [n for n in self.desk.on() if n is not o]))
 
     def _toggle_on(self, now):
         c = self.cur
@@ -830,6 +856,33 @@ def put(scr, y, x, text, attr=0):
             pass
 
 
+def cells(o, mx, my, sc, top):
+    """An output's box in screen cells. BOTH edges are rounded from the
+    layout, never a rounded start plus a rounded width: that is what drew a
+    one-cell gap between two outputs that were flush."""
+    x0 = round((o.x - mx) * sc) + 1
+    x1 = round((o.x + o.w - mx) * sc) + 1
+    y0 = round((o.y - my) * sc / 2) + top
+    y1 = round((o.y + o.h - my) * sc / 2) + top
+    return x0, y0, max(4, x1 - x0), max(3, y1 - y0)
+
+
+def wrap(lines, width):
+    """Pack each label line's words into WIDTH; a word longer than that
+    keeps its own line and spills past the border rather than be cut."""
+    out = []
+    for words in lines:
+        cur = ""
+        for word in words:
+            if cur and len(cur) + 1 + len(word) > width:
+                out.append(cur)
+                cur = word
+            else:
+                cur = (cur + " " + word) if cur else word
+        out.append(cur)
+    return out
+
+
 def draw_desk(scr, app, top, rows, cols):
     on = app.desk.on()
     if not on:
@@ -839,11 +892,9 @@ def draw_desk(scr, app, top, rows, cols):
     bw = max(o.x + o.w for o in on) - mx
     bh = max(o.y + o.h for o in on) - my
     sc = min((cols - 2) / bw, (rows - 2) * 2 / bh)
+    boxes = []
     for o in on:
-        x0 = int((o.x - mx) * sc) + 1
-        y0 = int((o.y - my) * sc / 2) + top
-        w = max(4, int(o.w * sc))
-        h = max(3, int(o.h * sc / 2))
+        x0, y0, w, h = cells(o, mx, my, sc, top)
         attr = curses.color_pair(0)
         if app.moving and app.moving[0] is o:
             attr = curses.color_pair(3) | curses.A_BOLD
@@ -855,15 +906,18 @@ def draw_desk(scr, app, top, rows, cols):
         for r in range(1, h - 1):
             put(scr, y0 + r, x0, "|" + " " * (w - 2) + "|", attr)
         put(scr, y0 + h - 1, x0, "+" + "-" * (w - 2) + "+", attr)
-        for i, line in enumerate(("%s %s" % (o.conn, o.token()),
-                                  "%dx%d" % (o.w, o.h),
-                                  "at %d,%d" % (o.x, o.y))):
-            if i + 1 < h - 1:
-                put(scr, y0 + 1 + i, x0 + 2, line[:w - 4], attr)
-        draw_surfaces(scr, app, o, x0, y0, w, h, attr)
+        boxes.append((o, x0, y0, w, h, attr))
+    # Labels after EVERY box, so one that spills is not drawn over.
+    for o, x0, y0, w, h, attr in boxes:
+        pad = 2 if w >= 14 else 1
+        text = wrap(([o.conn, o.token()], ["%dx%d" % (o.w, o.h)],
+                     ["at", "%d,%d" % (o.x, o.y)]), w - 2 * pad)
+        for i, line in enumerate(text):
+            put(scr, y0 + 1 + i, x0 + pad, line, attr)
+        draw_surfaces(scr, app, o, x0, y0, w, h, attr, len(text) + 1)
 
 
-def draw_surfaces(scr, app, o, x0, y0, w, h, attr):
+def draw_surfaces(scr, app, o, x0, y0, w, h, attr, first=4):
     """Each surface in its half: dots split top/bottom, colons left/right
     (as `hwdp map` draws them), its name and cell in the corner."""
     used = {}
@@ -874,7 +928,7 @@ def draw_surfaces(scr, app, o, x0, y0, w, h, attr):
         elif sf.region in ("left", "right"):
             for r in range(1, h - 1):
                 put(scr, y0 + r, x0 + w // 2, ":", attr)
-        row = y0 + ry + (4 if ry == 0 else 1)
+        row = y0 + ry + (first if ry == 0 else 1)
         row += used.get((rx, ry), 0)
         used[(rx, ry)] = used.get((rx, ry), 0) + 1
         if row < y0 + h - 1:

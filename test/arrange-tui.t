@@ -136,6 +136,25 @@ for _ in range(200):
         break
 check("sliding passes through centred and end-aligned",
       {840, 1680} <= seen, sorted(seen)[:12])
+check("sliding says what it lines up with",
+      tui.contacts(l, [p]) == "below DP-1: rights aligned",
+      tui.contacts(l, [p]))
+
+# The view: flush outputs are drawn flush (a rounded start plus a rounded
+# width once drew a one-cell gap), and a label wraps before it spills.
+sc = 78 / 5280
+boxes = [tui.cells(tui.Output(*o), 0, 0, sc, 2) for o in
+         (("DP-7", "normal", 0, 0, 3840, 2160),
+          ("DP-9", "270", 3840, 225, 1440, 2560),
+          ("eDP-1", "normal", 960, 2160, 2880, 1800))]
+check("flush outputs are drawn flush",
+      boxes[0][0] + boxes[0][2] == boxes[1][0] ==
+      boxes[2][0] + boxes[2][2], boxes)
+check("a label wraps at a space, and a long word keeps its own line",
+      tui.wrap((["at", "3840,225"], ["DP-9", "EP"]), 6)
+      == ["at", "3840,225", "DP-9", "EP"],
+      tui.wrap((["at", "3840,225"], ["DP-9", "EP"]), 6))
+
 check("past the end it turns the corner, aligned with it",
       l.y == p.y + p.h and l.x + l.w == p.x + p.w and not d.faults(),
       (p.rect(), l.rect()))
