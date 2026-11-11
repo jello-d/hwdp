@@ -36,7 +36,7 @@ class FakeHw:
         return self.calls[-1] if self.calls else (None, None)
     def repack(self, old, new):
         return real.repack(old, new)
-    def arrange(self, mode, placements):
+    def arrange(self, mode, placements, progress=None):
         self.calls.append((mode, list(placements)))
         return self.rc.get(mode, 0), "said no" if self.rc.get(mode) else ""
     def identify(self, on):
@@ -92,10 +92,64 @@ check("placements say where everything is",
       d.placements() == ["DP-1 rotate 90 at 3840,0",
                          "DP-2 rotate 0 at 0,0"], d.placements())
 
+def trio(*rects):
+    hw = FakeHw()
+    outs = [tui.Output("O%d" % i, "normal", *r) for i, r in enumerate(rects)]
+    return tui.Desk(outs, hw.repack), outs
+
+# A gap smaller than a step closes FLUSH; only a step from flush gets past.
+d, (a_, b_, m_) = trio((0, 0, 1000, 1000), (1010, 0, 1000, 1000),
+                       (0, 1000, 2010, 500))
+tui.step(d, b_, -tui.STEP, 0)
+check("a step into a near neighbour stops flush, not past it",
+      b_.x == 1000 and not d.faults(), b_.rect())
+tui.step(d, b_, -tui.STEP, 0)
+check("only a step taken from flush jumps to the far side",
+      b_.x + b_.w == a_.x and not d.faults(), (a_.rect(), b_.rect()))
+
+# The desk that opened a 121px dead strip: the laptop slid under the big
+# monitor stops where it is right-aligned with it, on the way past.
+d, (big, lap, side) = trio((0, 0, 3840, 2160), (1081, 2160, 2880, 1800),
+                           (3961, 320, 1440, 2560))
+check("a near miss between facing edges is reported",
+      tui.near_misses(d, tui.NEAR) == [("O0", "O2", 121)],
+      tui.near_misses(d, tui.NEAR))
+seen = []
+for _ in range(5):
+    tui.step(d, lap, -tui.STEP, 0)
+    seen.append(lap.x)
+check("a coarse step stops at an alignment it would pass",
+      seen == [1056, 1031, 1006, 981, 960], seen)
+tui.step(d, side, -tui.STEP, 0)
+check("an output left touching nothing comes back flush in one step",
+      side.x == 3840 and not d.faults() and not tui.near_misses(d, tui.NEAR),
+      side.rect())
+
+# Sliding along an edge stops at centred and end-aligned, then turns the
+# corner onto the next side, aligned with the corner it passed.
+d, (p, l), hw = desk()
+seen = set()
+for _ in range(200):
+    tui.step(d, l, 0, tui.STEP)
+    seen.add(l.y - p.y)
+    if l.y >= p.y + p.h:
+        break
+check("sliding passes through centred and end-aligned",
+      {840, 1680} <= seen, sorted(seen)[:12])
+check("past the end it turns the corner, aligned with it",
+      l.y == p.y + p.h and l.x + l.w == p.x + p.w and not d.faults(),
+      (p.rect(), l.rect()))
+
 # --- the controller -----------------------------------------------------------
+def sync(work, finish):
+    """The save, on the caller's thread: the controller under test."""
+    return {"finish": finish, "res": work()}
+
 def app():
     d, outs, hw = desk()
-    return tui.App(d, hw), outs, hw
+    a = tui.App(d, hw)
+    a.spawn = sync
+    return a, outs, hw
 
 a, (p, l), hw = app()
 a.key(9, 0)
@@ -105,10 +159,10 @@ check("an arrow selects the monitor that way", a.cur is p)
 
 a, (p, l), hw = app()
 a.key(ord("m"), 0); a.key(curses.KEY_DOWN, 0)
-check("move mode: an arrow moves the selection a coarse step (h/8)",
-      (p.x, p.y, l.x, l.y) == (0, 480, 2160, 0), (p.rect(), l.rect()))
+check("move mode: an arrow moves the selection a coarse step",
+      (p.x, p.y, l.x, l.y) == (0, tui.STEP, 2160, 0), (p.rect(), l.rect()))
 a.key(curses.KEY_SF, 0)
-check("move mode: shift+arrow moves one pixel", p.y == 481, p.y)
+check("move mode: shift+arrow moves one pixel", p.y == tui.STEP + 1, p.y)
 a.key(27, 0)
 check("Esc in move mode undoes the move", (p.x, p.y) == (0, 0)
       and a.moving is None, (p.x, p.y))
@@ -136,6 +190,30 @@ hw.rc[None] = 2
 a.key(ord("r"), 0); a.key(10, 0); a.key(ord("s"), 0)
 check("a refused save stays, and says why", not a.done and a.dirty()
       and a.msg == "said no", a.msg)
+
+# A slow save (an integrator's hook) runs BESIDE the screen, which says what
+# it is waiting on and takes no key until it lands.
+import threading
+gate = threading.Event()
+class SlowHw(FakeHw):
+    def arrange(self, mode, placements, progress=None):
+        progress("hwdp arrange: running the mapped hooks")
+        gate.wait(5)
+        return super().arrange(mode, placements)
+d, outs, hw = desk()
+hw.__class__ = SlowHw
+a = tui.App(d, hw)
+a.key(ord("r"), 0); a.key(10, 0); a.key(ord("s"), 0)
+busy = list(a.busy or [])
+a.key(ord("q"), 0)
+check("a slow save shows what it waits on, and is not done yet",
+      not a.done and busy[2].endswith("mapped hooks") and a.dialog is None,
+      busy)
+gate.set()
+a.job["thread"].join(5)
+a.tick(0)
+check("once it lands, the save finishes and exits",
+      a.done and not a.dirty() and a.busy is None, (a.msg, a.busy))
 
 a, (p, l), hw = app()
 a.key(ord("r"), 0); a.key(ord("p"), 100.0)

@@ -6,8 +6,10 @@ screen, the live one, edited in place:
 
     Tab / arrows  select a monitor          r  rotate it a quarter turn
     s             swap (mark, then swap)    o  switch it off / back on
-    m             move mode: arrows slide it along its neighbours in coarse
-                  steps, shift+arrow one pixel; m locks it, Esc undoes
+    m             move mode: arrows step it 25px, stopping flush and at
+                  every alignment on the way; a step from flush jumps past
+                  a neighbour, and off an edge's end turns the corner;
+                  shift+arrow one pixel; m locks it, Esc undoes
     i             a label on every monitor, saying which one it is
     p             preview live, with a countdown that reverts unless kept
     Enter         save (and exit, or keep going)       q / Esc  quit
@@ -23,11 +25,14 @@ import curses
 import os
 import subprocess
 import sys
+import threading
 import time
 
 QUARTER = ("normal", "90", "180", "270")
 ROTATED = ("90", "270", "flipped-90", "flipped-270")
 PREVIEW_SECONDS = 15
+STEP = 25           # a coarse move, in logical pixels, before any snap
+NEAR = 200          # facing edges closer than this are worth a warning
 
 
 def here():
@@ -191,32 +196,121 @@ def nearest_valid(mover, others, cx, cy):
     return None if best is None else best[1:]
 
 
-def step(desk, mover, dx, dy):
-    """Move one step. A step that stays touching and clear is taken. One
-    INTO a neighbour jumps to that neighbour's far side when there is room
-    there (how a monitor gets past another). One that leaves it touching
-    nothing snaps back to the nearest touching position."""
+def axis(o, ax):
+    """An output's (start, length) along one axis."""
+    return (o.x, o.w) if ax == "x" else (o.y, o.h)
+
+
+def snaps(mover, others, ax):
+    """The positions along AX where the mover lines up with another output:
+    flush against either of its edges, or aligned with its start, end or
+    centre. A coarse step stops at the first of these it would pass."""
+    size = axis(mover, ax)[1]
+    found = set()
+    for n in others:
+        a, ln = axis(n, ax)
+        found.update((a - size, a + ln, a, a + ln - size,
+                      a + (ln - size) // 2))
+    return found
+
+
+def at(mover, ax, v):
+    """The mover's rect with its AX position replaced by V."""
+    return (v, mover.y, mover.w, mover.h) if ax == "x" else \
+        (mover.x, v, mover.w, mover.h)
+
+
+def turn_corner(mover, others, ax, d):
+    """Sliding along a neighbour's edge and off its end: the place on that
+    neighbour's next side, aligned with the corner just passed (moving down
+    the right side of n lands below n, right edges aligned). None when no
+    neighbour it was sliding along has such a place free."""
+    pa = "y" if ax == "x" else "x"         # the axis it is beside n on
+    for n in others:
+        if not touches(mover.rect(), n.rect()):
+            continue
+        ms, ml = axis(mover, pa)
+        ns, nl = axis(n, pa)
+        if ms == ns + nl:                  # mover after n on that axis
+            p = ns + nl - ml
+        elif ms + ml == ns:                # mover before n
+            p = ns
+        else:
+            continue                       # touching along AX, not beside
+        a, ln = axis(n, ax)
+        v = a + ln if d > 0 else a - axis(mover, ax)[1]
+        r = (v, p, mover.w, mover.h) if ax == "x" else \
+            (p, v, mover.w, mover.h)
+        if touches(r, n.rect()) and \
+                not any(overlaps(r, o.rect()) for o in others):
+            return r[0], r[1]
+    return None
+
+
+def step(desk, mover, dx, dy, snap=True):
+    """Move one step along one axis. A coarse step (SNAP) stops early at the
+    first alignment it would pass, so a monitor goes FLUSH before anything
+    else. A step into a neighbour stops flush against it; only one taken
+    from flush jumps to that neighbour's far side (how a monitor gets past
+    another). Sliding off the end of a neighbour's edge turns the corner
+    onto its next side. A step that would touch nothing goes nowhere."""
     others = [o for o in desk.on() if o is not mover]
     if not others:
         return
-    cx, cy = mover.x + dx, mover.y + dy
-    cand = (cx, cy, mover.w, mover.h)
-    hit = [n for n in others if overlaps(cand, n.rect())]
+    ax = "x" if dx else "y"
+    d = dx or dy
+    cur = axis(mover, ax)[0]
+    v = cur + d
+    if snap:
+        sign = 1 if d > 0 else -1
+        ahead = [s for s in snaps(mover, others, ax)
+                 if 0 < (s - cur) * sign <= abs(d)]
+        if ahead:
+            v = min(ahead, key=lambda s: abs(s - cur))
+    hit = [n for n in others if overlaps(at(mover, ax, v), n.rect())]
     if hit:
-        n = hit[0]
-        if dx:
-            cx = n.x - mover.w if dx < 0 else n.x + n.w
+        # The nearest thing in the way: flush against it, or past it when
+        # already flush (the first step into it moved nothing yet).
+        flush = [(a - axis(mover, ax)[1]) if d > 0 else (a + ln)
+                 for a, ln in (axis(n, ax) for n in hit)]
+        stop = min(flush, key=lambda s: abs(s - cur))
+        if stop != cur:
+            v = stop
         else:
-            cy = n.y - mover.h if dy < 0 else n.y + n.h
-        cand = (cx, cy, mover.w, mover.h)
-    if any(overlaps(cand, n.rect()) for n in others) or \
-            not any(touches(cand, n.rect()) for n in others):
-        spot = nearest_valid(mover, others, cx, cy)
-        if spot is None:
-            return
-        cx, cy = spot
-    mover.x, mover.y = cx, cy
+            n = hit[flush.index(stop)]
+            a, ln = axis(n, ax)
+            v = a + ln if d > 0 else a - axis(mover, ax)[1]
+    r = at(mover, ax, v)
+    spot = (r[0], r[1])
+    if any(overlaps(r, n.rect()) for n in others):
+        spot = nearest_valid(mover, others, r[0], r[1])
+    elif not any(touches(r, n.rect()) for n in others):
+        # Adrift already (something it touched moved away): the nearest
+        # place it touches anything, so one key brings it back flush.
+        adrift = not any(touches(mover.rect(), n.rect()) for n in others)
+        spot = nearest_valid(mover, others, r[0], r[1]) if adrift else \
+            turn_corner(mover, others, ax, d)
+    if spot is None:
+        return
+    mover.x, mover.y = spot
     desk.normalise()
+
+
+def near_misses(desk, reach):
+    """Facing edges of two outputs that are on, apart by less than REACH and
+    overlapping along the edge: valid (each touches something) but a strip
+    the pointer cannot cross, which reads as a broken edge. A guide."""
+    on = desk.on()
+    found = []
+    for i, a in enumerate(on):
+        for b in on[i + 1:]:
+            for ax, pa in (("x", "y"), ("y", "x")):
+                (s1, l1), (s2, l2) = axis(a, ax), axis(b, ax)
+                g = max(s2 - (s1 + l1), s1 - (s2 + l2))
+                (p1, q1), (p2, q2) = axis(a, pa), axis(b, pa)
+                if 0 < g < reach and span(p1, p1 + q1, p2, p2 + q2) > 0:
+                    found.append((a.conn, b.conn, g))
+    return found
 
 
 # --- talking to hwdp ---------------------------------------------------------
@@ -268,12 +362,32 @@ class Hwdp:
             pos[n] = (int(x), int(y))
         return pos
 
-    def arrange(self, mode, placements):
+    def arrange(self, mode, placements, progress=None):
+        """PROGRESS, when given, is called with each line arrange says as
+        it says it, so a save that waits on a slow hook is not silent."""
         argv = [os.path.join(self.libexec, "cmd", "arrange")]
         if mode:
             argv.append(mode)
-        rc, out, err = self._run(*(argv + list(placements)))
-        return rc, (err.strip().splitlines() or [""])[-1]
+        env = dict(os.environ, HWDP_LIB=self.lib, HWDP_LIBEXEC=self.libexec)
+        p = subprocess.Popen(argv + list(placements), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, text=True, env=env)
+        said = [""]
+
+        def read():
+            for line in p.stderr:
+                line = line.strip()
+                if line:
+                    said[0] = line
+                    if progress:
+                        progress(line)
+        # Done when ARRANGE exits, not when its stderr closes: a hook that
+        # leaves something running holding that pipe must not hold us.
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        rc = p.wait()
+        reader.join(0.5)
+        return rc, said[0]
 
     def surfaces(self, desk):
         """This desk's surfaces as the tool edits them, or (None, why) when
@@ -379,6 +493,8 @@ class App:
         self.ident = False
         self.done = False
         self.form = None          # the naming form, while it is up
+        self.busy = None          # [what, since, latest line] while saving
+        self.job = None           # the save running beside the screen
         surf, why = hw.surfaces(desk)
         # A file `hwdp surfaces` refuses is NOT edited on top of: rewriting
         # it from what the tool could read would drop what it could not.
@@ -402,6 +518,8 @@ class App:
 
     # Dialogs first: while one is up, it owns the keyboard.
     def key(self, k, now):
+        if self.busy:
+            return                # a save owns the screen until it lands
         if self.dialog:
             return self._dialog_key(k, now)
         if self.moving and (k in ARROWS or k in FINE):
@@ -421,6 +539,7 @@ class App:
             return self._escape(now)
 
     def tick(self, now):
+        self._landed()
         if self.dialog and self.dialog[0] == "keep" and now >= self.dialog[1]:
             self._revert("no answer: reverted")
 
@@ -483,9 +602,8 @@ class App:
             dx, dy = FINE[k]
         else:
             dx, dy = ARROWS[k]
-            dx *= max(1, round(o.w / 8))
-            dy *= max(1, round(o.h / 8))
-        step(self.desk, o, dx, dy)
+            dx, dy = dx * STEP, dy * STEP
+        step(self.desk, o, dx, dy, snap=k not in FINE)
 
     def _toggle_on(self, now):
         c = self.cur
@@ -523,23 +641,65 @@ class App:
         self.msg = why
 
     def _save(self, now, then_exit):
-        """The layout, then the surfaces; done only if both landed."""
+        """The layout, then the surfaces; done only if both landed. It runs
+        BESIDE the screen, which says what it is waiting on: a save fires
+        the integrator's hooks, and those can take seconds."""
         self.dialog = None
-        if self.desk.placements() != self.saved or self.live_unsaved:
-            rc, why = self.hw.arrange(None, self.desk.placements())
-            if rc != 0:
-                self.msg = why or "not saved (%d)" % rc
-                return
-            self.saved = self.desk.placements()
-            self.live_unsaved = False
-        if self._surface_keys() != self.saved_surfaces:
-            rc, why = self.hw.write_surfaces(self.surfaces)
-            if rc != 0:
-                self.msg = "surfaces not saved: " + (why or "exit %d" % rc)
-                return
-            self.saved_surfaces = self._surface_keys()
-        self.msg = "saved"
-        self.done = then_exit
+        place = self.desk.placements()
+        layout = place != self.saved or self.live_unsaved
+        names = self._surface_keys()
+        surfaces = list(self.surfaces) if names != self.saved_surfaces \
+            else None
+        self.busy = ["saving the layout" if layout else "saving surfaces",
+                     now, ""]
+
+        def said(line):
+            self.busy[2] = line
+
+        def work():
+            if layout:
+                rc, why = self.hw.arrange(None, place, progress=said)
+                if rc != 0:
+                    return why or "not saved (%d)" % rc, None
+            if surfaces is not None:
+                self.busy[0] = "saving surfaces"
+                rc, why = self.hw.write_surfaces(surfaces)
+                if rc != 0:
+                    return "surfaces not saved: " + \
+                        (why or "exit %d" % rc), layout
+            return "", None
+
+        def finish(res):
+            why, half = res
+            if not why or half:
+                self.saved, self.live_unsaved = place, False
+            if not why:
+                self.saved_surfaces = names
+                self.msg, self.done = "saved", then_exit
+            else:
+                self.msg = why
+        self.job = self.spawn(work, finish)
+        self._landed()
+
+    @staticmethod
+    def spawn(work, finish):
+        """Run WORK on a thread; the screen calls FINISH with its answer
+        once it lands (see _landed). A test swaps in a synchronous one."""
+        job = {"finish": finish}
+
+        def run():
+            try:
+                job["res"] = work()
+            except Exception as e:      # said on screen, never swallowed
+                job["res"] = ("save failed: %s" % e, None)
+        job["thread"] = threading.Thread(target=run, daemon=True)
+        job["thread"].start()
+        return job
+
+    def _landed(self):
+        if self.job and "res" in self.job:
+            job, self.job, self.busy = self.job, None, None
+            job["finish"](job["res"])
 
     # --- naming ---------------------------------------------------------
     def _name(self, now):
@@ -783,12 +943,22 @@ def render(scr, app, now):
     if off:
         put(scr, h - 4, 1, "off: " + "  ".join(off),
             curses.color_pair(1) if not app.cur.on else 0)
+    gaps = near_misses(app.desk, NEAR)
     if app.desk.faults():
         put(scr, h - 3, 1, "the monitors do not meet edge to edge",
             curses.color_pair(4) | curses.A_BOLD)
+    elif gaps:
+        put(scr, h - 3, 1, "  ".join(
+            "%dpx gap between %s and %s" % (g, a, b) for a, b, g in gaps) +
+            " (the pointer cannot cross it)",
+            curses.color_pair(4) | curses.A_BOLD)
     put(scr, h - 2, 1, app.msg)
     put(scr, h - 1, 1, HELP, curses.A_DIM)
-    if app.dialog:
+    if app.busy:
+        what, since, line = app.busy
+        box(scr, ["%s ... %ds" % (what, int(now - since)), "",
+                  line[:60] or "working", ""])
+    elif app.dialog:
         draw_dialog(scr, app, now)
     scr.refresh()
 

@@ -209,12 +209,16 @@ marks it and
 .B s
 on another swaps their places;
 .B m
-enters move mode, where the arrows slide it along its neighbours in steps of
-an eighth of its size and shift+arrow by one pixel, a step into a neighbour
-jumps to that neighbour's far side, and one that would leave it touching
-nothing snaps back,
+enters move mode, where the arrows step it 25 logical pixels and shift+arrow
+one; a step stops early at anything it would line up with on the way (flush
+against an output, or aligned with its start, centre or end), only a step
+taken from flush jumps to a neighbour's far side, sliding off the end of an
+edge turns the corner onto the next side, and an output left touching nothing
+comes back flush in one step. Facing edges a little apart are flagged, since
+the pointer cannot cross that strip.
 .B m
-locking it and Esc undoing it;
+locks it and Esc undoes it; a save that waits on a slow hook says so on
+screen;
 .B o
 switches it off or back on;
 .B n
