@@ -101,6 +101,17 @@ if [ -z "${HWDP_SURFACE_NAMES:-}" ] && [ ! -e "$NAMES" ] \
   NAMES=$_cfg/surfaces.names
 fi
 
+# fire_saved <file>: the `saved` edge (hooks_lib), so an integrator can record
+# the desk tool's data now rather than at the next layout save. After the
+# write, and fail-soft: a hook never undoes or fails a write that landed.
+fire_saved() {
+  HWDP_SAVED=$1; export HWDP_SAVED
+  # shellcheck disable=SC2034  # read by hooks_lib, sourced next
+  HWDP_HOOK_TAG='hwdp surfaces'
+  . "$HWDP_LIB/hooks_lib"
+  run_hooks saved
+}
+
 # write_names: REPLACE the names list from `name [label]` lines on stdin, the
 # ONE writer of it. Refused whole (exit 2) on a bad or doubled name, and on
 # dropping a name that ANY desk file still places, each named: the list is
@@ -141,6 +152,7 @@ write_names() {
   fi
   mv "$_nt" "$NAMES"
   printf '%s\n' "$NAMES"
+  fire_saved "$NAMES"
 }
 
 # --names needs no displays at all: the list is global.
@@ -255,7 +267,9 @@ write_file() {
   fi
   mv "$_wd/$_desk.conf" "$_dst"
   printf '%s\n' "$_dst"
+  fire_saved "$_dst"
 }
+
 
 _id=$(hwdp_id)
 if [ -z "$_id" ]; then

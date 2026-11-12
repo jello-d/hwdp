@@ -410,13 +410,27 @@ regenerate the config through
 and re-apply on compositor-config changes. It fires display-change HOOKS from
 .IR <root>/<edge>.d/* " (edges: " pre ", " changed ", " unmapped ", " mapped )
 so an integrator wires the reactions; it knows nothing of any specific
-compositor tool.
+compositor tool. A fifth edge,
+.BR saved ,
+is fired by
+.B hwdp surfaces \-\-write
+and
+.B \-\-write\-names
+with
+.B HWDP_SAVED
+the file written, so the desk tool's data can be recorded at once. Every hook
+is told the edge that fired it as
+.BR HWDP_EDGE .
 .PP
 It reacts to the DISPLAY SET changing as well as to the compositor config: the
 connected panels are polled every
 .B HWDP_HOTPLUG_POLL
 seconds (default 4, 0 disables), and on a change the kanshi config is
-REGENERATED before the hooks run and kanshi reloads: its profiles describe
+REGENERATED, kanshi reloads, and the
+.B changed
+hooks run only once kanshi has said it applied (bounded at 5 seconds), so
+they see the layout the profile describes rather than the one the compositor
+improvised. Its profiles describe
 the outputs that existed when it was written, so a reload alone would re-read a
 file that does not mention the new panel. The fingerprint is the same probe
 .B hwdp id
@@ -546,8 +560,17 @@ are announced once, for the desk that results.
 .B HWDP_MAP_MIN
 How many attached panels make a desk need a profile (default 2).
 .TP
+.B HWDP_DESKS
+The directory holding the desk files and the names list (default
+.IR ~/.config/hwdp/desks ).
+.TP
+.B HWDP_SURFACE_NAMES
+The global names list (default
+.IR $HWDP_DESKS/surfaces.names ).
+.TP
 .B HWDP_SURFACES
-The directory holding the surface files (default
+The directory of the older per-desk surface files, still read when a desk
+has no desk file (default
 .IR ~/.config/hwdp/surfaces ).
 .TP
 .B HWDP_GEOM_BACKEND

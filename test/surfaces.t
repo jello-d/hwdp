@@ -319,3 +319,28 @@ printf '%s\n' 'comms' 'code' 'elsewhere' 'spare' 'extra' 'later' | wn \
 [ ! -e "$NM" ] && grep -qx later "$T/home/.config/hwdp/surfaces.names" \
   || fail "the writer must write where it read, until the file is moved"
 pass "the names list's first home is still read and written until moved"
+
+# --- the `saved` edge: both writers announce what they wrote ------------------
+# So an integrator can record the desk tool's data at once, not at the next
+# layout save. NOT `mapped` (that means a layout profile exists). The hook is
+# told the edge and the file.
+mkdir -p "$T/home/.config/hwdp/hooks/saved.d"
+cat > "$T/home/.config/hwdp/hooks/saved.d/10-rec" <<HOOK
+#!/bin/sh
+echo "\$HWDP_EDGE \$HWDP_SAVED" >> "$T/saved.log"
+HOOK
+chmod +x "$T/home/.config/hwdp/hooks/saved.d/10-rec"
+: > "$T/saved.log"
+printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null || fail "--write failed"
+grep -qx "saved $FD" "$T/saved.log" \
+  || fail "--write must fire saved with the desk file: $(cat "$T/saved.log")"
+printf '%s\n' comms code elsewhere spare extra later | wn >/dev/null \
+  || fail "--write-names failed"
+grep -q "^saved .*surfaces.names$" "$T/saved.log" \
+  || fail "--write-names must fire saved: $(cat "$T/saved.log")"
+if printf 'surface a DP-9 cell 0 0\n' | wr >/dev/null 2>&1; then
+  fail "--write accepted an unknown output"
+fi
+[ "$(wc -l < "$T/saved.log")" -eq 2 ] \
+  || fail "a refused write must fire nothing: $(cat "$T/saved.log")"
+pass "both writers fire saved with the file, a refused write nothing"

@@ -8,7 +8,8 @@
 #               changes: the normal path, driven by real display events;
 #   cmd/apply   fires `changed` on demand, for a change that produced no
 #               display event at all (see that file for why one is needed);
-#   cmd/arrange and cmd/capture fire `mapped` when they record a profile.
+#   cmd/arrange and cmd/capture fire `mapped` when they record a profile;
+#   cmd/surfaces fires `saved` when it writes a desk file or the names list.
 #
 # ONE implementation, because two would drift: the reason this is a file rather
 # than a copy in each tool is that the fd-9 rule below is invisible at the call
@@ -28,6 +29,14 @@
 #             (an unchanged one included). HWDP_ID and HWDP_PROFILE are set.
 #             The pair lets an integrator raise a reminder on one and clear
 #             it on the other; hwdp itself reminds nobody.
+#   saved     fired when `hwdp surfaces --write` or `--write-names` has
+#             written the desk tool's data (a desk file, the names list), so
+#             an integrator recording it need not wait for a layout save.
+#             HWDP_SAVED is the file written. NOT `mapped`: that one means a
+#             layout profile exists, and a desk may have surfaces without one.
+#
+# Every hook is told which edge fired it, as HWDP_EDGE, so one executable can
+# serve several edges and still know why it ran.
 #
 # Hooks live in <root>/<edge>.d/* (executable), machine root first then user,
 # each sorted by name, fail-soft. Hooks are expected IDEMPOTENT: the startup
@@ -81,6 +90,8 @@ HWDP_MACHINE_HOOKS=${HWDP_MACHINE_HOOKS:-/etc/hwdp/hooks}
 run_hooks() {   # <edge>; sets HWDP_HOOK_FAILURES
   _edge=$1
   HWDP_HOOK_FAILURES=0
+  HWDP_EDGE=$_edge
+  export HWDP_EDGE
   for _root in "$HWDP_MACHINE_HOOKS" "$HWDP_HOOK_ROOT"; do
     [ -d "$_root/$_edge.d" ] || continue
     for _h in "$_root/$_edge.d"/*; do
