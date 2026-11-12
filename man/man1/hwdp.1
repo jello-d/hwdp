@@ -143,6 +143,15 @@ hand-written or hand-moved profile is where a gap opened by a scale change
 shows up. Edge-flipping treats an edge as interior only when a neighbour's edge
 sits at exactly the same coordinate, so even a one-pixel gap makes the pointer
 flip the workspace instead of crossing.
+.IP
+After it, every OTHER authored profile follows, so kanshi, which applies the
+profile whose outputs are exactly the connected set, switches desks on a
+hotplug by itself. The connected set's profile comes first, since kanshi takes
+the first match; then desk profiles, then plain ids; each renamed
+.BI hwdp- id
+so no two share a name. A panel not attached takes its sticky scale by name,
+and a desk profile is left out on a machine with no built-in panel. The gap
+check judges only the connected set's layout.
 .TP
 .B hwdp capture
 Snapshot the current arrangement (transforms, positions, modes: no scale)

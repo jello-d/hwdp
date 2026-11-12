@@ -1,6 +1,7 @@
 #!/bin/sh
-# hwdp layout: emit the runtime kanshi config for the connected set and print
-# its path. `hwdp watch` runs this at supervisor start and points kanshi at it.
+# hwdp layout: emit the runtime kanshi config for the connected set, followed
+# by every other authored profile (see emit_others), and print its path.
+# `hwdp watch` runs this at supervisor start and points kanshi at it.
 #
 # This is the kanshi ADAPTER: the probe layer above it is compositor-agnostic,
 # but the file this writes is kanshi's format and makes no apology for it.
@@ -109,9 +110,13 @@ resolve() {
   printf '%s' "$_scale"
 }
 
-# Inject each output's scale into the authored profile, leaving every other line
-# of it alone.
-gen_template() {
+# Inject each output's scale into the authored profile <template> (default the
+# current set's), leaving every other line of it alone. An output not attached
+# now (another desk's profile, see emit_others) takes its STICKY scale by name:
+# its signature cannot be checked without the panel, so the stored value is
+# used as it stands, and a panel never seen keeps no scale at all.
+gen_template() {   # [template]
+  _tpl=${1:-$TEMPLATE}
   # A DESK's profile names the laptop's own panel by role (@builtin, see
   # desk_id): fill in the live built-in's name, and its native mode, since
   # the mode belongs to whichever laptop is plugged in, not to the desk.
@@ -145,13 +150,15 @@ gen_template() {
       *'output "'*)
         _e=$(printf '%s' "$_l" | sed -n 's/.*output "\([^"]*\)".*/\1/p')
         _v=$(awk -F"$TAB" -v e="$_e" '$1==e{print $2;exit}' "$_map")
+        [ -n "$_v" ] || [ ! -f "$STICKY" ] \
+          || _v=$(awk -F"$TAB" -v e="$_e" '$1==e{print $2;exit}' "$STICKY")
         if [ -n "$_v" ]; then
           printf '%s scale %s\n' \
             "$(printf '%s' "$_l" | sed 's/ scale [0-9.]*//')" "$_v"
         else printf '%s\n' "$_l"; fi ;;
       *) printf '%s\n' "$_l" ;;
     esac
-  done <"$TEMPLATE"
+  done <"$_tpl"
 }
 
 # RE-PLACE an authored profile whose sizes changed since capture, rewriting
@@ -160,13 +167,15 @@ gen_template() {
 # moved by hand, and a hand edit wins over the arithmetic, so it is left
 # exactly as written and the gap check below speaks for it instead. With
 # nothing changed this is a no-op, so the authored file comes through intact.
-repack_template() {
-  _old=$(profile_rects <"$TEMPLATE")
+repack_template() {   # [template] [generated file]
+  _tpl=${1:-$TEMPLATE}; _gen=${2:-$_otmp}
+  _who=; [ "$_tpl" = "$TEMPLATE" ] || _who=" ($(basename "$_tpl" .conf))"
+  _old=$(profile_rects <"$_tpl")
   [ -n "$_old" ] || return 0
-  _now=$(config_rects <"$_otmp")
+  _now=$(config_rects <"$_gen")
   # The desk's rects name the built-in by role; the generated config by the
   # live panel's name. Compare and re-place in the role's terms.
-  _bn=; grep -q '^# hwdp-rect "@builtin"' "$TEMPLATE" && _bn=$(builtin_name)
+  _bn=; grep -q '^# hwdp-rect "@builtin"' "$_tpl" && _bn=$(builtin_name)
   [ -n "$_bn" ] && _now=$(printf '%s\n' "$_now" | awk -F"$TAB" \
     -v OFS="$TAB" -v b="$_bn" '$1 == b { $1 = "@builtin" } { print }')
   _v=$( { printf '%s\n' "$_old" | awk -v OFS="$TAB" '{ print "old", $0 }'
@@ -185,7 +194,7 @@ repack_template() {
     }')
   case $_v in
     edited*)
-      echo "hwdp layout: authored layout left as written:" \
+      echo "hwdp layout: authored layout$_who left as written:" \
         "${_v#*"$TAB"}" >&2
       return 0 ;;
     resized*) ;;
@@ -203,11 +212,44 @@ repack_template() {
       if (nm == b && ("@builtin" in P)) nm = "@builtin"
       if (nm in P) sub(/ position -?[0-9]+,-?[0-9]+/, " position " P[nm])
     }
-    { print }' "$_plan" "$_otmp" >"$_rtmp"
-  mv "$_rtmp" "$_otmp"
+    { print }' "$_plan" "$_gen" >"$_rtmp"
+  mv "$_rtmp" "$_gen"
   rm -f "$_plan"
-  echo "hwdp layout: re-placed the authored layout for the current" \
+  echo "hwdp layout: re-placed the authored layout$_who for the current" \
     "scales (${_v#*"$TAB"})" >&2
+}
+
+# EVERY OTHER CONFIRMED DESK, after the current set's profile, so kanshi can
+# switch on a hotplug by itself, at once, rather than wait for the poller to
+# regenerate this file (the user's ask, 2026-11-12: kanshi already picks the
+# profile whose outputs are exactly the connected set). The CURRENT profile
+# stays first because kanshi takes the first match, so the attached set keeps
+# hwdp's own choice; the rest follow profile_for's precedence, a desk (named
+# by the @builtin role) before a plain id, since two can match one set. A desk
+# profile on a machine with no built-in panel cannot match anything and is
+# left out. Each is RENAMED hwdp-<file id>: kanshi refuses the WHOLE config
+# when two profiles share a name, and a hand-written file need not follow the
+# convention.
+emit_others() {
+  _ob=$(builtin_name)
+  for _pass in desk plain; do
+    for _pf in "$PROFILES"/*.conf; do
+      [ -s "$_pf" ] && [ "$_pf" != "$TEMPLATE" ] || continue
+      grep -q 'output ' "$_pf" || continue
+      if grep -q 'output "@builtin"' "$_pf"; then
+        [ "$_pass" = desk ] && [ -n "$_ob" ] || continue
+      else
+        [ "$_pass" = plain ] || continue
+      fi
+      _ptmp=$(mktemp "$(dirname "$OUT")/.hwdp-other.XXXXXX")
+      gen_template "$_pf" >"$_ptmp"
+      repack_template "$_pf" "$_ptmp"
+      printf '\n'
+      sed "1,/^[ \t]*profile /s/^\([ \t]*profile\) [^{]*{/\1 hwdp-$(basename \
+        "$_pf" .conf) {/" "$_ptmp"
+      rm -f "$_ptmp"
+    done
+  done
 }
 
 # No authored profile: lay the outputs out side by side, left to right, each
@@ -247,8 +289,9 @@ mkdir -p "$(dirname "$OUT")"
 # the running session a half-written layout rather than the previous good one.
 # Temp beside the destination, for the cross-filesystem reason above.
 _otmp=$(mktemp "$(dirname "$OUT")/.hwdp-layout.XXXXXX")
-_plan=; _rtmp=   # repack_template's, when it runs
-trap 'rm -f "$_map" "$_otmp" ${_plan:+"$_plan"} ${_rtmp:+"$_rtmp"}' \
+_plan=; _rtmp=; _ptmp=   # repack_template's and emit_others', when they run
+trap 'rm -f "$_map" "$_otmp" ${_plan:+"$_plan"} ${_rtmp:+"$_rtmp"} \
+  ${_ptmp:+"$_ptmp"}' \
   EXIT INT TERM
 if [ -s "$TEMPLATE" ] && grep -q 'output ' "$TEMPLATE"; then
   gen_template >"$_otmp"
@@ -268,6 +311,9 @@ if [ -n "$_faults" ]; then
   printf '%s\n' "$_faults" | layout_fault_text \
     | sed 's/^/hwdp layout: WARNING: /' >&2
 fi
+# AFTER the gap check, which judges the CURRENT layout: run over every profile
+# it would read three desks' panels as one overlapping heap.
+emit_others >>"$_otmp"
 # 0644: kanshi reads it as the session user, and mktemp makes it 0600.
 chmod 644 "$_otmp"
 mv "$_otmp" "$OUT"
