@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """hwdp arrange, interactively: the desk tool.
 
-`hwdp arrange` with no placements, at a terminal, lands here. Three tabs over
-ONE desk, and a sidebar of every surface NAME that is always there:
+`hwdp arrange` with no placements, at a terminal, lands here. Four tabs over
+ONE desk, in the order you work; beside all but the second, a READ-ONLY
+sidebar of every surface NAME and where it is (D the default, N placed N
+times, - not placed at this desk):
 
   1 PHYSICAL, the layout: where the panels sit and how they turn
     Tab / arrows  select a monitor          r  rotate it a quarter turn
@@ -15,18 +17,23 @@ ONE desk, and a sidebar of every surface NAME that is always there:
     p             preview live, with a countdown that reverts unless kept
     Enter         finish what is in progress (lock a move, make a marked
                   swap); nothing otherwise
-  2 VIRTUAL, the grid: a miniature of the desk in every workspace cell
+  2 SURFACES, the names: each with its label and where it is at this desk
+    arrows        select a name             a  add one (a fixed name, a label)
+    e             its label                 D  delete it (from every desk's
+                                               list; asked first)
+  3 VIRTUAL, the grid: a miniature of the desk in every workspace cell
     arrows        select a cell             Tab  a panel in it
     g             cycle the region (full, top, bottom, left, right)
-    Enter         place the sidebar's name there (it MOVES if placed
-                  elsewhere at this desk; what overlapped goes)
-    x             clear that spot           f / F  default / no default
+    Enter         pick the name for that spot (typing filters the list; it
+                  MOVES if placed elsewhere at this desk; what overlapped
+                  goes)
+    f / F         pick the DEFAULT for that spot / no default
+    x             clear that spot
     + / -         a column more / fewer     ] / [  a row more / fewer
                   (fewer refuses while that column or row holds a surface)
-  3 REVIEW, the map as it will be saved, and what is missing from it
+  4 REVIEW, the map as it will be saved, and what is missing from it
   everywhere
-    J / K         the next / previous name  a  add a name   e  its label
-    D             delete a name (from every desk's list; asked first)
+    1 - 4         the tabs
     s             save, and keep editing
     Esc           back out of what is in progress (undo the move, drop
                   the mark); with nothing in progress, the quit prompt
@@ -578,6 +585,7 @@ class App:
         self.vpanel = 0           # ... panel in it (index into desk.on())
         self.vregion = 0          # ... and region (index into REGIONS)
         self.rscroll = 0          # the review tab's first line
+        self.pick = None          # the picker, while it is up
         surf, default, why = hw.surfaces(desk)
         # Files `hwdp surfaces` refuses are NOT edited on top of: rewriting
         # them from what the tool could read would drop what it could not.
@@ -621,22 +629,22 @@ class App:
             return self._dialog_key(k, now)
         if self.moving and (k in ARROWS or k in FINE):
             return self._move(k)
-        tab = {ord("1"): 0, ord("2"): 1, ord("3"): 2,
-               curses.KEY_F1: 0, curses.KEY_F2: 1, curses.KEY_F3: 2}.get(k)
+        tab = {ord("1"): 0, ord("2"): 1, ord("3"): 2, ord("4"): 3,
+               curses.KEY_F1: 0, curses.KEY_F2: 1, curses.KEY_F3: 2,
+               curses.KEY_F4: 3}.get(k)
         if tab is not None:
             self.tab, self.msg = tab, ""
             return
-        common = {ord("J"): self._side_down, ord("K"): self._side_up,
-                  ord("a"): self._name_add, ord("e"): self._name_edit,
-                  ord("D"): self._name_delete, ord("q"): self._quit,
-                  ord("s"): self._save_here}.get(k)
+        common = {ord("q"): self._quit, ord("s"): self._save_here}.get(k)
         if common:
             return common(now)
         if k == ESC:
             return self._escape(now)
         if self.tab == 1:
-            return self._virtual_key(k, now)
+            return self._surfaces_key(k, now)
         if self.tab == 2:
+            return self._virtual_key(k, now)
+        if self.tab == 3:
             if k in ARROWS:
                 self.rscroll = max(0, self.rscroll + ARROWS[k][1] * 3)
             elif k in (curses.KEY_NPAGE, ord(" ")):
@@ -850,6 +858,17 @@ class App:
     def side_name(self):
         return self.names[self.side][0] if self.names else None
 
+    def _surfaces_key(self, k, now):
+        """The SURFACES tab: the names, edited here and nowhere else."""
+        if k in (curses.KEY_DOWN, ord("j")):
+            return self._side_down(now)
+        if k in (curses.KEY_UP, ord("k")):
+            return self._side_up(now)
+        act = {ord("a"): self._name_add, ord("e"): self._name_edit,
+               ord("D"): self._name_delete}.get(k)
+        if act:
+            return act(now)
+
     def _side_down(self, now):
         if self.names:
             self.side = (self.side + 1) % len(self.names)
@@ -958,7 +977,8 @@ class App:
             self.vpanel = (self.vpanel + (1 if k == 9 else -1)) % n
             return
         act = {ord("g"): self._vregion, ord("x"): self._vclear,
-               ord("f"): self._vdefault, ord("F"): self._vnodefault,
+               ord("f"): lambda now: self._pick("default"),
+               ord("F"): self._vnodefault,
                ord("+"): lambda now: self._regrid(1, 0),
                ord("-"): lambda now: self._regrid(-1, 0),
                ord("]"): lambda now: self._regrid(0, 1),
@@ -966,19 +986,61 @@ class App:
         if act:
             return act(now)
         if k in ENTER:
-            return self._vplace(now)
+            return self._pick("place")
+
+    # --- the picker: which name goes on the selected spot -----------------
+    def _pick(self, mode):
+        """Open the picker over the names. PLACE puts the choice on the
+        selected spot; DEFAULT makes it the default there. It starts on what
+        is there now, so Enter twice changes nothing."""
+        if self._blocked():
+            return
+        if not self.names:
+            self.msg = "no names yet: tab 2 adds them"
+            return
+        if self.vspot()[0] is None:
+            return
+        here = [x.name for x in self.at_spot()] if mode == "place" else \
+            [self.default.name] if self.default else []
+        names = [n for n, _ in self.names]
+        self.pick = {"mode": mode, "filter": "",
+                     "sel": names.index(here[0]) if here else 0}
+        self.dialog = ("pick", None)
+
+    def pick_list(self):
+        """The names the picker shows: those whose name or label holds what
+        has been typed, in the list's order."""
+        f = self.pick["filter"].lower()
+        return [(n, lab) for n, lab in self.names
+                if f in n.lower() or f in lab.lower()]
+
+    def _pick_key(self, k, now):
+        pk, shown = self.pick, self.pick_list()
+        if k == ESC:
+            self.pick, self.dialog = None, None
+        elif k in ENTER:
+            if shown:
+                n = shown[min(pk["sel"], len(shown) - 1)][0]
+                self.pick, self.dialog = None, None
+                (self._vplace if pk["mode"] == "place" else
+                 self._vdefault)(n)
+        elif k == curses.KEY_DOWN:
+            pk["sel"] = min(pk["sel"] + 1, max(0, len(shown) - 1))
+        elif k == curses.KEY_UP:
+            pk["sel"] = max(pk["sel"] - 1, 0)
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            pk["filter"], pk["sel"] = pk["filter"][:-1], 0
+        elif 32 < k < 127:
+            pk["filter"], pk["sel"] = pk["filter"] + chr(k), 0
 
     def _vregion(self, now):
         self.vregion = (self.vregion + 1) % len(REGIONS)
 
-    def _vplace(self, now):
-        """Put the sidebar's name HERE. A name is in one place per desk, so
-        it MOVES if it was elsewhere; whatever overlapped this spot goes."""
+    def _vplace(self, n):
+        """Put name N HERE. A name is in one place per desk, so it MOVES if
+        it was elsewhere; whatever overlapped this spot goes."""
         o, rg = self.vspot()
-        n = self.side_name()
         if self._blocked() or o is None or n is None:
-            if n is None:
-                self.msg = "no names yet: a adds one"
             return
         gone = [x.name for x in self.at_spot() if x.name != n]
         self.surfaces = [x for x in self.surfaces
@@ -996,11 +1058,10 @@ class App:
             self.surfaces = [x for x in self.surfaces if x not in gone]
             self.msg = "cleared " + ", ".join(x.name for x in gone)
 
-    def _vdefault(self, now):
-        """The sidebar's name becomes the DEFAULT on this panel and region:
-        where every cell no surface claims falls. Not also a surface."""
+    def _vdefault(self, n):
+        """Name N becomes the DEFAULT on this panel and region: where every
+        cell no surface claims falls. Not also a surface."""
         o, rg = self.vspot()
-        n = self.side_name()
         if self._blocked() or o is None or n is None:
             return
         self.surfaces = [x for x in self.surfaces if x.name != n]
@@ -1065,6 +1126,8 @@ class App:
         kind = self.dialog[0]
         if kind == "name":
             return self._form_key(k)
+        if kind == "pick":
+            return self._pick_key(k, now)
         if kind == "delname":
             if k in (ord("y"), ord("D")):
                 self._name_gone()
@@ -1093,15 +1156,38 @@ class App:
 
 # --- the view: drawing only --------------------------------------------------
 
-TABS = ("Physical", "Virtual", "Review")
+TABS = ("Physical", "Surfaces", "Virtual", "Review")
 HELP = (
     "Tab/arrows select  m move  r rotate  w swap  o off/on  i identify"
     "  p preview",
-    "arrows cell  Tab panel  g region  Enter place  x clear  f default"
-    "  F no default  +/- columns  ]/[ rows",
-    "arrows / PgUp PgDn scroll the map as it will be saved")
-HELP_ALL = "1/2/3 tabs  J/K name  a add  e label  D delete  s save  q quit"
+    "arrows select  a add  e label  D delete",
+    "arrows cell  Tab panel  g region  Enter place  f default"
+    "  F no default  x clear  +/- columns  ]/[ rows",
+    "arrows / PgUp PgDn scroll")
+HELP_ALL = "1-4 tabs  s save  q quit"
 SIDE_W = 26             # the sidebar's columns, when the screen has them
+
+# Line drawing: the box-drawing glyphs on a UTF-8 terminal, ASCII elsewhere
+# (a Linux text console, an odd locale). main() picks once, after setting the
+# locale; everything draws through G.
+ASCII = {"h": "-", "v": "|", "tl": "+", "tr": "+", "bl": "+", "br": "+"}
+UTF8 = {"h": "\u2500", "v": "\u2502", "tl": "\u250c", "tr": "\u2510",
+        "bl": "\u2514", "br": "\u2518"}
+G = dict(ASCII)
+
+
+def frame(scr, y, x, w, h, attr=0, title="", fill=False):
+    """A box in the line glyphs, TITLE set into its top edge; FILL clears
+    the inside, so one box drawn over another hides what is under it."""
+    top = G["tl"] + (" %s " % title if title else "")
+    put(scr, y, x, top + G["h"] * max(0, w - 1 - len(top)) + G["tr"], attr)
+    for r in range(1, h - 1):
+        if fill:
+            put(scr, y + r, x, G["v"] + " " * (w - 2) + G["v"], attr)
+        else:
+            put(scr, y + r, x, G["v"], attr)
+            put(scr, y + r, x + w - 1, G["v"], attr)
+    put(scr, y + h - 1, x, G["bl"] + G["h"] * max(0, w - 2) + G["br"], attr)
 
 
 def put(scr, y, x, text, attr=0):
@@ -1170,10 +1256,7 @@ def draw_desk(scr, app, top, rows, cols, left=1):
             attr = curses.color_pair(2) | curses.A_BOLD
         elif app.cur is o:
             attr = curses.color_pair(1) | curses.A_BOLD
-        put(scr, y0, x0, "+" + "-" * (w - 2) + "+", attr)
-        for r in range(1, h - 1):
-            put(scr, y0 + r, x0, "|" + " " * (w - 2) + "|", attr)
-        put(scr, y0 + h - 1, x0, "+" + "-" * (w - 2) + "+", attr)
+        frame(scr, y0, x0, w, h, attr, fill=True)
         boxes.append((o, x0, y0, w, h, attr))
     # Labels after EVERY box, so one that spills is not drawn over.
     for o, x0, y0, w, h, attr in boxes:
@@ -1216,6 +1299,8 @@ def draw_dialog(scr, app, now):
                  else "not placed"),
                 "A desk elsewhere that places it makes the save refuse.",
                 "", "y  delete it", "Esc  keep it"]
+    elif kind == "pick":
+        text = pick_lines(app)
     elif kind == "quit":
         text = (["Unsaved changes.", ""] +
                 [("> " if arg == key else "  ") + line for key, line in QUIT]
@@ -1232,10 +1317,28 @@ def box(scr, text):
     bw = max(len(t) for t in text) + 6
     y0, x0 = max(0, (h - len(text) - 2) // 2), max(0, (w - bw) // 2)
     attr = curses.color_pair(4) | curses.A_BOLD
-    put(scr, y0, x0, "+" + "-" * (bw - 2) + "+", attr)
+    frame(scr, y0, x0, bw, len(text) + 2, attr, fill=True)
     for i, t in enumerate(text):
-        put(scr, y0 + 1 + i, x0, "|  " + t.ljust(bw - 5) + "|", attr)
-    put(scr, y0 + len(text) + 1, x0, "+" + "-" * (bw - 2) + "+", attr)
+        put(scr, y0 + 1 + i, x0 + 3, t, attr)
+
+
+def pick_lines(app):
+    """The picker: what the choice is for, the filter typed so far, and the
+    names that match it, the chosen one marked."""
+    pk, shown = app.pick, app.pick_list()
+    o, rg = app.vspot()
+    what = ("Place on cell %d,%d, %s of %s" % (app.vcell[0], app.vcell[1],
+                                              rg, o.conn)
+            if pk["mode"] == "place" else
+            "The DEFAULT: %s of %s, every cell nothing claims" % (rg, o.conn))
+    sel = min(pk["sel"], max(0, len(shown) - 1))
+    first = max(0, min(sel - 5, len(shown) - 12))
+    rows = ["%s %-20s %s" % ("> " if i == sel else "  ", n, lab)
+            for i, (n, lab) in enumerate(shown) if first <= i < first + 12]
+    return [what, "", "filter: " + pk["filter"] + "_", ""] + \
+        (rows or ["  (no name matches)"]) + \
+        ["", "type to filter  arrows choose  Enter %s  Esc cancel" %
+         ("place" if pk["mode"] == "place" else "set")]
 
 
 def label_of(app, name):
@@ -1294,21 +1397,56 @@ def review_lines(app):
         [""] + out
 
 
+def mark_of(app, n):
+    """A name's marker: D the default here, N placed here N times, - not
+    placed at this desk."""
+    here, dflt = app.placed(n)
+    return ("D" if dflt else "%d" % len(here) if here else "-"), \
+        bool(here or dflt)
+
+
 def draw_sidebar(scr, app, top, rows, width):
-    """Every surface name, marked: placed here (with how many), the
-    default, or not placed at this desk."""
+    """READ-ONLY: every surface name and its marker, a solid rule on its
+    right, its own legend at its foot. Names are edited in tab 2."""
     put(scr, top, 1, "SURFACES", curses.A_BOLD)
-    first = max(0, min(app.side - rows + 3, len(app.names) - rows + 2))
-    for i, (n, lab) in enumerate(app.names[first:first + rows - 2]):
-        j = first + i
-        here, dflt = app.placed(n)
-        mark = "D" if dflt else ("%d" % len(here) if here else "-")
-        attr = curses.A_REVERSE if j == app.side else 0
-        put(scr, top + 2 + i, 1, ("%s %s" % (mark, n))[:width - 2]
-            .ljust(width - 2), attr | (0 if here or dflt else curses.A_DIM))
+    room = rows - 4
+    for i, (n, lab) in enumerate(app.names[:room]):
+        mk, used = mark_of(app, n)
+        put(scr, top + 2 + i, 1, ("%s %s" % (mk, n))[:width - 2],
+            0 if used else curses.A_DIM)
+    if len(app.names) > room:
+        put(scr, top + 2 + room - 1, 1, "... %d more (tab 2)"
+            % (len(app.names) - room + 1), curses.A_DIM)
     if not app.names:
-        put(scr, top + 2, 1, "(none: a adds)", curses.A_DIM)
-    put(scr, top + rows - 1, 1, "D default  N placed", curses.A_DIM)
+        put(scr, top + 2, 1, "(none: tab 2 adds)", curses.A_DIM)
+    put(scr, top + rows - 2, 1, "D default here", curses.A_DIM)
+    put(scr, top + rows - 1, 1, "N placed N times  - not", curses.A_DIM)
+    for r in range(top - 1, top + rows):
+        put(scr, r, width, G["v"], curses.A_DIM)
+
+
+def draw_surfaces_tab(scr, app, top, rows, width, left):
+    """Tab 2: the names, with their labels and where each is at this desk;
+    the selected one lit. The one place names are added, relabelled and
+    deleted."""
+    put(scr, top, left, "%-3s%-22s%-24s%s" % ("", "NAME", "LABEL",
+                                              "AT THIS DESK"), curses.A_BOLD)
+    room = rows - 2
+    first = max(0, min(app.side - room + 1, len(app.names) - room))
+    for i, (n, lab) in enumerate(app.names[first:first + room]):
+        here, dflt = app.placed(n)
+        at = "; ".join("cell %d,%d %s %s" % (x.cx, x.cy, x.conn, x.region)
+                       for x in here)
+        if dflt:
+            at = (at + "; " if at else "") + "DEFAULT, %s %s" % (
+                app.default.conn, app.default.region)
+        mk, used = mark_of(app, n)
+        attr = curses.A_REVERSE if first + i == app.side else \
+            (0 if used else curses.A_DIM)
+        put(scr, top + 2 + i, left, ("%-3s%-22s%-24s%s" % (
+            mk, n, lab, at or "not placed"))[:width].ljust(width), attr)
+    if not app.names:
+        put(scr, top + 2, left, "no names yet: a adds one", curses.A_DIM)
 
 
 def draw_virtual(scr, app, top, rows, cols, left):
@@ -1331,18 +1469,10 @@ def draw_virtual(scr, app, top, rows, cols, left):
             cur = [cx, cy] == app.vcell
             battr = (curses.color_pair(1) | curses.A_BOLD) if cur else \
                 curses.A_DIM
-            put(scr, y0, x0, ("+ %d,%d " % (cx, cy)).ljust(cw - 1, "-")
-                + "+", battr)
-            for r in range(1, ch - 1):
-                put(scr, y0 + r, x0, "|", battr)
-                put(scr, y0 + r, x0 + cw - 1, "|", battr)
-            put(scr, y0 + ch - 1, x0, "+" + "-" * (cw - 2) + "+", battr)
+            frame(scr, y0, x0, cw, ch, battr, title="%d,%d" % (cx, cy))
             for o in on:
                 bx, by, w, h = cells(o, mx, my, sc, y0 + 1, x0 + 2)
-                put(scr, by, bx, "+" + "-" * (w - 2) + "+")
-                for r in range(1, h - 1):
-                    put(scr, by + r, bx, "|" + " " * (w - 2) + "|")
-                put(scr, by + h - 1, bx, "+" + "-" * (w - 2) + "+")
+                frame(scr, by, bx, w, h, fill=True)
                 if cur and o is sel_o:
                     rx, ry, rw, rh = region_rect(sel_r, w - 2, h - 2)
                     for r in range(rh):
@@ -1395,18 +1525,22 @@ def render(scr, app, now):
         tabs, ("  " + state) if state else "",
         "  labels on" if app.ident else "",
         "  (unsaved)" if app.dirty() else ""), curses.A_BOLD)
-    # The key help wraps by whole entries rather than lose its tail at the
-    # screen edge, and everything above it moves up to make room.
+    # One help line: this tab's keys, then the global ones. It wraps by
+    # whole entries rather than lose its tail at the screen edge, and
+    # everything above it moves up to make room.
     keys = ["  ".join(line) for line in
             pack((HELP[app.tab] + "  " + HELP_ALL).split("  "), w - 2)]
     b = h - len(keys)
-    sw = SIDE_W if w >= 70 else 0
+    # The sidebar everywhere but tab 2, which IS the list of names.
+    sw = SIDE_W if w >= 70 and app.tab != 1 else 0
     if sw:
         draw_sidebar(scr, app, 2, b - 3, sw)
-    left = sw + 1
+    left = sw + 2 if sw else 1
     if app.tab == 0:
-        draw_physical(scr, app, b, w - 1 - sw, left)
+        draw_physical(scr, app, b, w - 1 - left, left)
     elif app.tab == 1:
+        draw_surfaces_tab(scr, app, 2, b - 3, w - 2, left)
+    elif app.tab == 2:
         draw_virtual(scr, app, 2, b - 5, w - 1 - left, left)
     else:
         # Wrapped to the width, scrolled by the arrows; the scroll stops
@@ -1472,6 +1606,12 @@ def main(argv):
               " placements to script it", file=sys.stderr)
         return 2
     os.environ.setdefault("ESCDELAY", "25")
+    # The locale first: curses draws the box glyphs only under it, and only
+    # a UTF-8 terminal gets them (a Linux text console stays ASCII).
+    import locale
+    locale.setlocale(locale.LC_ALL, "")
+    if locale.getpreferredencoding(False).upper().replace("-", "") == "UTF8":
+        G.update(UTF8)
     hw = Hwdp()
     app = App(Desk(hw.geometry(), hw.repack), hw)
 

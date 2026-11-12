@@ -325,15 +325,20 @@ a.key(ord("w"), 0); a.key(27, 0)
 check("Esc drops the mark and asks nothing", a.mark is None
       and a.dialog is None, a.dialog)
 
-# --- the sidebar: global names ------------------------------------------------
+# --- tab 2, Surfaces: the names, edited here and nowhere else ----------------
 def typed(a, text):
     for ch in text:
         a.key(ord(ch), 0)
 
 a, (p, l), hw = app()
-check("the sidebar starts on the first name", a.side_name() == "comms")
-a.key(ord("J"), 0)
-check("J moves down the names", a.side_name() == "mail")
+a.key(ord("a"), 0)
+check("outside tab 2 the name keys do nothing", a.dialog is None
+      and len(a.names) == 2, a.dialog)
+a.key(ord("2"), 0)
+check("2 is the surfaces tab, on the first name",
+      a.tab == 1 and a.side_name() == "comms", (a.tab, a.side_name()))
+a.key(curses.KEY_DOWN, 0)
+check("down moves through the names", a.side_name() == "mail")
 a.key(ord("a"), 0)
 check("a opens the name form", a.dialog[0] == "name")
 typed(a, "chat"); a.key(9, 0); typed(a, "Chat Room"); a.key(10, 0)
@@ -351,43 +356,58 @@ a.key(curses.KEY_BACKSPACE, 0); typed(a, "ms"); a.key(10, 0)
 check("the label is changed", a.names[-1] == ["chat", "Chat Rooms"],
       a.names)
 
-# --- the virtual tab: placing names on the grid ------------------------------
+# --- tab 3, Virtual: placing names through the picker -------------------------
 a, (p, l), hw = app()
-a.key(ord("2"), 0)
-check("2 is the virtual tab, a 2x2 for a desk with no grid",
-      a.tab == 1 and a.grid == (2, 2), (a.tab, a.grid))
+a.key(ord("3"), 0)
+check("3 is the virtual tab, a 2x2 for a desk with no grid",
+      a.tab == 2 and a.grid == (2, 2), (a.tab, a.grid))
 a.key(10, 0)
-check("Enter places the sidebar's name on the selected spot",
+check("Enter opens the picker over the names", a.dialog[0] == "pick"
+      and [n for n, _ in a.pick_list()] == ["comms", "mail"], a.dialog)
+a.key(27, 0)
+check("Esc closes the picker and places nothing",
+      a.dialog is None and a.surfaces == [])
+a.key(10, 0); a.key(10, 0)
+check("Enter in the picker places the chosen name on the spot",
       [x.key() for x in a.surfaces] == [("comms", "DP-1", "full", 0, 0)],
       [x.key() for x in a.surfaces])
-a.key(ord("g"), 0); a.key(ord("g"), 0); a.key(ord("J"), 0); a.key(10, 0)
+a.key(ord("g"), 0); a.key(ord("g"), 0); a.key(10, 0)
+check("the picker starts on what is there now", a.pick_list()[
+      a.pick["sel"]][0] == "comms", a.pick)
+a.key(curses.KEY_DOWN, 0); a.key(10, 0)
 check("a half placed over a whole panel replaces it, and says so",
       [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 0, 0)]
       and "replaced comms" in a.msg, ([x.key() for x in a.surfaces], a.msg))
-a.key(curses.KEY_RIGHT, 0); a.key(10, 0)
+a.key(curses.KEY_RIGHT, 0); a.key(10, 0); typed(a, "mai")
+check("typing filters the picker", [n for n, _ in a.pick_list()]
+      == ["mail"], a.pick_list())
+a.key(10, 0)
 check("a name is in one place per desk: placing it again MOVES it",
       [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 1, 0)],
       [x.key() for x in a.surfaces])
 a.key(ord("x"), 0)
 check("x clears the spot", a.surfaces == [])
-a.key(9, 0); a.key(ord("K"), 0); a.key(ord("f"), 0)
-check("f makes the sidebar's name the default on that panel and region",
+a.key(9, 0); a.key(ord("f"), 0)
+check("f opens the picker for the default", a.pick["mode"] == "default")
+a.key(10, 0)
+check("the picked name becomes the default on that panel and region",
       a.default and a.default.key() == ("comms", "DP-2", "bottom", None,
                                         None), a.default and a.default.key())
-a.key(10, 0)
+a.key(10, 0); a.key(10, 0)
 check("placing the default's name makes it a surface, not both",
       a.default is None and a.surfaces[0].name == "comms")
 a.key(ord("+"), 0)
 check("+ adds a column", a.grid == (3, 2), a.grid)
-a.key(curses.KEY_RIGHT, 0); a.key(10, 0); a.key(ord("-"), 0)
+a.key(curses.KEY_RIGHT, 0); a.key(10, 0); a.key(10, 0); a.key(ord("-"), 0)
 check("shrinking refuses while the column holds a surface",
       a.grid == (3, 2) and "fall off" in a.msg, (a.grid, a.msg))
 
 # --- saving: names around the desk, in two steps ------------------------------
 a, (p, l), hw = app()
-a.key(ord("2"), 0); a.key(10, 0)                 # comms placed
-a.key(ord("J"), 0); a.key(ord("D"), 0); a.key(ord("y"), 0)   # mail deleted
-a.key(ord("a"), 0); typed(a, "chat"); a.key(10, 0)           # chat added
+a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0)              # comms placed
+a.key(ord("2"), 0); a.key(curses.KEY_DOWN, 0)
+a.key(ord("D"), 0); a.key(ord("y"), 0)                      # mail deleted
+a.key(ord("a"), 0); typed(a, "chat"); a.key(10, 0)          # chat added
 a.key(ord("s"), 0)
 kinds = [c[0] for c in hw.calls]
 check("names, then the desk, then the names again without the deleted one",
@@ -401,14 +421,14 @@ check("the desk save carries the grid and the surfaces",
 
 a, (p, l), hw = app()
 hw.rc["write"] = 2
-a.key(ord("2"), 0); a.key(10, 0); a.key(ord("s"), 0)
+a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
 check("a refused desk write stays and says so", not a.done and a.dirty()
       and a.msg == "saving the desk: said no", a.msg)
 
 d, outs, hw = desk()
 hw.surf = (None, None, "a broken line")
 a = tui.App(d, hw)
-a.key(ord("a"), 0)
+a.key(ord("2"), 0); a.key(ord("a"), 0)
 check("files hwdp refuses are not edited on top of",
       a.dialog is None and "cannot be edited" in a.msg, a.msg)
 
@@ -428,12 +448,12 @@ check("regions are read back from the fractions",
 
 # The review: gaps are named with no default, and gone with one.
 a, (p, l), hw = app()
-a.key(ord("2"), 0); a.key(10, 0)
+a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0)
 rv = tui.review_lines(a)
 check("the review names the gaps when there is no default",
       any("gap(s) and no default" in x for x in rv)
       and any("not placed here: mail" in x for x in rv), rv[:4])
-a.key(9, 0); a.key(ord("J"), 0); a.key(ord("f"), 0)
+a.key(9, 0); a.key(ord("f"), 0); typed(a, "mail"); a.key(10, 0)
 rv = tui.review_lines(a)
 check("with a default the review has no gaps",
       not any("gap(s)" in x for x in rv), rv[:4])

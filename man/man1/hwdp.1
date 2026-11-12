@@ -211,22 +211,12 @@ applies them LIVE without saving anything, and
 .B \-\-revert
 puts back what is saved (both exit 5 with no supervisor running).
 .IP
-WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE desk tool: three
-tabs over one desk
-.RB ( 1 ", " 2 ", " 3 ),
-beside a sidebar of every surface NAME, each marked placed here (with how
-many), the default, or not placed at this desk.
-.B J
-and
-.B K
-move through the names,
-.B a
-adds one (a name, fixed once made, and a label for workspace names),
-.B e
-edits its label and
-.B D
-deletes it from every desk's list after asking (a desk elsewhere that still
-places it makes the save refuse).
+WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE desk tool: four
+tabs over one desk, in the order you work
+.RB ( 1 " to " 4 ),
+beside a READ-ONLY sidebar of every surface NAME, each marked placed here
+(with how many), the default, or not placed at this desk. Lines are drawn in
+box glyphs on a UTF-8 terminal and ASCII elsewhere.
 PHYSICAL is the layout, the live arrangement drawn as boxes, edited in place.
 Tab or the arrows select a monitor;
 .B r
@@ -254,17 +244,27 @@ toggles a label on every monitor (see
 always taken down when the tool exits;
 .B p
 previews live with a countdown that reverts unless kept.
+SURFACES is the names, each with its label and where it is at this desk, and
+the one place they are edited: the arrows select,
+.B a
+adds one (a name, fixed once made, and a label for workspace names),
+.B e
+edits its label and
+.B D
+deletes it from every desk's list after asking (a desk elsewhere that still
+places it makes the save refuse).
 VIRTUAL is the grid, a miniature of the desk in every workspace cell (2x2 for
 a desk with none): the arrows select a cell, Tab a panel in it,
 .B g
-cycles the region, Enter places the sidebar's name there (a name is in one
-place per desk, so it moves; what overlapped goes),
+cycles the region, Enter opens a PICKER of the names (typing filters it,
+Enter places the choice; a name is in one place per desk, so it moves, and
+what overlapped goes),
 .B x
 clears the spot,
 .B f
-and
+picks the DEFAULT for the spot and
 .B F
-set and clear the DEFAULT,
+clears it,
 .BR + " and " \-
 add and remove a column,
 .BR ] " and " [
