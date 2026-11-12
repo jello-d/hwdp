@@ -30,7 +30,7 @@
 # panel in one workspace. A surface is a place, never an app.
 #
 # TWO KINDS OF FILE, by who changes them:
-#   $HWDP_SURFACE_NAMES (~/.config/hwdp/surfaces.names): every surface NAME,
+#   $HWDP_SURFACE_NAMES ($HWDP_DESKS/surfaces.names): every surface NAME,
 #     global across desks, `name [label]`. The same name at two desks is the
 #     same role, which is how a consumer carries a window from one desk to
 #     the next, so a name a desk places must be listed here, or the desk is
@@ -89,7 +89,17 @@ esac
 _cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwdp
 SURF=${HWDP_SURFACES:-$_cfg/surfaces}
 DESKS=${HWDP_DESKS:-$_cfg/desks}
-NAMES=${HWDP_SURFACE_NAMES:-$_cfg/surfaces.names}
+# The names list sits IN the desks dir (not a .conf, so never read as a
+# desk): one directory then holds everything the desk tool writes, which an
+# integrator can record whole without taking the rest of ~/.config/hwdp.
+# Its first home was ~/.config/hwdp/surfaces.names, still used (read AND
+# written) while it is there and the new one is not, so moving it is a plain
+# `mv` at any moment rather than a flag day.
+NAMES=${HWDP_SURFACE_NAMES:-$DESKS/surfaces.names}
+if [ -z "${HWDP_SURFACE_NAMES:-}" ] && [ ! -e "$NAMES" ] \
+    && [ -f "$_cfg/surfaces.names" ]; then
+  NAMES=$_cfg/surfaces.names
+fi
 
 # write_names: REPLACE the names list from `name [label]` lines on stdin, the
 # ONE writer of it. Refused whole (exit 2) on a bad or doubled name, and on

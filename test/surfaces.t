@@ -200,10 +200,9 @@ pass "--write: resolves, keeps the unseen, backs up, refuses whole"
 # --- desk files: names, grid, default, and the R7 map -------------------------
 # The plain record is FROZEN at eight fields (usher refuses a map whole on any
 # other count), so everything new is --map, --grid, --names and --check.
-NM=$T/home/.config/hwdp/surfaces.names
-mkdir -p "$(dirname "$NM")"
-printf '%s\n' 'comms Work Comms' 'code' 'elsewhere Elsewhere' 'spare' > "$NM"
+NM=$T/desks/surfaces.names      # the names list lives IN the desks dir
 rm -rf "$T/desks"; mkdir -p "$T/desks"
+printf '%s\n' 'comms Work Comms' 'code' 'elsewhere Elsewhere' 'spare' > "$NM"
 _pid() { env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
   HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --panels \
   | awk -v c="$1" '$1 == c { print $2 }'; }
@@ -307,3 +306,16 @@ grep -q '`comms` is placed by' "$T/err" \
 printf 'a\na\n' | wn >/dev/null 2>&1 && fail "--write-names took a doubled name"
 [ "$(cksum < "$NM")" = "$_before" ] || fail "a refusal must leave the list"
 pass "--write-names: refuses to drop a placed name or double one, else writes"
+
+# The names list's first home (~/.config/hwdp/surfaces.names) is still read,
+# and written, while the new one (in the desks dir) does not exist.
+mv "$NM" "$T/home/.config/hwdp/surfaces.names" 2>/dev/null \
+  || { mkdir -p "$T/home/.config/hwdp"
+       mv "$NM" "$T/home/.config/hwdp/surfaces.names"; }
+[ "$(run --names | sed -n 1p)" = "comms Work Comms" ] \
+  || fail "the old names path must still be read: $(run --names)"
+printf '%s\n' 'comms' 'code' 'elsewhere' 'spare' 'extra' 'later' | wn \
+  >/dev/null || fail "writing at the old path failed"
+[ ! -e "$NM" ] && grep -qx later "$T/home/.config/hwdp/surfaces.names" \
+  || fail "the writer must write where it read, until the file is moved"
+pass "the names list's first home is still read and written until moved"
