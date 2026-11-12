@@ -394,6 +394,9 @@ profile_text() {
 BACKUPS=${HWDP_BACKUPS:-${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/profiles}
 profile_install() {
   _pdst=$PROFILES/$1.conf
+  # 0644, as every profile is: <tmp> comes from mktemp, which makes 0600, and
+  # an integrator that records profiles records their mode too.
+  chmod 644 "$2"
   if [ -f "$_pdst" ] && cmp -s "$2" "$_pdst"; then
     rm -f "$2"
   elif [ -f "$_pdst" ]; then

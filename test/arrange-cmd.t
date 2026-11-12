@@ -134,6 +134,10 @@ grep -q 'SN-DP-1" mode 3840x2160@60.000Hz transform 90 position 0,0$' "$P" \
 # kanshi leaves what a profile does not name UNCHANGED, so `normal` must be
 # said: an omitted one kept a panel rotated before the profile applied rotated
 # (a portrait and a landscape swapped at the desk, and only one turned).
+# 0644 like every profile: the temp it is built in comes from mktemp (0600),
+# and an integrator that records profiles records their mode too.
+[ "$(stat -c %a "$P")" = 644 ] \
+  || fail "the profile must be 0644: $(stat -c %a "$P")"
 grep -q 'SN-DP-2" mode 3840x2160@60.000Hz transform normal position ' "$P" \
   || fail "an unrotated output must say transform normal: $(grep SN-DP-2 "$P")"
 grep -q 'SN-DP-2" .*transform normal position ' "$T/out" \
