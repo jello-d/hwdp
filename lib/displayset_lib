@@ -363,14 +363,17 @@ profile_text() {
       printf "profile hwdp-%s {\n", id
       # The built-in ROLE carries no mode: the mode belongs to whichever
       # laptop is present, and layout fills it in from the live one.
+      # The transform is ALWAYS written, normal included: kanshi leaves what
+      # a profile does not name unchanged, so an omitted `normal` kept a
+      # panel that was rotated before the profile applied rotated.
       for (i = 1; i <= n; i++)
         if (NM[i] == "@builtin")
-          printf "    output \"%s\" position %s,%s%s\n", NM[i], X[i], Y[i], \
-            (TR[i] != "normal") ? " transform " TR[i] : ""
+          printf "    output \"%s\" transform %s position %s,%s\n", \
+            NM[i], TR[i], X[i], Y[i]
         else
-          printf "    output \"%s\" mode %sx%s@%.3fHz%s position %s,%s\n", \
-            NM[i], MW[i], MH[i], RATE[i], \
-            (TR[i] != "normal") ? " transform " TR[i] : "", X[i], Y[i]
+          printf "    output \"%s\" mode %sx%s@%.3fHz transform %s" \
+            " position %s,%s\n", NM[i], MW[i], MH[i], RATE[i], TR[i], \
+            X[i], Y[i]
       for (i = 1; i <= f; i++) printf "    output \"%s\" disable\n", OFF[i]
       print "}"
     }'

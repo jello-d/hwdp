@@ -127,6 +127,17 @@ gen_template() {
             sub(/" /, "\" mode " m " ")
           print }') ;;
     esac
+    # An enabled line with no `transform` gets `transform normal`. kanshi
+    # leaves whatever a profile does not name UNCHANGED, while hwdp reads an
+    # absent transform as normal (config_rects), so a panel rotated before
+    # this profile applied STAYED rotated: swapping a portrait and a
+    # landscape at the desk turned one and not the other. Profiles written
+    # before the writer said it explicitly are what this is for.
+    case $_l in
+      *'output "'*' disable'|*' transform '*) ;;
+      *'output "'*) _l=$(printf '%s' "$_l" \
+                         | sed 's/ position / transform normal position /') ;;
+    esac
     case $_l in
       # A disabled output takes no scale: it occupies nothing, and the line is
       # what keeps the profile MATCHING kanshi (see cmd/capture).

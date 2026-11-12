@@ -131,6 +131,25 @@ grep -q '^# hwdp-rect "Acme MODEL SN-DP-2" 2160 840 3840 2160$' "$P" \
   || fail "the rects layout re-places from must be written"
 grep -q 'SN-DP-1" mode 3840x2160@60.000Hz transform 90 position 0,0$' "$P" \
   || fail "the rotated output line is wrong: $(grep SN-DP-1 "$P")"
+# kanshi leaves what a profile does not name UNCHANGED, so `normal` must be
+# said: an omitted one kept a panel rotated before the profile applied rotated
+# (a portrait and a landscape swapped at the desk, and only one turned).
+grep -q 'SN-DP-2" mode 3840x2160@60.000Hz transform normal position ' "$P" \
+  || fail "an unrotated output must say transform normal: $(grep SN-DP-2 "$P")"
+grep -q 'SN-DP-2" .*transform normal position ' "$T/out" \
+  || fail "kanshi's config must say transform normal: $(cat "$T/out")"
+# A profile from before that, with no transform on the line, still reaches
+# kanshi with one: layout fills it in rather than inherit the live rotation.
+sed 's/ transform normal / /' "$P" > "$T/legacy.conf"
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" WAYLAND_DISPLAY=wayland-test \
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \
+  HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" KANSHI_PROFILES="$T/profiles" \
+  KANSHI_STICKY="$T/sticky" KANSHI_OUT="$T/legacy.out" \
+  KANSHI_TEMPLATE="$T/legacy.conf" sh "$KA" layout >/dev/null 2>&1
+grep -q 'SN-DP-2" .*transform normal position ' "$T/legacy.out" \
+  || fail "a legacy line must get transform normal: $(cat "$T/legacy.out")"
+grep -q 'SN-DP-1" .*transform 90 position ' "$T/legacy.out" \
+  || fail "a rotated legacy line must keep its own: $(cat "$T/legacy.out")"
 grep -q 'no supervisor is running' "$T/err" \
   || fail "with no supervisor it must say so: $(cat "$T/err")"
 grep -q 'SN-DP-2" .*position 2160,840 ' "$T/out" \

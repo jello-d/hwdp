@@ -89,7 +89,7 @@ P=$T/profiles/$desk_a.conf
 _o=$(run arrange DP-1 'DP-2 right-of DP-1 align bottom' \
   'eDP-1 below DP-2 align center' 2>&1) || fail "arrange on A failed: $_o"
 [ -f "$P" ] || fail "the profile must be filed under the desk id"
-grep -q '^    output "@builtin" position 2640,3840$' "$P" \
+grep -q '^    output "@builtin" transform normal position 2640,3840$' "$P" \
   || fail "the built-in must be the ROLE with no mode: \
 $(grep -i '@builtin\|SNA' "$P")"
 grep -q 'SNA' "$P" && fail "laptop A's own panel name leaked into the desk"
@@ -107,7 +107,7 @@ drm B yes
 LAPTOP=B run profile --missing && fail "B's desk is not unmapped"
 LAPTOP=B run layout >/dev/null 2>"$T/err" || fail "layout on B failed"
 _b='    output "Dell Latitude SNB" mode 1920x1200@60.000Hz'
-_b="$_b position 3120,3840 scale 1.00"
+_b="$_b transform normal position 3120,3840 scale 1.00"
 grep -qxF "$_b" "$T/out" \
   || fail "B's panel must be filled in, and re-placed CENTRED for its size: \
 $(grep -i 'SNB\|@builtin' "$T/out") $(cat "$T/err")"
