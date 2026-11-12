@@ -285,9 +285,9 @@ to arrange.
 answers that as a reminder's recheck wants it: 0 still needed, 1 not, 2 when
 it cannot tell (no displays). Headless.
 .TP
-.BR "hwdp surfaces" " [" \-\-check ]
+.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
-line each:
+line each (eight fields, FROZEN: a consumer refuses any other count):
 .IP
 .I "SURFACE CONNECTOR WS_X WS_Y X Y W H"
 .IP
@@ -295,10 +295,46 @@ X Y W H is the surface's rect INSIDE that output, in its logical pixels.
 A surface names a panel (by its EDID name, as a kanshi profile does), a part of
 it
 .RB ( top ", " bottom ", " left ", " right " or " full ,
-halves) and a workspace cell, in
-.IR ~/.config/hwdp/surfaces/<id>.conf :
+halves) and a workspace cell. A DESK FILE,
+.IR ~/.config/hwdp/desks/<desk-id>.conf ,
+else a GENERIC one for the desk's kind,
+.IR desks/<shape>.conf
+(so
+.I BL.conf
+serves any laptop on its own), else the older
+.IR surfaces/<id>.conf ,
+holds the grid, the surfaces and an optional DEFAULT:
 .IP
+.B grid 3 3
+.br
 .B surface comms """Dell Inc. U2720Q ABC123""" cell 0 0 bottom
+.br
+.B default elsewhere """@builtin"""
+.IP
+.B @builtin
+names whichever laptop panel is present. Every surface NAME is listed once,
+globally, in
+.I ~/.config/hwdp/surfaces.names
+.RI ( "name [label]" );
+the same name at two desks is the same role, so a desk placing a name that is
+not listed, or a cell outside its grid, is refused. A name a desk does not
+place is simply unplaced there.
+.B \-\-map
+is the workspace map: the eight fields, then
+.I "PANEL FX FY FW FH"
+(the panel id
+.B hwdp id \-\-panels
+prints, and the region as fractions), plus the DEFAULT as one record with
+.I "* *"
+for its cell, the region every cell no surface claims falls to.
+.B \-\-grid
+prints the desk's grid,
+.IR "W H" ,
+or nothing;
+.B \-\-names
+prints the names list,
+.I "name label"
+per line.
 .IP
 hwdp owns which part of which panel a name means at a desk, since only it can
 turn a fraction of a panel into pixels at the scale in force; what a name means
@@ -308,12 +344,17 @@ refused whole (exit 2, nothing on stdout), since a half-right map seeds windows
 into the wrong places. A surface on a switched-off panel is skipped and named
 on stderr. Needs a session (exit 3 without one).
 .B \-\-check
-describes each surface in words and notes a panel name that matches nothing
-attached, and a switched-on panel no surface uses.
+describes each surface and the default in words and notes a panel name that
+matches nothing attached, a switched-on panel no surface uses, gaps in the
+map when there is no default, and names this desk does not place.
 .B \-\-write
-REPLACES the file from
+writes THIS desk's own file (never a generic one) from
+.IR "grid <w> <h>" ,
 .I "surface <name> <connector> cell <x> <y> [region]"
-lines on stdin, the one writer of it: connectors are resolved to EDID names
+and
+.I "default <name> <connector> [region]"
+lines on stdin, the one writer of it (the grid read is kept when none is
+given): connectors are resolved to EDID names
 then and there, lines for a panel that is not switched on now are KEPT (a
 tool sees only the panels in front of it), the result is validated first and
 refused whole (exit 2) if broken, and the old file is kept under

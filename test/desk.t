@@ -65,6 +65,7 @@ run() {
     HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \
     HWDP_DRM="$T/drm" KANSHI_PROFILES="$T/profiles" \
     KANSHI_STICKY="$T/sticky" KANSHI_OUT="$T/out" HWDP_SURFACES="$T/surf" \
+    HWDP_DESKS="$T/desks" \
     LAPTOP="${LAPTOP:-A}" DOCK="${DOCK:-yes}" LID="${LID:-yes}" \
     sh "$KA" "$@"
 }
@@ -97,7 +98,7 @@ grep -q '^# hwdp-rect "@builtin" 2640 3840 2880 1800$' "$P" \
   || fail "the built-in's rect must be recorded by role"
 printf 'surface chat eDP-1 cell 0 0\nsurface comms DP-1 cell 0 0 bottom\n' \
   | run surfaces --write >/dev/null || fail "surfaces --write on A failed"
-grep -q '^surface chat "@builtin" cell 0 0$' "$T/surf/$desk_a.conf" \
+grep -q '^surface chat "@builtin" cell 0 0$' "$T/desks/$desk_a.conf" \
   || fail "a surface on the built-in must name the role"
 pass "laptop A files the desk by role: profile, rects and surfaces"
 

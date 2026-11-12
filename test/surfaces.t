@@ -50,6 +50,7 @@ run() {
     WAYLAND_DISPLAY="${WL-wayland-test}" \
     HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \
     HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" \
+    HWDP_DESKS="$T/desks" \
     LAPTOP_ON="${LAPTOP_ON:-yes}" \
     PORTRAIT_SCALE="${PORTRAIT_SCALE:-1.000000}" \
     sh "$KA" surfaces "$@"
@@ -136,7 +137,7 @@ _refuse "an unknown region" 'surface m "Dell WIDE SN3" cell 0 0 middle' \
 _refuse "an unquoted panel" 'surface m Dell cell 0 0' \
   'the panel must be a quoted EDID name'
 _refuse "not a surface line" 'surfaces m "Dell WIDE SN3" cell 0 0' \
-  'expected `surface <name>'
+  'expected `grid`, `surface` or `default`'
 # Opposite halves in one cell are NOT a clash (comms + mail above prove it);
 # the same half in a DIFFERENT cell is not either.
 printf 'surface late "Dell PORTRAIT SN2" cell 5 5 bottom\n' >> "$F"
@@ -159,11 +160,13 @@ wr() {
     WAYLAND_DISPLAY="${WL-wayland-test}" \
     HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \
     HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" \
+    HWDP_DESKS="$T/desks" \
     LAPTOP_ON="${LAPTOP_ON:-yes}" sh "$KA" surfaces --write
 }
 # The stub desk is a laptop panel beside externals, so --write files it under
-# the DESK id; the hand-written $F above is the exact-id (legacy) path.
-FD=$T/surf/$(env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+# the DESK id, in the DESKS dir; the hand-written $F above is the exact-id
+# path from before desk files, still read when there is no desk file.
+FD=$T/desks/$(env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
   HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --desk).conf
 rm -f "$FD"
 printf 'surface comms DP-1 cell 0 0 bottom\nsurface code DP-2 cell 1 0\n' \
@@ -191,5 +194,94 @@ grep -q 'NOT written' "$T/err" || fail "the refusal must say so"
 if printf 'surface a DP-9 cell 0 0\n' | wr >/dev/null 2>&1; then
   fail "--write accepted an unknown output"
 fi
-ls -A "$T/surf" | grep -q '^\.write' && fail "a temp dir was left behind"
+ls -A "$T/desks" | grep -q '^\.write' && fail "a temp dir was left behind"
 pass "--write: resolves, keeps the unseen, backs up, refuses whole"
+
+# --- desk files: names, grid, default, and the R7 map -------------------------
+# The plain record is FROZEN at eight fields (usher refuses a map whole on any
+# other count), so everything new is --map, --grid, --names and --check.
+NM=$T/home/.config/hwdp/surfaces.names
+mkdir -p "$(dirname "$NM")"
+printf '%s\n' 'comms Work Comms' 'code' 'elsewhere Elsewhere' 'spare' > "$NM"
+rm -rf "$T/desks"; mkdir -p "$T/desks"
+_pid() { env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --panels \
+  | awk -v c="$1" '$1 == c { print $2 }'; }
+cat > "$FD" <<'DESK'
+grid 3 2
+surface comms "Dell PORTRAIT SN2" cell 0 0 bottom
+surface code  "Dell WIDE SN3"     cell 1 0
+default elsewhere "@builtin"
+DESK
+_o=$(run 2>&1) || fail "a desk file must resolve: $_o"
+[ "$(printf '%s\n' "$_o" | awk 'NF != 8' | wc -l)" -eq 0 ] \
+  && [ "$(printf '%s\n' "$_o" | wc -l)" -eq 2 ] \
+  || fail "the plain record must stay 8 fields, no default line: $_o"
+_o=$(run --map 2>&1) || fail "--map failed: $_o"
+_want="comms DP-1 0 0 0 1920 2160 1920 $(_pid DP-1) 0 0.5 1 0.5
+code DP-2 1 0 0 0 3840 2160 $(_pid DP-2) 0 0 1 1
+elsewhere eDP-1 * * 0 0 2880 1800 $(_pid eDP-1) 0 0 1 1"
+[ "$_o" = "$_want" ] || fail "--map: expected
+$_want
+got
+$_o"
+[ "$(run --grid)" = "3 2" ] || fail "--grid: $(run --grid)"
+[ "$(run --names | sed -n 1p)" = "comms Work Comms" ] \
+  && [ "$(run --names | sed -n 2p)" = "code code" ] \
+  || fail "--names: a label defaults to the name: $(run --names)"
+run --check 2>&1 | grep -q '`spare` is not placed at this desk' \
+  || fail "--check must name an unplaced name: $(run --check 2>&1)"
+pass "--map: panel id and fractions appended, the default as * *; plain frozen"
+
+_refused() {   # <label> <line to add> <stderr text>
+  cp "$FD" "$T/desk.keep"; printf '%s\n' "$2" >> "$FD"
+  _o=$(run 2>"$T/err") && fail "$1: accepted"
+  _rc=$?; [ "$_rc" -eq 2 ] && [ -z "$_o" ] \
+    || fail "$1: must be exit 2 with nothing on stdout (rc=$_rc)"
+  grep -q "$3" "$T/err" || fail "$1: no '$3' in: $(cat "$T/err")"
+  cp "$T/desk.keep" "$FD"
+}
+_refused "a name not in the names file" \
+  'surface typo "Dell WIDE SN3" cell 2 0' 'not in the names file'
+_refused "a cell outside the grid" \
+  'surface spare "Dell WIDE SN3" cell 3 0' 'outside the grid'
+_refused "a name both placed and the default" \
+  'surface elsewhere "Dell WIDE SN3" cell 2 0' 'both a surface and'
+pass "a desk file is refused whole for an unlisted name or an off-grid cell"
+
+grep -v '^default' "$FD" > "$T/nodef"; cp "$T/nodef" "$FD"
+run --check 2>&1 | grep -q 'a gap in the map' \
+  || fail "--check must flag gaps with no default: $(run --check 2>&1)"
+pass "with no default, --check names the gaps in the map"
+
+# A GENERIC desk, found by the desk's KIND when it has no file of its own,
+# with the built-in named by its role. A laptop on its own: its own DRM
+# view, and wlr-randr told to show only the built-in.
+rm -f "$FD"
+mkdir -p "$T/drm-laptop/card1-eDP-1"
+printf connected > "$T/drm-laptop/card1-eDP-1/status"
+printf 'EDID-eDP-1' > "$T/drm-laptop/card1-eDP-1/edid"
+sed -i 's/^_out DP-/[ -n "${ONLY_LAPTOP:-}" ] || _out DP-/' "$T/bin/wlr-randr"
+printf '%s\n' 'grid 3 3' 'surface comms "@builtin" cell 0 0' \
+  'surface code "@builtin" cell 1 0' > "$T/desks/BL.conf"
+_o=$(env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+  WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
+  HWDP_PROVIDER_ROOT="$T/no-user" HWDP_DRM="$T/drm-laptop" \
+  XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" HWDP_DESKS="$T/desks" \
+  ONLY_LAPTOP=yes sh "$KA" surfaces 2>&1) || fail "generic BL failed: $_o"
+[ "$_o" = "comms eDP-1 0 0 0 0 2880 1800
+code eDP-1 1 0 0 0 2880 1800" ] \
+  || fail "a laptop alone must find BL.conf, @builtin its panel: $_o"
+pass "a desk with no file of its own finds the generic one for its kind"
+
+# --write from a generic file: it writes THIS desk's file and keeps the grid,
+# and the generic file is left exactly as it was.
+printf '%s\n' 'grid 3 3' 'surface comms "@builtin" cell 0 0' \
+  > "$T/desks/BL+EL+EP.conf"
+_g=$(cksum < "$T/desks/BL+EL+EP.conf")
+printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null \
+  || fail "--write from a generic desk failed"
+grep -qx 'grid 3 3' "$FD" || fail "--write must keep the grid: $(cat "$FD")"
+[ "$(cksum < "$T/desks/BL+EL+EP.conf")" = "$_g" ] \
+  || fail "--write must never change the generic file"
+pass "--write writes this desk's own file, keeping the generic one's grid"
