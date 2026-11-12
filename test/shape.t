@@ -54,7 +54,7 @@ run() {
     HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" \
     LAPTOP="${LAPTOP:-yes}" DP1="${DP1:-yes}" DP2="${DP2:-yes}" \
     DP1_TR="${DP1_TR:-90}" DP2_TR="${DP2_TR:-normal}" \
-    sh "$KA" shape
+    sh "$KA" shape ${SHAPE_ARG:-}
 }
 _is() {   # <label> <expected> [VAR=value ...]
   _l=$1; _e=$2; shift 2
@@ -74,6 +74,16 @@ _is "a 270 rotation is portrait too" BL+EL+EP DP1_TR=270
 _is "two portraits keep both tokens" BL+EP+EP DP2_TR=90
 _is "one external gone" BL+EP DP2=gone
 pass "the desk kind: built-in or not, orientation after rotation, sorted"
+
+# --outputs: each display's own token, the same rule, unsorted and unjoined,
+# so a consumer treating outputs by kind cannot drift from the shape.
+_nl='
+'
+_is "--outputs names each display's token" \
+  "eDP-1 BL${_nl}DP-1 EP${_nl}DP-2 EL" SHAPE_ARG=--outputs
+_is "--outputs follows a rotation, as the shape does" \
+  "eDP-1 BL${_nl}DP-1 EL${_nl}DP-2 EL" SHAPE_ARG=--outputs DP1_TR=normal
+pass "--outputs: each display's token, by the shape's own rule"
 
 # Headless (no compositor) the kernel's native modes decide, and they carry no
 # rotation: the portrait-mounted 4K reads landscape. Said, not guessed.

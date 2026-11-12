@@ -425,11 +425,8 @@ profile_install() {
 # the same as a portrait one. The grid, the workspace names and the wallpaper
 # are functions of what KIND of desk this is, which the count could not say.
 shape() {
-  heads | awk -F"$TAB" -v re="$HWDP_BUILTIN_RE" '
-    {
-      k = ($1 ~ re) ? "B" : "E"
-      t[++n] = k (($3 + 0 > $2 + 0) ? "P" : "L")
-    }
+  shape_tokens | awk -F"$TAB" '
+    { t[++n] = $2 }
     END {
       for (i = 2; i <= n; i++) {          # insertion sort, n is tiny
         v = t[i]; j = i - 1
@@ -439,6 +436,15 @@ shape() {
       for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? "+" : ""), t[i]
       if (n) printf "\n"
     }'
+}
+
+# shape_tokens: each head's own token, `<connector><TAB><token>`, one per
+# line in heads order. shape() is these, sorted and joined, so a consumer that
+# treats outputs differently by kind (a bar per output, say) asks this rather
+# than re-deriving built-in and orientation, and the two cannot disagree.
+shape_tokens() {
+  heads | awk -F"$TAB" -v OFS="$TAB" -v re="$HWDP_BUILTIN_RE" '
+    { print $1, (($1 ~ re) ? "B" : "E") (($3 + 0 > $2 + 0) ? "P" : "L") }'
 }
 
 # panel_width: the width in px of the first display, for density decisions.

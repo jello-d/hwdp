@@ -4,6 +4,12 @@
 # with `+` and sorted (BL, EL+EP, BL+EL+EP, EP+EP+EP). Empty with no displays.
 # The grid, workspace names, window rules and wallpaper key on it; see shape()
 # in displayset_lib for why sorted, and what a headless answer cannot know.
+#
+#   hwdp shape --outputs    each display's own token: `<connector> <token>`
 set -eu
 . "$HWDP_LIB/displayset_lib"
-shape
+case "${1:-}" in
+  '') shape ;;
+  --outputs) shape_tokens | tr '\t' ' ' ;;
+  *) echo "hwdp shape: unknown argument: $1 (try --outputs)" >&2; exit 2 ;;
+esac
