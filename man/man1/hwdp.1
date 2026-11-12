@@ -204,10 +204,10 @@ live layout drawn as boxes, edited in place. Tab or the arrows select a
 monitor;
 .B r
 rotates it a quarter turn (its neighbours re-pack to its new edge);
-.B s
+.B w
 marks it and
-.B s
-on another swaps their places;
+.B w
+(or Enter) on another swaps their places;
 .B m
 enters move mode, where the arrows step it 25 logical pixels and shift+arrow
 one; a step stops early at anything it would line up with on the way (flush
@@ -215,10 +215,10 @@ against an output, or aligned with its start, centre or end), only a step
 taken from flush jumps to a neighbour's far side, sliding off the end of an
 edge turns the corner onto the next side, and an output left touching nothing
 comes back flush in one step. Facing edges a little apart are flagged, since
-the pointer cannot cross that strip.
-.B m
-locks it and Esc undoes it; a save that waits on a slow hook says so on
-screen;
+the pointer cannot cross that strip. Enter (or
+.BR m )
+locks it and Esc undoes it. Enter only ever finishes what is in progress,
+and Esc only ever backs out of it;
 .B o
 switches it off or back on;
 .B n
@@ -230,13 +230,17 @@ toggles a label on every monitor (see
 .BR "hwdp identify" ),
 always taken down when the tool exits;
 .B p
-previews live with a countdown that reverts unless kept; Enter offers save
-and exit, save and continue, or cancel, and saves the layout and then the
-surfaces (through
-.BR "hwdp surfaces \-\-write" );
-q or Esc with unsaved changes asks
-first, and reverts a kept preview. It needs python3 (curses), and saves
-through the scripted form above.
+previews live with a countdown that reverts unless kept;
+.B s
+saves the layout and then the surfaces (through
+.BR "hwdp surfaces \-\-write" )
+and keeps editing, and a save that waits on a slow hook says so on screen;
+.B q
+quits, at once when nothing is unsaved, and otherwise asks: save and quit,
+discard and quit (which reverts a kept preview), or keep editing. Esc with
+nothing in progress asks the same, but there Enter answers keep editing,
+so a stray Esc never writes or discards anything. It needs python3
+(curses), and saves through the scripted form above.
 .TP
 .BR "hwdp identify" " [" \-\-seconds
 .IR N "] [" \-\-parent

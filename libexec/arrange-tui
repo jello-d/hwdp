@@ -5,14 +5,20 @@
 screen, the live one, edited in place:
 
     Tab / arrows  select a monitor          r  rotate it a quarter turn
-    s             swap (mark, then swap)    o  switch it off / back on
+    w             swap (mark, then swap)    o  switch it off / back on
     m             move mode: arrows step it 25px, stopping flush and at
                   every alignment on the way; a step from flush jumps past
                   a neighbour, and off an edge's end turns the corner;
-                  shift+arrow one pixel; m locks it, Esc undoes
+                  shift+arrow one pixel
     i             a label on every monitor, saying which one it is
     p             preview live, with a countdown that reverts unless kept
-    Enter         save (and exit, or keep going)       q / Esc  quit
+    s             save, and keep editing
+    Enter         finish what is in progress (lock a move, make a marked
+                  swap); nothing otherwise
+    Esc           back out of it (undo the move, drop the mark)
+    q             quit; with unsaved changes it asks: save and quit,
+                  discard and quit, or keep editing (Esc at the top asks
+                  the same, with keep editing as Enter's answer)
 
 THIS FILE ONLY DRAWS AND DECIDES WHAT A KEY MEANS. The arithmetic is hwdp's:
 sizes come from `hwdp geometry` (a quarter turn just swaps them), re-packing
@@ -511,7 +517,7 @@ class App:
         self.moving = None        # (output, x, y) it started the move at
         self.saved = desk.placements()
         self.live_unsaved = False  # a preview was KEPT but not saved
-        self.dialog = None        # ("save"|"quit"|"keep", deadline)
+        self.dialog = None        # (kind, its deadline or default)
         self.msg = ""
         self.ident = False
         self.done = False
@@ -549,16 +555,16 @@ class App:
             return self._move(k)
         if k in ARROWS or k in (9, curses.KEY_BTAB):
             return self._select(k)
-        action = {ord("r"): self._rotate, ord("s"): self._swap,
+        action = {ord("r"): self._rotate, ord("w"): self._swap,
                   ord("m"): self._move_mode, ord("o"): self._toggle_on,
                   ord("i"): self._identify, ord("p"): self._preview,
                   ord("q"): self._quit, ord("n"): self._name,
-                  ord("d"): self._delete}.get(k)
+                  ord("d"): self._delete, ord("s"): self._save_here}.get(k)
         if action:
             return action(now)
         if k in ENTER:
-            self.dialog = ("save", None)
-        elif k == ESC:
+            return self._commit(now)
+        if k == ESC:
             return self._escape(now)
 
     def tick(self, now):
@@ -602,7 +608,7 @@ class App:
             self.msg = "%s is off" % c.conn
         elif self.mark is None or self.mark is c:
             self.mark = None if self.mark is c else c
-            self.msg = ("%s marked: select another and press s"
+            self.msg = ("%s marked: select another and press w or Enter"
                         % c.conn) if self.mark else ""
         else:
             self.desk.swap(self.mark, c)
@@ -617,7 +623,7 @@ class App:
         elif c.on:
             self.moving = (c, c.x, c.y)
             self.msg = ("moving %s: arrows step, shift+arrow one pixel,"
-                        " m locks, Esc undoes" % c.conn)
+                        " Enter locks, Esc undoes" % c.conn)
 
     def _move(self, k):
         o = self.moving[0]
@@ -784,9 +790,26 @@ class App:
         else:
             self.dialog = ("delete", None)
 
-    def _quit(self, now):
+    def _save_here(self, now):
         if self.dirty():
-            self.dialog = ("quit", None)
+            self._save(now, False)
+        else:
+            self.msg = "nothing to save"
+
+    def _commit(self, now):
+        """Enter finishes what is in progress, and is nothing otherwise:
+        a move is locked, a marked swap is made with the selection."""
+        if self.moving:
+            self._move_mode(now)
+        elif self.mark and self.mark is not self.cur:
+            self._swap(now)
+
+    def _quit(self, now, default=ord("s")):
+        """Leave, at once when nothing is unsaved; otherwise ask. DEFAULT
+        is the answer Enter picks: save from q (leaving was asked for),
+        keep editing from Esc (a back-out key never writes or discards)."""
+        if self.dirty():
+            self.dialog = ("quit", default)
         else:
             self.done = True
 
@@ -800,7 +823,7 @@ class App:
         elif self.mark:
             self.mark, self.msg = None, ""
         else:
-            self._quit(now)
+            self._quit(now, ESC)
 
     def _dialog_key(self, k, now):
         kind = self.dialog[0]
@@ -816,35 +839,30 @@ class App:
                 self.dialog = None
                 self.msg = "surface %s removed" % gone.name
             return
-        if kind == "save":
+        if kind == "quit":
+            if k in ENTER:
+                k = self.dialog[1]
             if k == ord("s"):
                 self._save(now, True)
-            elif k == ord("c"):
-                self._save(now, False)
-            elif k in (ESC, ord("n")):
-                self.dialog = None
-        elif kind == "quit":
-            if k in (ord("q"), ord("y")):
+            elif k == ord("d"):
                 if self.live_unsaved:
                     self.hw.arrange("--revert", [])
                 self.done = True
-            elif k == ord("s"):
-                self._save(now, True)
-            elif k in (ESC, ord("n")):
+            elif k == ESC:
                 self.dialog = None
         elif kind == "keep":
             if k in (ord("y"), ord("k")) or k in ENTER:
                 self.live_unsaved = True
                 self.dialog = None
-                self.msg = "kept live; Enter saves it"
+                self.msg = "kept live; s saves it"
             elif k in (ESC, ord("n")):
                 self._revert("reverted")
 
 
 # --- the view: drawing only --------------------------------------------------
 
-HELP = ("Tab/arrows select  r rotate  s swap  m move  o off/on  i identify"
-        "  n name  d delete  p preview  Enter save  q quit")
+HELP = ("Tab/arrows select  m move  r rotate  w swap  o off/on  i identify"
+        "  n name  d delete  p preview  s save  q quit")
 
 
 def put(scr, y, x, text, attr=0):
@@ -865,6 +883,17 @@ def cells(o, mx, my, sc, top):
     y0 = round((o.y - my) * sc / 2) + top
     y1 = round((o.y + o.h - my) * sc / 2) + top
     return x0, y0, max(4, x1 - x0), max(3, y1 - y0)
+
+
+def pack(items, width, sep=2):
+    """Greedy lines of ITEMS (each kept whole) joined by SEP spaces."""
+    lines = [[]]
+    for it in items:
+        used = sum(map(len, lines[-1])) + sep * len(lines[-1])
+        if lines[-1] and used + len(it) > width:
+            lines.append([])
+        lines[-1].append(it)
+    return lines
 
 
 def wrap(lines, width):
@@ -948,8 +977,12 @@ def form_lines(app):
             f["err"] or "Tab next  arrows change  Enter add  Esc cancel"]
 
 
+QUIT = ((ord("s"), "s    save and quit"), (ord("d"), "d    discard and quit"),
+        (ESC, "Esc  keep editing"))
+
+
 def draw_dialog(scr, app, now):
-    kind, deadline = app.dialog
+    kind, arg = app.dialog          # a deadline, or the default answer
     if kind == "name":
         text = form_lines(app)
     elif kind == "delete":
@@ -958,18 +991,14 @@ def draw_dialog(scr, app, now):
                                               x.cx, x.cy)
                  for i, x in enumerate(app.on_cur()[:9])] +
                 ["", "Esc  keep them all"])
+    elif kind == "quit":
+        text = (["Unsaved changes.", ""] +
+                [("> " if arg == key else "  ") + line for key, line in QUIT]
+                + ["", "Enter picks the >"])
     else:
-        text = {
-        "save": ["Save this layout?", "",
-                 "s  save and exit", "c  save and continue",
-                 "Esc  cancel"],
-        "quit": ["Changes have not been saved.", "",
-                 "q  quit anyway", "s  save and exit", "Esc  go back"],
-        "keep": ["Keep this setting?", "",
-                 "y  keep it (Enter saves it later)", "n  revert now",
-                 "reverting in %ds" % max(0, int(deadline - now + 0.99))
-                 if deadline else ""],
-    }[kind]
+        text = ["Keep this setting?", "", "y  keep it (s saves it)",
+                "n  revert now",
+                "reverting in %ds" % max(0, int(arg - now + 0.99))]
     box(scr, text)
 
 
@@ -992,22 +1021,27 @@ def render(scr, app, now):
     put(scr, 0, 1, "hwdp arrange  [%s]%s%s" % (
         state, "  labels on" if app.ident else "",
         "  (unsaved)" if app.dirty() else ""), curses.A_BOLD)
-    draw_desk(scr, app, 2, h - 6, w - 1)
+    # The key help wraps by whole entries rather than lose its tail at the
+    # screen edge, and everything above it moves up to make room.
+    keys = ["  ".join(line) for line in pack(HELP.split("  "), w - 2)]
+    b = h - len(keys)
+    draw_desk(scr, app, 2, b - 5, w - 1)
     off = [o.conn for o in app.desk.outs if not o.on]
     if off:
-        put(scr, h - 4, 1, "off: " + "  ".join(off),
+        put(scr, b - 3, 1, "off: " + "  ".join(off),
             curses.color_pair(1) if not app.cur.on else 0)
     gaps = near_misses(app.desk, NEAR)
     if app.desk.faults():
-        put(scr, h - 3, 1, "the monitors do not meet edge to edge",
+        put(scr, b - 2, 1, "the monitors do not meet edge to edge",
             curses.color_pair(4) | curses.A_BOLD)
     elif gaps:
-        put(scr, h - 3, 1, "  ".join(
+        put(scr, b - 2, 1, "  ".join(
             "%dpx gap between %s and %s" % (g, a, b) for a, b, g in gaps) +
             " (the pointer cannot cross it)",
             curses.color_pair(4) | curses.A_BOLD)
-    put(scr, h - 2, 1, app.msg)
-    put(scr, h - 1, 1, HELP, curses.A_DIM)
+    put(scr, b - 1, 1, app.msg)
+    for i, line in enumerate(keys):
+        put(scr, b + i, 1, line, curses.A_DIM)
     if app.busy:
         what, since, line = app.busy
         box(scr, ["%s ... %ds" % (what, int(now - since)), "",

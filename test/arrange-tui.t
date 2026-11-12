@@ -185,6 +185,12 @@ check("move mode: shift+arrow moves one pixel", p.y == tui.STEP + 1, p.y)
 a.key(27, 0)
 check("Esc in move mode undoes the move", (p.x, p.y) == (0, 0)
       and a.moving is None, (p.x, p.y))
+a.key(ord("m"), 0); a.key(curses.KEY_DOWN, 0); a.key(10, 0)
+check("Enter in move mode locks the move", a.moving is None
+      and p.y == tui.STEP and a.dialog is None, (p.y, a.dialog))
+a.key(10, 0)
+check("Enter with nothing in progress does nothing",
+      a.dialog is None and not a.done and not hw.calls, (a.dialog, hw.calls))
 
 a, (p, l), hw = app()
 a.key(ord("q"), 0)
@@ -193,20 +199,40 @@ check("q with nothing changed just quits", a.done and a.dialog is None)
 a, (p, l), hw = app()
 a.key(ord("r"), 0)
 a.key(ord("q"), 0)
-check("q with changes asks first", not a.done and a.dialog[0] == "quit")
+check("q with changes asks first, save as Enter's answer",
+      not a.done and a.dialog == ("quit", ord("s")), a.dialog)
 a.key(27, 0)
-check("Esc in that dialog goes back", a.dialog is None and not a.done)
+check("Esc in that dialog keeps editing", a.dialog is None and not a.done)
+a.key(ord("s"), 0)
+check("s saves through arrange and stays",
+      hw.last()[0] is None and not a.done and not a.dirty()
+      and a.dialog is None, hw.calls)
+a.key(ord("s"), 0)
+check("s with nothing changed saves nothing",
+      len(hw.calls) == 1 and a.msg == "nothing to save", (hw.calls, a.msg))
+a.key(ord("r"), 0); a.key(ord("q"), 0); a.key(10, 0)
+check("q then Enter saves and quits", a.done and not a.dirty()
+      and len(hw.calls) == 2, hw.calls)
+
+a, (p, l), hw = app()
+a.key(ord("r"), 0); a.key(ord("q"), 0); a.key(ord("d"), 0)
+check("d in the exit prompt quits without saving",
+      a.done and not hw.calls, hw.calls)
+
+a, (p, l), hw = app()
+a.key(ord("r"), 0); a.key(27, 0)
+check("Esc at the top asks too, with keep editing as Enter's answer",
+      a.dialog == ("quit", 27), a.dialog)
 a.key(10, 0)
-check("Enter asks how to save", a.dialog[0] == "save")
-a.key(ord("c"), 0)
-check("save and continue saves through arrange and stays",
-      hw.last()[0] is None and not a.done and not a.dirty(), hw.calls)
-a.key(ord("r"), 0); a.key(10, 0); a.key(ord("s"), 0)
-check("save and exit saves and ends", a.done and not a.dirty())
+check("so Esc, Enter writes and discards nothing",
+      a.dialog is None and not a.done and a.dirty() and not hw.calls,
+      hw.calls)
+a.key(27, 0); a.key(ord("s"), 0)
+check("s in the exit prompt saves and quits", a.done and not a.dirty())
 
 a, (p, l), hw = app()
 hw.rc[None] = 2
-a.key(ord("r"), 0); a.key(10, 0); a.key(ord("s"), 0)
+a.key(ord("r"), 0); a.key(ord("s"), 0)
 check("a refused save stays, and says why", not a.done and a.dirty()
       and a.msg == "said no", a.msg)
 
@@ -222,7 +248,7 @@ class SlowHw(FakeHw):
 d, outs, hw = desk()
 hw.__class__ = SlowHw
 a = tui.App(d, hw)
-a.key(ord("r"), 0); a.key(10, 0); a.key(ord("s"), 0)
+a.key(ord("r"), 0); a.key(ord("q"), 0); a.key(ord("s"), 0)
 busy = list(a.busy or [])
 a.key(ord("q"), 0)
 check("a slow save shows what it waits on, and is not done yet",
@@ -248,8 +274,8 @@ a, (p, l), hw = app()
 a.key(ord("r"), 0); a.key(ord("p"), 0); a.key(ord("y"), 1)
 check("keeping a preview leaves it live, unsaved", a.live_unsaved
       and a.dialog is None)
-a.key(ord("q"), 2); a.key(ord("q"), 2)
-check("quitting with a kept preview reverts it first",
+a.key(ord("q"), 2); a.key(ord("d"), 2)
+check("discarding with a kept preview reverts it first",
       a.done and hw.last()[0] == "--revert", hw.calls)
 
 a, (p, l), hw = app()
@@ -273,9 +299,20 @@ a.key(9, 0); a.key(ord("o"), 0)
 check("the last one on cannot be switched off", l.on, a.msg)
 
 a, (p, l), hw = app()
-a.key(ord("s"), 0); a.key(9, 0); a.key(ord("s"), 0)
-check("s, select, s swaps", (l.x, p.x) == (0, 3840) and a.mark is None,
+a.key(ord("w"), 0); a.key(9, 0); a.key(ord("w"), 0)
+check("w, select, w swaps", (l.x, p.x) == (0, 3840) and a.mark is None,
       (l.x, p.x))
+a, (p, l), hw = app()
+a.key(ord("w"), 0); a.key(10, 0)
+check("Enter on the marked monitor itself does nothing",
+      a.mark is p and p.x == 0, (a.mark, p.x))
+a.key(9, 0); a.key(10, 0)
+check("w, select, Enter swaps", (l.x, p.x) == (0, 3840)
+      and a.mark is None, (l.x, p.x))
+a, (p, l), hw = app()
+a.key(ord("w"), 0); a.key(27, 0)
+check("Esc drops the mark and asks nothing", a.mark is None
+      and a.dialog is None, a.dialog)
 
 # --- naming surfaces ---------------------------------------------------------
 def typed(a, text):
@@ -309,15 +346,15 @@ check("the opposite half in the same cell is fine", len(a.surfaces) == 2,
 a.key(ord("d"), 0); a.key(ord("1"), 0)
 check("d then a number removes that surface",
       [x.name for x in a.surfaces] == ["mail"], [x.name for x in a.surfaces])
-a.key(10, 0); a.key(ord("s"), 0)
+a.key(ord("s"), 0)
 check("saving writes the surfaces, and not an unchanged layout",
-      a.done and hw.last()[0] == "write"
+      not a.dirty() and hw.last()[0] == "write"
       and not any(c[0] is None for c in hw.calls), hw.calls)
 
 a, (p, l), hw = app()
 hw.rc["write"] = 2
 a.key(ord("n"), 0); a.key(9, 0); a.key(9, 0); a.key(9, 0)
-typed(a, "x"); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
+typed(a, "x"); a.key(10, 0); a.key(ord("s"), 0)
 check("a refused surfaces write stays and says so", not a.done
       and a.msg.startswith("surfaces not saved"), a.msg)
 
