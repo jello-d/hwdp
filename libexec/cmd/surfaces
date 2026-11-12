@@ -21,6 +21,7 @@
 #   --names   the surface NAMES, `name label...`, one per line
 #   --check   validate the files and report, in words, instead of resolving
 #   --write   replace this desk's file from lines on stdin (see write_file)
+#   --write-names  replace the names list from stdin (see write_names)
 #
 # THE WORDS (agreed 2026-11-11): a PANEL is a physical screen; a DESK the
 # panels attached together; the GRID the virtual workspace dimensions; a
@@ -80,7 +81,8 @@ case "${1:-}" in
   --names) MODE=names ;;
   --check) MODE=check ;;
   --write) MODE='write' ;;
-  -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+  --write-names) MODE=write-names ;;
+  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   *) echo "hwdp surfaces: unexpected argument '$1'" >&2; exit 2 ;;
 esac
 
@@ -89,7 +91,53 @@ SURF=${HWDP_SURFACES:-$_cfg/surfaces}
 DESKS=${HWDP_DESKS:-$_cfg/desks}
 NAMES=${HWDP_SURFACE_NAMES:-$_cfg/surfaces.names}
 
+# write_names: REPLACE the names list from `name [label]` lines on stdin, the
+# ONE writer of it. Refused whole (exit 2) on a bad or doubled name, and on
+# dropping a name that ANY desk file still places, each named: the list is
+# global, so a desk this tool cannot see must not be broken by it. Atomic,
+# beside the file; the old list kept in the state dir.
+write_names() {
+  mkdir -p "$(dirname "$NAMES")"
+  _nt=$(mktemp "$NAMES.XXXXXX") || return 1
+  _ntq="'$_nt'"
+  # shellcheck disable=SC2064  # the literal path, baked in when armed
+  trap "rm -f $_ntq" EXIT INT TERM
+  awk 'BEGIN { print "# surface names, global across desks: name [label]" }
+    /^[ \t]*(#|$)/ { next }
+    $1 !~ /^[A-Za-z0-9_-]+$/ { print "hwdp surfaces: --write-names: bad" \
+      " name `" $1 "`" > "/dev/stderr"; bad = 1; next }
+    $1 in S { print "hwdp surfaces: --write-names: `" $1 "` twice" \
+      > "/dev/stderr"; bad = 1; next }
+    { S[$1] = 1; sub(/^[ \t]+/, ""); print }
+    END { exit bad ? 2 : 0 }' > "$_nt" || return 2
+  _used=$(for _df in "$DESKS"/*.conf "$SURF"/*.conf; do
+            [ -f "$_df" ] || continue
+            awk -v f="$_df" '$1 == "surface" || $1 == "default" {
+              print $2 "\t" f }' "$_df"
+          done | awk -F"$TAB" 'NR == FNR { split($0, w, " ")
+                                           if (w[1] !~ /^#/) K[w[1]] = 1; next }
+                 !($1 in K) { print "`" $1 "` is placed by " $2 }' \
+                 "$_nt" -)
+  if [ -n "$_used" ]; then
+    printf '%s\n' "$_used" | sed 's/^/hwdp surfaces: --write-names: /' >&2
+    echo "hwdp surfaces: --write-names: NOT written: unplace those first" >&2
+    return 2
+  fi
+  chmod 644 "$_nt"
+  if [ -f "$NAMES" ] && ! cmp -s "$_nt" "$NAMES"; then
+    _bk=${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/surfaces
+    mkdir -p "$_bk"
+    cp -p "$NAMES" "$_bk/surfaces.names.bak"
+  fi
+  mv "$_nt" "$NAMES"
+  printf '%s\n' "$NAMES"
+}
+
 # --names needs no displays at all: the list is global.
+if [ "$MODE" = write-names ]; then
+  write_names
+  exit $?
+fi
 if [ "$MODE" = names ]; then
   [ -f "$NAMES" ] || exit 0
   awk '/^[ \t]*(#|$)/ { next }

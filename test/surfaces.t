@@ -285,3 +285,25 @@ grep -qx 'grid 3 3' "$FD" || fail "--write must keep the grid: $(cat "$FD")"
 [ "$(cksum < "$T/desks/BL+EL+EP.conf")" = "$_g" ] \
   || fail "--write must never change the generic file"
 pass "--write writes this desk's own file, keeping the generic one's grid"
+
+# --- --write-names: the one writer of the global list -------------------------
+# A name ANY desk file still places cannot be dropped (the list is global, so
+# a desk the tool cannot see must not be broken by it); a doubled name is
+# refused; a refusal leaves the list exactly as it was.
+wn() {
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" HWDP_DESKS="$T/desks" \
+    HWDP_SURFACES="$T/surf" sh "$KA" surfaces --write-names
+}
+rm -f "$F"    # the older per-id file above places names not listed here
+printf '%s\n' 'comms Work Comms' 'code' 'elsewhere' 'spare' 'extra Extra' \
+  | wn >/dev/null || fail "--write-names refused a valid list"
+grep -qx 'extra Extra' "$NM" || fail "--write-names did not write: $(cat "$NM")"
+_before=$(cksum < "$NM")
+if printf '%s\n' 'code' 'elsewhere' 'spare' | wn >/dev/null 2>"$T/err"; then
+  fail "--write-names dropped a name a desk places"
+fi
+grep -q '`comms` is placed by' "$T/err" \
+  || fail "the refusal must name what places it: $(cat "$T/err")"
+printf 'a\na\n' | wn >/dev/null 2>&1 && fail "--write-names took a doubled name"
+[ "$(cksum < "$NM")" = "$_before" ] || fail "a refusal must leave the list"
+pass "--write-names: refuses to drop a placed name or double one, else writes"
