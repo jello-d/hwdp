@@ -43,6 +43,7 @@ run() {   # hwdp, headless: no WAYLAND_DISPLAY, no DISPLAY
     HWDP_MACHINE_PROVIDERS="$T/machine" \
     KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
     ${HWDP_TARGET_PPI:+HWDP_TARGET_PPI="$HWDP_TARGET_PPI"} \
+    ${BAR_LODPI_MAX_PPI:+BAR_LODPI_MAX_PPI="$BAR_LODPI_MAX_PPI"} \
     KANSHI_OUT="$T/out" sh "$KA" "$@"
 }
 val() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
@@ -205,3 +206,35 @@ _w=$(run ui 2>/dev/null) || fail "ui failed on two narrow panels"
 [ "$(val "$_w" CURSOR_SIZE)" = 32 ] \
   || fail "two narrow panels are not a wall and take lodpi: $_w"
 pass "a wall of three takes the hi-res set; two narrow panels do not"
+
+# --- --outputs: a bar height PER DISPLAY, from its logical density ---------
+# The desk it was calibrated at: a 108ppi U2715H wants 38, a 163ppi 4K (here
+# portrait, so its millimetres swap) and a 244ppi laptop panel 48. Its own
+# fake compositor, removed after, so no later case inherits it.
+mkdir -p "$T/user/layout"
+cat > "$T/user/layout/10-desk" <<'STUB'
+#!/bin/sh
+# name conn mode_w mode_h mm_w mm_h rate transform scale x y enabled
+printf 'U2715H\tDP-9\t2560\t1440\t600\t340\t60\tnormal\t1\t320\t225\t1\n'
+printf 'P2721Q\tDP-7\t3840\t2160\t600\t340\t60\t270\t1\t2880\t0\t1\n'
+printf 'Samsung\teDP-1\t2880\t1800\t300\t190\t120\tnormal\t1\t0\t1665\t1\n'
+printf 'NoSize\tDP-3\t1920\t1080\t0\t0\t60\tnormal\t1\t9000\t0\t1\n'
+printf 'Off\tDP-4\t1920\t1080\t530\t300\t60\tnormal\t1\t0\t0\t0\n'
+STUB
+chmod +x "$T/user/layout/10-desk"
+_o=$(run ui --outputs 2>&1) || fail "ui --outputs failed: $_o"
+_want='DP-9 BAR_H=38 PPI=108
+DP-7 BAR_H=48 PPI=161
+eDP-1 BAR_H=48 PPI=244
+DP-3 BAR_H=48 PPI=0'
+[ "$_o" = "$_want" ] || fail "ui --outputs: expected
+$_want
+got
+$_o"
+_o=$(BAR_LODPI_MAX_PPI=170 run ui --outputs 2>&1)
+printf '%s\n' "$_o" | grep -q '^DP-7 BAR_H=38 ' \
+  || fail "the ppi boundary must be a knob: $_o"
+rm -f "$T/user/layout/10-desk"
+pass "--outputs: 38 under 130 logical ppi, else 48; no size is 48; off is out"
+_o=$(run ui --bogus 2>&1) && fail "an unknown argument must be refused"
+pass "ui refuses an unknown argument"
