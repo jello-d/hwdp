@@ -43,12 +43,23 @@ class FakeHw:
         self.ident = on
         self.calls.append(("identify", on))
         return on
-    surf = ([], "")
+    surf = ([], None, "")
+    gridv = None
+    namesv = [["comms", "Comms"], ["mail", "Mail"]]
     def surfaces(self, desk):
         return self.surf
-    def write_surfaces(self, surfaces):
-        self.calls.append(("write", [x.key() for x in surfaces]))
+    def grid(self):
+        return self.gridv
+    def names(self):
+        return [list(n) for n in self.namesv]
+    def write_desk(self, grid, surfaces, default):
+        self.calls.append(("write", grid, [x.key() for x in surfaces],
+                           default.key() if default else None))
         return self.rc.get("write", 0), "said no" if self.rc.get("write") \
+            else ""
+    def write_names(self, names):
+        self.calls.append(("names", [list(n) for n in names]))
+        return self.rc.get("names", 0), "said no" if self.rc.get("names") \
             else ""
 
 def desk():
@@ -314,68 +325,121 @@ a.key(ord("w"), 0); a.key(27, 0)
 check("Esc drops the mark and asks nothing", a.mark is None
       and a.dialog is None, a.dialog)
 
-# --- naming surfaces ---------------------------------------------------------
+# --- the sidebar: global names ------------------------------------------------
 def typed(a, text):
     for ch in text:
         a.key(ord(ch), 0)
 
 a, (p, l), hw = app()
-a.key(ord("n"), 0)
-check("n opens the naming form", a.dialog[0] == "name")
-a.key(curses.KEY_RIGHT, 0); a.key(curses.KEY_RIGHT, 0)   # full>top>bottom
-a.key(9, 0); a.key(curses.KEY_RIGHT, 0)                   # column 1
-a.key(9, 0); a.key(9, 0)                                  # to the name
-typed(a, "comms"); a.key(10, 0)
-check("the form adds a surface", [x.key() for x in a.surfaces]
-      == [("comms", "DP-1", "bottom", 1, 0)], [x.key() for x in a.surfaces])
-check("a new surface makes the desk unsaved", a.dirty())
-a.key(ord("n"), 0)
-a.key(9, 0); a.key(curses.KEY_RIGHT, 0); a.key(9, 0); a.key(9, 0)
-typed(a, "comms"); a.key(10, 0)
-check("a name used twice is refused in the form",
-      a.dialog and "taken" in a.form["err"], a.form)
-a.key(curses.KEY_BACKSPACE, 0); typed(a, "x"); a.key(10, 0)
-check("all of a monitor over its bottom half is refused",
-      a.dialog and "taken" in a.form["err"], a.form)
+check("the sidebar starts on the first name", a.side_name() == "comms")
+a.key(ord("J"), 0)
+check("J moves down the names", a.side_name() == "mail")
+a.key(ord("a"), 0)
+check("a opens the name form", a.dialog[0] == "name")
+typed(a, "chat"); a.key(9, 0); typed(a, "Chat Room"); a.key(10, 0)
+check("the form adds a name with its label",
+      a.names[-1] == ["chat", "Chat Room"] and a.side_name() == "chat"
+      and a.dirty(), a.names)
+a.key(ord("a"), 0); typed(a, "chat"); a.key(10, 0)
+check("a name that exists is refused in the form",
+      a.dialog and "already" in a.form["err"], a.form)
 a.key(27, 0)
-a.key(ord("n"), 0); a.key(curses.KEY_RIGHT, 0)            # top
-a.key(9, 0); a.key(curses.KEY_RIGHT, 0); a.key(9, 0); a.key(9, 0)
-typed(a, "mail"); a.key(10, 0)
-check("the opposite half in the same cell is fine", len(a.surfaces) == 2,
-      a.form)
-a.key(ord("d"), 0); a.key(ord("1"), 0)
-check("d then a number removes that surface",
-      [x.name for x in a.surfaces] == ["mail"], [x.name for x in a.surfaces])
+a.key(ord("e"), 0)
+check("e edits the label only", a.form["field"] == 1
+      and a.form["name"] == "chat", a.form)
+a.key(curses.KEY_BACKSPACE, 0); typed(a, "ms"); a.key(10, 0)
+check("the label is changed", a.names[-1] == ["chat", "Chat Rooms"],
+      a.names)
+
+# --- the virtual tab: placing names on the grid ------------------------------
+a, (p, l), hw = app()
+a.key(ord("2"), 0)
+check("2 is the virtual tab, a 2x2 for a desk with no grid",
+      a.tab == 1 and a.grid == (2, 2), (a.tab, a.grid))
+a.key(10, 0)
+check("Enter places the sidebar's name on the selected spot",
+      [x.key() for x in a.surfaces] == [("comms", "DP-1", "full", 0, 0)],
+      [x.key() for x in a.surfaces])
+a.key(ord("g"), 0); a.key(ord("g"), 0); a.key(ord("J"), 0); a.key(10, 0)
+check("a half placed over a whole panel replaces it, and says so",
+      [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 0, 0)]
+      and "replaced comms" in a.msg, ([x.key() for x in a.surfaces], a.msg))
+a.key(curses.KEY_RIGHT, 0); a.key(10, 0)
+check("a name is in one place per desk: placing it again MOVES it",
+      [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 1, 0)],
+      [x.key() for x in a.surfaces])
+a.key(ord("x"), 0)
+check("x clears the spot", a.surfaces == [])
+a.key(9, 0); a.key(ord("K"), 0); a.key(ord("f"), 0)
+check("f makes the sidebar's name the default on that panel and region",
+      a.default and a.default.key() == ("comms", "DP-2", "bottom", None,
+                                        None), a.default and a.default.key())
+a.key(10, 0)
+check("placing the default's name makes it a surface, not both",
+      a.default is None and a.surfaces[0].name == "comms")
+a.key(ord("+"), 0)
+check("+ adds a column", a.grid == (3, 2), a.grid)
+a.key(curses.KEY_RIGHT, 0); a.key(10, 0); a.key(ord("-"), 0)
+check("shrinking refuses while the column holds a surface",
+      a.grid == (3, 2) and "fall off" in a.msg, (a.grid, a.msg))
+
+# --- saving: names around the desk, in two steps ------------------------------
+a, (p, l), hw = app()
+a.key(ord("2"), 0); a.key(10, 0)                 # comms placed
+a.key(ord("J"), 0); a.key(ord("D"), 0); a.key(ord("y"), 0)   # mail deleted
+a.key(ord("a"), 0); typed(a, "chat"); a.key(10, 0)           # chat added
 a.key(ord("s"), 0)
-check("saving writes the surfaces, and not an unchanged layout",
-      not a.dirty() and hw.last()[0] == "write"
-      and not any(c[0] is None for c in hw.calls), hw.calls)
+kinds = [c[0] for c in hw.calls]
+check("names, then the desk, then the names again without the deleted one",
+      kinds == ["names", "write", "names"]
+      and ["mail", "Mail"] in hw.calls[0][1]
+      and ["mail", "Mail"] not in hw.calls[2][1]
+      and ["chat", "chat"] in hw.calls[2][1] and not a.dirty(), hw.calls)
+check("the desk save carries the grid and the surfaces",
+      hw.calls[1][1:] == ((2, 2), [("comms", "DP-1", "full", 0, 0)], None),
+      hw.calls[1])
 
 a, (p, l), hw = app()
 hw.rc["write"] = 2
-a.key(ord("n"), 0); a.key(9, 0); a.key(9, 0); a.key(9, 0)
-typed(a, "x"); a.key(10, 0); a.key(ord("s"), 0)
-check("a refused surfaces write stays and says so", not a.done
-      and a.msg.startswith("surfaces not saved"), a.msg)
+a.key(ord("2"), 0); a.key(10, 0); a.key(ord("s"), 0)
+check("a refused desk write stays and says so", not a.done and a.dirty()
+      and a.msg == "saving the desk: said no", a.msg)
 
 d, outs, hw = desk()
-hw.surf = (None, "a broken line")
+hw.surf = (None, None, "a broken line")
 a = tui.App(d, hw)
-a.key(ord("n"), 0)
-check("a file hwdp refuses is not edited on top of",
+a.key(ord("a"), 0)
+check("files hwdp refuses are not edited on top of",
       a.dialog is None and "cannot be edited" in a.msg, a.msg)
 
-# The region comes back from `hwdp surfaces`' rect, against the output size.
+# The region and the default come back from `hwdp surfaces --map`.
 r = tui.Hwdp()
-r._run = lambda *a, **k: (0, "t DP-1 0 0 0 0 2160 1920\n"
-                              "b DP-1 1 0 0 1920 2160 1920\n"
-                              "f DP-2 0 0 0 0 3840 2160\n"
-                              "rt DP-2 2 0 1920 0 1920 2160\n", "")
-got, _ = r.surfaces(desk()[0])
-check("regions are read back from the rects",
+r._run = lambda *a, **k: (0,
+    "t DP-1 0 0 0 0 2160 1920 p1 0 0 1 0.5\n"
+    "b DP-1 1 0 0 1920 2160 1920 p1 0 0.5 1 0.5\n"
+    "rt DP-2 2 0 1920 0 1920 2160 p2 0.5 0 0.5 1\n"
+    "else DP-2 * * 0 0 3840 2160 p2 0 0 1 1\n", "")
+got, dflt, _ = r.surfaces(desk()[0])
+check("regions are read back from the fractions",
       [(x.name, x.region, x.cx) for x in got] ==
-      [("t", "top", 0), ("b", "bottom", 1), ("f", "full", 0),
-       ("rt", "right", 2)], [(x.name, x.region) for x in got])
+      [("t", "top", 0), ("b", "bottom", 1), ("rt", "right", 2)]
+      and dflt.key() == ("else", "DP-2", "full", None, None),
+      ([(x.name, x.region) for x in got], dflt and dflt.key()))
+
+# The review: gaps are named with no default, and gone with one.
+a, (p, l), hw = app()
+a.key(ord("2"), 0); a.key(10, 0)
+rv = tui.review_lines(a)
+check("the review names the gaps when there is no default",
+      any("gap(s) and no default" in x for x in rv)
+      and any("not placed here: mail" in x for x in rv), rv[:4])
+a.key(9, 0); a.key(ord("J"), 0); a.key(ord("f"), 0)
+rv = tui.review_lines(a)
+check("with a default the review has no gaps",
+      not any("gap(s)" in x for x in rv), rv[:4])
+a.key(ord("1"), 0); a.key(ord("r"), 0)
+check("1 returns to the physical tab, whose keys still work",
+      a.tab == 0 and "rotated" in a.msg, (a.tab, a.msg))
 
 print("\n".join(fails) if fails else "ALL-OK")
 PY

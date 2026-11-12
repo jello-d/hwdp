@@ -211,9 +211,24 @@ applies them LIVE without saving anything, and
 .B \-\-revert
 puts back what is saved (both exit 5 with no supervisor running).
 .IP
-WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE layout tool: the
-live layout drawn as boxes, edited in place. Tab or the arrows select a
-monitor;
+WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE desk tool: three
+tabs over one desk
+.RB ( 1 ", " 2 ", " 3 ),
+beside a sidebar of every surface NAME, each marked placed here (with how
+many), the default, or not placed at this desk.
+.B J
+and
+.B K
+move through the names,
+.B a
+adds one (a name, fixed once made, and a label for workspace names),
+.B e
+edits its label and
+.B D
+deletes it from every desk's list after asking (a desk elsewhere that still
+places it makes the save refuse).
+PHYSICAL is the layout, the live arrangement drawn as boxes, edited in place.
+Tab or the arrows select a monitor;
 .B r
 rotates it a quarter turn (its neighbours re-pack to its new edge);
 .B w
@@ -233,20 +248,37 @@ locks it and Esc undoes it. Enter only ever finishes what is in progress,
 and Esc only ever backs out of it;
 .B o
 switches it off or back on;
-.B n
-names a surface on it (a part, a workspace cell, a name) in a small form, and
-.B d
-removes one;
 .B i
 toggles a label on every monitor (see
 .BR "hwdp identify" ),
 always taken down when the tool exits;
 .B p
-previews live with a countdown that reverts unless kept;
+previews live with a countdown that reverts unless kept.
+VIRTUAL is the grid, a miniature of the desk in every workspace cell (2x2 for
+a desk with none): the arrows select a cell, Tab a panel in it,
+.B g
+cycles the region, Enter places the sidebar's name there (a name is in one
+place per desk, so it moves; what overlapped goes),
+.B x
+clears the spot,
+.B f
+and
+.B F
+set and clear the DEFAULT,
+.BR + " and " \-
+add and remove a column,
+.BR ] " and " [
+a row (removing refuses while it holds a surface).
+REVIEW is the map as it will be saved, cell by cell, with what is missing
+from it: gaps with no default, names not placed here.
 .B s
-saves the layout and then the surfaces (through
-.BR "hwdp surfaces \-\-write" )
-and keeps editing, and a save that waits on a slow hook says so on screen;
+saves the layout, the names and the desk (through
+.B hwdp surfaces \-\-write
+and
+.BR \-\-write\-names ,
+the names around the desk in two steps so neither is ever refused for the
+other) and keeps editing, and a save that waits on a slow hook says so on
+screen;
 .B q
 quits, at once when nothing is unsaved, and otherwise asks: save and quit,
 discard and quit (which reverts a kept preview), or keep editing. Esc with
