@@ -359,8 +359,8 @@ check("the label is changed", a.names[-1] == ["chat", "Chat Rooms"],
 # --- tab 3, Virtual: placing names through the picker -------------------------
 a, (p, l), hw = app()
 a.key(ord("3"), 0)
-check("3 is the virtual tab, a 2x2 for a desk with no grid",
-      a.tab == 2 and a.grid == (2, 2), (a.tab, a.grid))
+check("3 is the virtual tab, a 3x3 for a desk with no grid",
+      a.tab == 2 and a.grid == (3, 3), (a.tab, a.grid))
 a.key(10, 0)
 check("Enter opens the picker over the names", a.dialog[0] == "pick"
       and [n for n, _ in a.pick_list()] == ["comms", "mail"], a.dialog)
@@ -397,10 +397,11 @@ a.key(10, 0); a.key(10, 0)
 check("placing the default's name makes it a surface, not both",
       a.default is None and a.surfaces[0].name == "comms")
 a.key(ord("+"), 0)
-check("+ adds a column", a.grid == (3, 2), a.grid)
-a.key(curses.KEY_RIGHT, 0); a.key(10, 0); a.key(10, 0); a.key(ord("-"), 0)
+check("+ adds a column", a.grid == (4, 3), a.grid)
+a.key(curses.KEY_RIGHT, 0); a.key(curses.KEY_RIGHT, 0)       # the new column
+a.key(10, 0); a.key(10, 0); a.key(ord("-"), 0)
 check("shrinking refuses while the column holds a surface",
-      a.grid == (3, 2) and "fall off" in a.msg, (a.grid, a.msg))
+      a.grid == (4, 3) and "fall off" in a.msg, (a.grid, a.msg))
 
 # --- saving: names around the desk, in two steps ------------------------------
 a, (p, l), hw = app()
@@ -416,7 +417,7 @@ check("names, then the desk, then the names again without the deleted one",
       and ["mail", "Mail"] not in hw.calls[2][1]
       and ["chat", "chat"] in hw.calls[2][1] and not a.dirty(), hw.calls)
 check("the desk save carries the grid and the surfaces",
-      hw.calls[1][1:] == ((2, 2), [("comms", "DP-1", "full", 0, 0)], None),
+      hw.calls[1][1:] == ((3, 3), [("comms", "DP-1", "full", 0, 0)], None),
       hw.calls[1])
 
 a, (p, l), hw = app()

@@ -45,7 +45,7 @@ THE WORDS: a PANEL is a physical screen, the GRID the virtual workspaces, a
 WORKSPACE one cell (under wsync, the whole desk at once), a REGION a part of
 a panel, a SURFACE a named region of a panel in one workspace. Names are
 GLOBAL (hwdp surfaces --names); their places are this desk's. A desk with no
-grid of its own starts at 2x2.
+grid of its own starts at 3x3.
 
 THIS FILE ONLY DRAWS AND DECIDES WHAT A KEY MEANS. The arithmetic is hwdp's:
 sizes come from `hwdp geometry` (a quarter turn just swaps them), re-packing
@@ -521,7 +521,7 @@ REGIONS = ("full", "top", "bottom", "left", "right")
 REGION_OF = {(0, 0, 1, 1): "full", (0, 0, 1, 0.5): "top",
              (0, 0.5, 1, 0.5): "bottom", (0, 0, 0.5, 1): "left",
              (0.5, 0, 0.5, 1): "right"}
-NEW_GRID = (2, 2)       # a desk that sets no grid starts here (the user's)
+NEW_GRID = (3, 3)       # a desk that sets no grid starts here (the user's)
 
 
 class Surface:
