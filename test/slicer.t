@@ -303,6 +303,30 @@ awk -v m="$_sm" 'BEGIN { exit !(m > 0.95) }' \
   || fail "the SHORT panel should be all white; a pixel layout would give it a
 mixed slice (mean=$_sm)"
 
+# --- a desk that is NOT a grid ------------------------------------------------
+# A smaller panel RIGHT-ALIGNED under a bigger one, at a different logical x:
+# the laptop under the U2715H at the new desk. Its true physical place is
+# right-aligned under it; a column/row guess put each panel in its own column
+# and row, a diagonal staircase, and the lock showed unrelated, magnified
+# fragments. Millimetres 500x500 over 300x300, so the union is 500x800 and a
+# 500x800 source maps 1:1: white exactly where LOW belongs (x>=200, y>=500).
+cat > "$T/bin/hwdp" <<'EOF'
+#!/bin/sh
+[ "$1" = geometry ] || exit 1
+echo "BIG 1000 1000 normal 1 0 0 1000 1000 landscape 500 500"
+echo "LOW 600 600 normal 1 400 1000 600 600 landscape 300 300"
+EOF
+chmod +x "$T/bin/hwdp"
+"$_img" -size 500x800 xc:black -fill white -draw "rectangle 200,500 499,799" \
+  "$T/corner.png"
+_o=$(PATH="$T/bin:$PATH" "$WS" -o "$T/corner" "$T/corner.png" 2>&1) \
+  || fail "non-grid physical slice failed: $_o"
+_bm=$(_mean "$T/corner/BIG.png")
+_lm=$(_mean "$T/corner/LOW.png")
+awk -v b="$_bm" -v l="$_lm" 'BEGIN { exit !(b < 0.05 && l > 0.95) }' \
+  || fail "a panel right-aligned under another must be placed there in
+millimetres: BIG mean=$_bm (want black), LOW mean=$_lm (want white)"
+
 # --- the backends must AGREE ------------------------------------------------
 # magick, convert and vips are interchangeable BACKENDS, not shared code: each
 # has its own crop/resize/composite calls, so "it works" for one says nothing
