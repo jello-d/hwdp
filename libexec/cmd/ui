@@ -36,12 +36,14 @@
 #                        on its own (a bar is one surface per output): one line
 #                        `<connector> BAR_H=<px> PPI=<logical ppi>` per enabled
 #                        output. Needs a session (exit 3 without one).
-#   BAR_H         a bar's height on that output: 38 below BAR_LODPI_MAX_PPI
+#   BAR_H         a bar's height on that output: 32 below BAR_LODPI_MAX_PPI
 #                 logical ppi, else 48. CALIBRATED at a real desk (2026-11-11),
-#                 not derived: a 108ppi U2715H wanted 38, a 163ppi 4K and a
-#                 244ppi laptop panel both 48. An external sits farther from
-#                 the eye than a laptop panel, which is why no ppi formula
-#                 fits those three and a bucket does. PPI is the LOGICAL
+#                 not derived: a 163ppi 4K and a 244ppi laptop panel both 48,
+#                 a 108ppi U2715H 32, chosen side by side (38 first, then 32)
+#                 because it makes the two EXTERNALS match physically, 7.5mm
+#                 against the 4K's 7.6mm. The laptop's 5.0mm is smaller on
+#                 purpose: it sits nearer the eye, which is why no ppi formula
+#                 fits all three and a bucket does. PPI is the LOGICAL
 #                 density (logical width over the panel's millimetres across
 #                 the logical x axis), so a scaled output counts as scaled;
 #                 0 when the EDID gives no size, and then the 48 set, which
@@ -64,7 +66,7 @@ LODPI_MAX_W=${LODPI_MAX_W:-2560}   # a single panel narrower than this = lodpi
 # is nearer to.
 LODPI_MAX_PPI=${LODPI_MAX_PPI:-168}
 UI_BAR_HIDPI=${UI_BAR_HIDPI:-48}
-UI_BAR_LODPI=${UI_BAR_LODPI:-38}
+UI_BAR_LODPI=${UI_BAR_LODPI:-32}
 BAR_LODPI_MAX_PPI=${BAR_LODPI_MAX_PPI:-130}
 
 case "${1:-}" in
