@@ -327,6 +327,36 @@ schedule_unmapped() {
       run_hooks unmapped ) 9>&- & )
 }
 
+# THE `changed` HOOKS FIRE ONCE KANSHI HAS APPLIED, never before. They used to
+# run BEFORE the HUP (and at startup the instant kanshi was spawned), so on a
+# HOTPLUG they saw the layout the compositor improvised, not the profile:
+# measured on dragonfly 2026-11-12, a re-docked 4K was still landscape when the
+# bars hook rebuilt the bars, so the desk read as BL+EL+EL and the bars came up
+# in the wrong arrangement and stayed there, with kanshi's rotation landing a
+# moment later and nothing firing after it.
+#
+# kanshi says how each reload went on ITS stdout, which is this supervisor's
+# log ("configuration for profile 'X' applied", "no profile matched"), so the
+# wait reads the log from where it stood before the reload. Only when OUR
+# output really is that log (the daemon; a test's stub writes elsewhere), and
+# bounded, so a kanshi that says nothing costs a few seconds, never a hang.
+log_mark() { wc -c < "$watch_log" 2>/dev/null || echo 0; }
+await_kanshi() {   # <log offset before the reload>
+  [ /proc/self/fd/1 -ef "$watch_log" ] 2>/dev/null || return 0
+  _aw=0
+  while [ "$_aw" -lt "${HWDP_APPLY_TICKS:-50}" ]; do   # 0.1s each: 5s
+    if tail -c +"$(($1 + 1))" "$watch_log" 2>/dev/null | grep -q -E \
+        '^configuration for profile .* applied|^no profile matched|failed'
+    then
+      return 0
+    fi
+    sleep 0.1
+    _aw=$((_aw + 1))
+  done
+  echo "hwdp watch: kanshi said nothing about the reload; firing the" \
+    "changed hooks anyway" >&2
+}
+
 # React to the layout coming up via the `pre`/`changed` hooks. The pre pass runs
 # BEFORE kanshi so anything it sets (e.g. "on created" window rules) lands
 # before the autostart apps map their first window; backgrounded so it never
@@ -336,9 +366,11 @@ schedule_unmapped() {
 run_hooks pre &
 runtime_pid=$!
 
+_m=$(log_mark)
 start_kanshi
 
 wait "$runtime_pid" 2>/dev/null || true
+await_kanshi "$_m"
 run_hooks changed
 schedule_unmapped
 
@@ -420,8 +452,10 @@ schedule_settle() {   # [relayout]
       # or reading the runtime config must see the new layout, and kanshi must
       # reload a file that already describes the new set.
       [ -n "$_re" ] && "$HWDP_LIBEXEC/cmd/layout" >/dev/null 2>&1
-      run_hooks changed
-      hup_kanshi ) & )
+      _m=$(log_mark)
+      hup_kanshi
+      await_kanshi "$_m"
+      run_hooks changed ) & )
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
