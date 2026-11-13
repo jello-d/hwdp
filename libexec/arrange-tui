@@ -1263,6 +1263,11 @@ def draw_desk(scr, app, top, rows, cols, left=1):
         pad = 2 if w >= 14 else 1
         text = wrap(([o.conn, o.token()], ["%dx%d" % (o.w, o.h)],
                      ["at", "%d,%d" % (o.x, o.y)]), w - 2 * pad)
+        # A box too small for that would spill into its neighbours: just
+        # the connector, which the selected-panel line below explains.
+        if len(text) > h - 2 or max(map(len, text)) > w - 2 * pad:
+            pad = 1
+            text = [o.conn[:max(1, w - 2)]]
         for i, line in enumerate(text):
             put(scr, y0 + 1 + i, x0 + pad, line, attr)
 
@@ -1344,8 +1349,34 @@ def pick_lines(app):
 def label_of(app, name):
     for n, lab in app.names:
         if n == name:
-            return lab
+            return lab or name
     return name
+
+
+# KEYS: a short handle for every surface name, shown beside it in the
+# sidebar, so a drawing too small for a label can still say WHICH surface
+# is where. By position in the names list, so adding a name never moves an
+# existing key. Names often share a first word (personal-main,
+# personal-agents, personal-overflow), and cutting a label to fit kept
+# exactly the shared part: three panels read "pers".
+KEYS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def key_of(app, name):
+    for i, (n, _) in enumerate(app.names):
+        if n == name:
+            return KEYS[i] if i < len(KEYS) else \
+                KEYS[i // len(KEYS) - 1] + KEYS[i % len(KEYS)]
+    return "?"
+
+
+def fit(app, name, width):
+    """What to draw for NAME in WIDTH cells: its label when that fits,
+    else its key. Never a cut label, which reads as a different word."""
+    lab = label_of(app, name)
+    if len(lab) <= width:
+        return lab
+    return key_of(app, name)[:max(1, width)]
 
 
 def covered(app, o, cx, cy):
@@ -1412,7 +1443,8 @@ def draw_sidebar(scr, app, top, rows, width):
     room = rows - 4
     for i, (n, lab) in enumerate(app.names[:room]):
         mk, used = mark_of(app, n)
-        put(scr, top + 2 + i, 1, ("%s %s" % (mk, n))[:width - 2],
+        put(scr, top + 2 + i, 1, ("%s %s %s" % (mk, key_of(app, n),
+                                                label_of(app, n)))[:width - 2],
             0 if used else curses.A_DIM)
     if len(app.names) > room:
         put(scr, top + 2 + room - 1, 1, "... %d more (tab 2)"
@@ -1429,8 +1461,8 @@ def draw_surfaces_tab(scr, app, top, rows, width, left):
     """Tab 2: the names, with their labels and where each is at this desk;
     the selected one lit. The one place names are added, relabelled and
     deleted."""
-    put(scr, top, left, "%-3s%-22s%-24s%s" % ("", "NAME", "LABEL",
-                                              "AT THIS DESK"), curses.A_BOLD)
+    put(scr, top, left, "%-3s%-4s%-22s%-24s%s" % (
+        "", "KEY", "NAME", "LABEL", "AT THIS DESK"), curses.A_BOLD)
     room = rows - 2
     first = max(0, min(app.side - room + 1, len(app.names) - room))
     for i, (n, lab) in enumerate(app.names[first:first + room]):
@@ -1443,8 +1475,9 @@ def draw_surfaces_tab(scr, app, top, rows, width, left):
         mk, used = mark_of(app, n)
         attr = curses.A_REVERSE if first + i == app.side else \
             (0 if used else curses.A_DIM)
-        put(scr, top + 2 + i, left, ("%-3s%-22s%-24s%s" % (
-            mk, n, lab, at or "not placed"))[:width].ljust(width), attr)
+        put(scr, top + 2 + i, left, ("%-3s%-4s%-22s%-24s%s" % (
+            mk, key_of(app, n), n, lab, at or "not placed"))[:width]
+            .ljust(width), attr)
     if not app.names:
         put(scr, top + 2, left, "no names yet: a adds one", curses.A_DIM)
 
@@ -1453,15 +1486,31 @@ def draw_virtual(scr, app, top, rows, cols, left):
     """The grid: in every cell a miniature of the desk, each surface drawn
     into its part of its panel; the selected cell, panel and region lit."""
     on = app.desk.on()
-    gw, gh = app.grid
-    cw, ch = max(8, cols // gw), max(4, (rows - 2) // gh)
     if not on:
         return
+    gw, gh = app.grid
+    # The detail pane takes what the grid can spare, at least two lines; a
+    # pane longer than that ends in a count of what it could not show.
+    pane = vdetail_lines(app)
+    # FIVE rows a cell at least: a framed miniature needs three, and the
+    # cell's own border two more; any fewer and the miniature's edge lands
+    # on the cell's.
+    # A compact cell (a line per panel) needs the panels plus its border.
+    cmin = max(5, len(on) + 2)
+    ph = min(len(pane), max(2, rows - gh * cmin))
+    if len(pane) > ph:
+        pane = pane[:ph - 1] + ["  ... %d more lines" % (len(pane) - ph + 1)]
+    cw, ch = max(8, cols // gw), max(cmin, (rows - ph) // gh)
     mx = min(o.x for o in on)
     my = min(o.y for o in on)
     bw = max(o.x + o.w for o in on) - mx
     bh = max(o.y + o.h for o in on) - my
     sc = min((cw - 4) / bw, (ch - 3) * 2 / bh)
+    # TOO SMALL TO DRAW: when the smallest panel would be under a framed box
+    # (three rows, four columns), the miniatures collide and no label can
+    # help, so each cell becomes a list instead: a line per panel, its
+    # connector and the keys of what is on it.
+    compact = any(o.h * sc / 2 < 3 or o.w * sc < 4 for o in on)
     sel_o, sel_r = app.vspot()
     for cy in range(gh):
         for cx in range(gw):
@@ -1470,6 +1519,18 @@ def draw_virtual(scr, app, top, rows, cols, left):
             battr = (curses.color_pair(1) | curses.A_BOLD) if cur else \
                 curses.A_DIM
             frame(scr, y0, x0, cw, ch, battr, title="%d,%d" % (cx, cy))
+            if compact:
+                for i, o in enumerate(on):
+                    ks = " ".join(key_of(app, x.name) for x in sorted(
+                        (x for x in app.surfaces if x.conn == o.conn
+                         and (x.cx, x.cy) == (cx, cy)),
+                        key=lambda x: REGION_ORDER.index(x.region)
+                        if x.region in REGION_ORDER else 99))
+                    put(scr, y0 + 1 + i, x0 + 2,
+                        ("%s %s" % (o.conn, ks or "-"))[:cw - 3],
+                        curses.color_pair(3) if cur and o is sel_o
+                        else curses.A_BOLD if ks else curses.A_DIM)
+                continue
             for o in on:
                 bx, by, w, h = cells(o, mx, my, sc, y0 + 1, x0 + 2)
                 frame(scr, by, bx, w, h, fill=True)
@@ -1484,21 +1545,50 @@ def draw_virtual(scr, app, top, rows, cols, left):
                     rx, ry, rw, rh = region_rect(x.region, w - 2, h - 2)
                     lit = cur and o is sel_o and x.region == sel_r
                     put(scr, by + 1 + ry + max(0, (rh - 1) // 2),
-                        bx + 1 + rx, x.name[:max(1, rw)].center(rw),
+                        bx + 1 + rx, fit(app, x.name, rw).center(rw),
                         curses.color_pair(3) if lit else curses.A_BOLD)
-    n = [x.name for x in app.at_spot()]
-    put(scr, top + gh * ch, left,
-        "cell %d,%d  %s %s  %s  -> %s" % (
-            app.vcell[0], app.vcell[1], sel_o.conn, sel_o.token(), sel_r,
-            ", ".join(n) if n else "(empty)"))
+    for i, line in enumerate(pane):
+        put(scr, top + gh * ch + i, left, line[:cols],
+            curses.A_BOLD if i == 0 else 0)
+
+
+REGION_ORDER = ("full", "top", "bottom", "left", "right")
+
+
+def vdetail_lines(app):
+    """The selected cell in words: every panel on in it, with its size and
+    place, and each surface there by region, key and full label, so nothing
+    a miniature is too small to say is out of reach. The selected panel is
+    marked, with the region `g` is on."""
+    cx, cy = app.vcell
+    sel_o, sel_r = app.vspot()
+    out = ["cell %d,%d" % (cx, cy)]
+    for o in app.desk.on():
+        out.append("%s %s %s %dx%d at %d,%d%s" % (
+            ">" if o is sel_o else " ", o.conn, o.token(), o.w, o.h, o.x,
+            o.y, ("   region: %s" % sel_r) if o is sel_o else ""))
+        here = sorted((x for x in app.surfaces
+                       if x.conn == o.conn and (x.cx, x.cy) == (cx, cy)),
+                      key=lambda x: REGION_ORDER.index(x.region)
+                      if x.region in REGION_ORDER else 99)
+        for x in here:
+            out.append("    %-6s %-2s %s" % (x.region, key_of(app, x.name),
+                                            label_of(app, x.name)))
+        if not here:
+            out.append("    (nothing here)")
     d = app.default
-    put(scr, top + gh * ch + 1, left,
-        "default: " + ("%s, %s of %s" % (d.name, d.region, d.conn)
-                       if d else "none"), curses.A_DIM)
+    out.append("default: " + ("%s %s, %s of %s" % (
+        key_of(app, d.name), label_of(app, d.name), d.region, d.conn)
+        if d else "none"))
+    return out
 
 
 def draw_physical(scr, app, b, cols, left):
-    draw_desk(scr, app, 2, b - 5, cols, left)
+    draw_desk(scr, app, 2, b - 6, cols, left)
+    o = app.cur
+    put(scr, b - 4, left, "%s %s %dx%d at %d,%d  rotate %s%s" % (
+        o.conn, o.token(), o.w, o.h, o.x, o.y, o.degrees(),
+        "" if o.on else "  (off)"), curses.A_BOLD)
     off = [o.conn for o in app.desk.outs if not o.on]
     if off:
         put(scr, b - 3, left, "off: " + "  ".join(off),
@@ -1541,7 +1631,7 @@ def render(scr, app, now):
     elif app.tab == 1:
         draw_surfaces_tab(scr, app, 2, b - 3, w - 2, left)
     elif app.tab == 2:
-        draw_virtual(scr, app, 2, b - 5, w - 1 - left, left)
+        draw_virtual(scr, app, 2, b - 3, w - 1 - left, left)
     else:
         # Wrapped to the width, scrolled by the arrows; the scroll stops
         # where the last line reaches the bottom.
