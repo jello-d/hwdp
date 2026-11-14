@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """hwdp arrange, interactively: the desk tool.
 
-`hwdp arrange` with no placements, at a terminal, lands here. Four tabs over
+`hwdp arrange` with no placements, at a terminal, lands here; `hwdp arrange
+<desk>` too, for a desk by name (`hwdp desks`), which away from its panels is
+loaded from its files and saved back to them without applying. Four tabs over
 ONE desk, in the order you work; beside all but the second, a READ-ONLY
 sidebar of every surface NAME and where it is (D the default, N placed N
 times, - not placed at this desk):
@@ -56,6 +58,7 @@ asks it of many candidate positions per keystroke; it only GUIDES a move.
 """
 import curses
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -81,6 +84,9 @@ def here():
 class Output:
     def __init__(self, conn, transform, x, y, lw, lh):
         self.conn = conn
+        # What a person reads: the connector live; offline the model number
+        # or `laptop`, since conn is then a whole EDID name.
+        self.label = conn
         self.transform = transform
         self.x, self.y = x, y
         self.on = True
@@ -103,7 +109,8 @@ class Output:
         return (self.x, self.y, self.w, self.h)
 
     def token(self):
-        kind = "B" if self.conn.startswith(("eDP", "LVDS", "DSI")) else "E"
+        kind = "B" if self.conn.startswith(("eDP", "LVDS", "DSI")) \
+            or self.conn == "@builtin" else "E"
         return kind + ("P" if self.h > self.w else "L")
 
     def degrees(self):
@@ -347,7 +354,7 @@ def contacts(mover, others):
                zip(ends, (ms == ns, ms + ml == ns + nl)) if hit]
         if not how and abs(2 * ms + ml - 2 * ns - nl) <= 1:
             how = ["centred"]
-        said.append("%s %s: %s" % (side, n.conn, " and ".join(how)
+        said.append("%s %s: %s" % (side, n.label, " and ".join(how)
                                    or "offset %+d" % (ms - ns)))
     return "  ".join(said) or "touching nothing"
 
@@ -365,7 +372,7 @@ def near_misses(desk, reach):
                 g = max(s2 - (s1 + l1), s1 - (s2 + l2))
                 (p1, q1), (p2, q2) = axis(a, pa), axis(b, pa)
                 if 0 < g < reach and span(p1, p1 + q1, p2, p2 + q2) > 0:
-                    found.append((a.conn, b.conn, g))
+                    found.append((a.label, b.label, g))
     return found
 
 
@@ -514,6 +521,175 @@ class Hwdp:
         return self.overlay is not None
 
 
+def panel_label(name):
+    """A stored panel name (EDID "Make Model Serial", or @builtin) as a
+    person reads it: the model number, or `laptop`."""
+    if name == "@builtin":
+        return "laptop"
+    w = name.split()
+    return w[-2] if len(w) >= 2 else (w[0] if w else name)
+
+
+def parse_profile(text, native):
+    """The panels of a kanshi profile hwdp wrote: [(name, transform, x, y,
+    w, h, on, (mode_w, mode_h, rate))], w and h the LAID-OUT size. From the
+    `# hwdp-rect` comment where there is one; else the mode, turned by the
+    transform; the built-in, which carries no mode, at NATIVE (w, h)."""
+    rect, outs = {}, []
+    for line in text.splitlines():
+        m = re.match(r'# hwdp-rect "([^"]+)" (-?\d+) (-?\d+) (\d+) (\d+)',
+                     line)
+        if m:
+            rect[m.group(1)] = tuple(int(v) for v in m.group(2, 3, 4, 5))
+            continue
+        m = re.match(r'\s*output "([^"]+)"(.*)$', line)
+        if not m:
+            continue
+        name, rest = m.group(1), m.group(2)
+        mode = re.search(r" mode (\d+)x(\d+)(?:@([\d.]+)Hz)?", rest)
+        tr = re.search(r" transform (\S+)", rest)
+        pos = re.search(r" position (-?\d+),(-?\d+)", rest)
+        transform = tr.group(1) if tr else "normal"
+        mw, mh = (int(mode.group(1)), int(mode.group(2))) if mode \
+            else (native or (0, 0))
+        rate = float(mode.group(3)) if mode and mode.group(3) else 0.0
+        if name in rect:
+            w, h = rect[name][2], rect[name][3]
+        elif transform.replace("flipped-", "") in ("90", "270"):
+            w, h = mh, mw
+        else:
+            w, h = mw, mh
+        x, y = (int(pos.group(1)), int(pos.group(2))) if pos else (0, 0)
+        outs.append((name, transform, x, y, w, h,
+                     not rest.strip().endswith("disable"), (mw, mh, rate)))
+    return outs
+
+
+def distinct_labels(outs):
+    """Where two panels would read the same (three of one model), each
+    takes the start of its serial too: a label that names two panels
+    cannot say which one is selected."""
+    seen = {}
+    for o in outs:
+        seen.setdefault(o.label, []).append(o)
+    for same in seen.values():
+        if len(same) > 1:
+            for o in same:
+                w = o.conn.split()
+                if len(w) >= 2 and o.conn != "@builtin":
+                    o.label = "%s/%s" % (o.label, w[-1][:4])
+    return outs
+
+
+class OfflineHwdp(Hwdp):
+    """A desk AWAY from its panels: read from its files and written back to
+    them, never applied. Surfaces go through `hwdp surfaces` with
+    HWDP_DESK set, the layout through `hwdp profile --write`."""
+    offline = True
+
+    def __init__(self, key, name):
+        super().__init__()
+        self.key, self.name = key, name
+        os.environ["HWDP_DESK"] = key          # every `hwdp surfaces` call
+        self.desk = None                       # set once the App has one
+        self.modes = {}
+        self.has_profile = False
+
+    def _native_builtin(self):
+        rc, out, _ = self._run(os.path.join(self.libexec, "cmd", "panels"))
+        for line in out.splitlines():
+            f = line.split()
+            if len(f) == 3 and f[0].startswith(("eDP", "LVDS", "DSI")):
+                return int(f[1]), int(f[2])
+        return None
+
+    def geometry(self):
+        prof = os.path.join(os.environ.get("KANSHI_PROFILES") or os.path.join(
+            os.environ.get("XDG_CONFIG_HOME") or
+            os.path.expanduser("~/.config"), "kanshi", "profiles"),
+            self.key + ".conf")
+        native = self._native_builtin()
+        outs = []
+        if os.path.exists(prof):
+            self.has_profile = True
+            with open(prof) as fh:
+                for (name, tr, x, y, w, h, on, mode) in \
+                        parse_profile(fh.read(), native):
+                    o = Output(name, tr, x, y, w, h)
+                    o.on, o.label = on, panel_label(name)
+                    self.modes[name] = mode
+                    outs.append(o)
+            return distinct_labels(outs)
+        # No layout recorded (a generic desk, or one never arranged): the
+        # panels its surfaces name, side by side; only the laptop's size is
+        # known. Its layout cannot be saved from here (see arrange).
+        rc, out, _ = self._surf("--raw")
+        x = 0
+        for line in out.splitlines():
+            f = line.split("\t")
+            if len(f) < 3 or any(o.conn == f[2] for o in outs):
+                continue
+            w, h = native if f[2] == "@builtin" and native else (1920, 1080)
+            o = Output(f[2], "normal", x, 0, w, h)
+            o.label = panel_label(f[2])
+            outs.append(o)
+            x += w
+        if not outs and native:
+            o = Output("@builtin", "normal", 0, 0, *native)
+            o.label = "laptop"
+            outs.append(o)
+        return distinct_labels(outs)
+
+    def surfaces(self, desk):
+        rc, out, why = self._surf("--raw")
+        if rc != 0:
+            return None, None, why
+        found, default = [], None
+        for line in out.splitlines():
+            f = line.split("\t")
+            if len(f) != 6:
+                continue
+            if f[0] == "default":
+                default = Surface(f[1], f[2], f[5], None, None)
+            else:
+                found.append(Surface(f[1], f[2], f[5], int(f[3]), int(f[4])))
+        return found, default, ""
+
+    def write_desk(self, grid, surfaces, default):
+        lines = "grid %d %d\n" % grid
+        lines += "".join('surface %s "%s" cell %d %d %s\n'
+                         % (s.name, s.conn, s.cx, s.cy, s.region)
+                         for s in surfaces)
+        if default:
+            lines += 'default %s "%s" %s\n' % (default.name, default.conn,
+                                              default.region)
+        rc, _, why = self._surf("--write", stdin=lines)
+        return rc, why
+
+    def arrange(self, mode, placements, progress=None):
+        if mode:
+            return 2, "%s is not attached: a preview needs its panels" \
+                % self.name
+        if not self.has_profile:
+            return 2, ("%s has no layout recorded: arrange it at the desk"
+                       " first" % self.name)
+        recs = []
+        for o in self.desk.outs:
+            if not o.on:
+                recs.append("off\t%s" % o.conn)
+                continue
+            mw, mh, rate = self.modes.get(o.conn, (0, 0, 0.0))
+            recs.append("on\t%s\t%d\t%d\t%.3f\t%s\t%d\t%d\t%d\t%d" % (
+                o.conn, mw, mh, rate, o.transform, o.x, o.y, o.w, o.h))
+        rc, out, err = self._run(os.path.join(self.libexec, "cmd", "profile"),
+                                 "--write", self.key,
+                                 stdin="\n".join(recs) + "\n")
+        return rc, (err.strip().splitlines() or [""])[-1]
+
+    def identify(self, on):
+        return False
+
+
 # --- surfaces: named parts of a monitor --------------------------------------
 
 REGIONS = ("full", "top", "bottom", "left", "right")
@@ -595,6 +771,13 @@ class App:
         self.grid = hw.grid() or NEW_GRID
         self.names = hw.names()
         self._mark_saved()
+
+    def plabel(self, conn):
+        """A stored panel name as a person reads it."""
+        for o in self.desk.outs:
+            if o.conn == conn:
+                return o.label
+        return conn
 
     def _mark_saved(self):
         self.saved_surfaces = self._surface_keys()
@@ -695,30 +878,30 @@ class App:
     def _rotate(self, now):
         if self.cur.on:
             self.desk.rotate(self.cur)
-            self.msg = "%s rotated" % self.cur.conn
+            self.msg = "%s rotated" % self.cur.label
 
     def _swap(self, now):
         c = self.cur
         if not c.on:
-            self.msg = "%s is off" % c.conn
+            self.msg = "%s is off" % c.label
         elif self.mark is None or self.mark is c:
             self.mark = None if self.mark is c else c
             self.msg = ("%s marked: select another and press w or Enter"
-                        % c.conn) if self.mark else ""
+                        % c.label) if self.mark else ""
         else:
             self.desk.swap(self.mark, c)
-            self.msg = "swapped %s and %s" % (self.mark.conn, c.conn)
+            self.msg = "swapped %s and %s" % (self.mark.label, c.label)
             self.mark = None
 
     def _move_mode(self, now):
         c = self.cur
         if self.moving:
             self.moving = None
-            self.msg = "%s locked at %d,%d" % (c.conn, c.x, c.y)
+            self.msg = "%s locked at %d,%d" % (c.label, c.x, c.y)
         elif c.on:
             self.moving = (c, c.x, c.y)
             self.msg = ("moving %s: arrows step, shift+arrow one pixel,"
-                        " Enter locks, Esc undoes" % c.conn)
+                        " Enter locks, Esc undoes" % c.label)
 
     def _move(self, k):
         o = self.moving[0]
@@ -744,14 +927,22 @@ class App:
             if spot:
                 c.x, c.y = spot
         self.desk.normalise()
-        self.msg = "%s switched %s" % (c.conn, "on" if c.on else "off")
+        self.msg = "%s switched %s" % (c.label, "on" if c.on else "off")
 
     def _identify(self, now):
+        if getattr(self.hw, "offline", False):
+            self.msg = "%s is not attached: no monitors to label" \
+                % self.hw.name
+            return
         self.ident = self.hw.identify(not self.ident)
         if not self.ident:
             self.msg = "labels off"
 
     def _preview(self, now):
+        if getattr(self.hw, "offline", False):
+            self.msg = "%s is not attached: a preview needs its panels" \
+                % self.hw.name
+            return
         if self.desk.faults():
             self.msg = "the monitors must meet edge to edge first"
             return
@@ -1066,7 +1257,7 @@ class App:
             return
         self.surfaces = [x for x in self.surfaces if x.name != n]
         self.default = Surface(n, o.conn, rg, None, None)
-        self.msg = "%s is the default: %s of %s" % (n, rg, o.conn)
+        self.msg = "%s is the default: %s of %s" % (n, rg, o.label)
 
     def _vnodefault(self, now):
         if self.default:
@@ -1261,13 +1452,13 @@ def draw_desk(scr, app, top, rows, cols, left=1):
     # Labels after EVERY box, so one that spills is not drawn over.
     for o, x0, y0, w, h, attr in boxes:
         pad = 2 if w >= 14 else 1
-        text = wrap(([o.conn, o.token()], ["%dx%d" % (o.w, o.h)],
+        text = wrap(([o.label, o.token()], ["%dx%d" % (o.w, o.h)],
                      ["at", "%d,%d" % (o.x, o.y)]), w - 2 * pad)
         # A box too small for that would spill into its neighbours: just
         # the connector, which the selected-panel line below explains.
         if len(text) > h - 2 or max(map(len, text)) > w - 2 * pad:
             pad = 1
-            text = [o.conn[:max(1, w - 2)]]
+            text = [o.label[:max(1, w - 2)]]
         for i, line in enumerate(text):
             put(scr, y0 + 1 + i, x0 + pad, line, attr)
 
@@ -1333,9 +1524,9 @@ def pick_lines(app):
     pk, shown = app.pick, app.pick_list()
     o, rg = app.vspot()
     what = ("Place on cell %d,%d, %s of %s" % (app.vcell[0], app.vcell[1],
-                                              rg, o.conn)
+                                              rg, o.label)
             if pk["mode"] == "place" else
-            "The DEFAULT: %s of %s, every cell nothing claims" % (rg, o.conn))
+            "The DEFAULT: %s of %s, every cell nothing claims" % (rg, o.label))
     sel = min(pk["sel"], max(0, len(shown) - 1))
     first = max(0, min(sel - 5, len(shown) - 12))
     rows = ["%s %-20s %s" % ("> " if i == sel else "  ", n, lab)
@@ -1393,7 +1584,7 @@ def review_lines(app):
     it: the Review tab. Pure, so a test reads it without a screen."""
     out = ["grid %dx%d" % app.grid]
     d = app.default
-    out.append("default: %s, %s of %s" % (d.name, d.region, d.conn)
+    out.append("default: %s, %s of %s" % (d.name, d.region, app.plabel(d.conn))
                if d else "default: none (a cell nothing claims is a gap)")
     gaps = []
     for cy in range(app.grid[1]):
@@ -1411,11 +1602,11 @@ def review_lines(app):
                         txt += ("  " if txt else "") + "(rest: default)"
                     elif d:
                         txt += ("  " if txt else "") + "(rest: default " \
-                            "on %s)" % d.conn
+                            "on %s)" % app.plabel(d.conn)
                     else:
-                        gaps.append("cell %d,%d %s" % (cx, cy, o.conn))
+                        gaps.append("cell %d,%d %s" % (cx, cy, o.label))
                         txt += ("  " if txt else "") + "(GAP)"
-                out.append("  %-6s %s  %s" % (o.conn, o.token(), txt))
+                out.append("  %-6s %s  %s" % (o.label, o.token(), txt))
     problems = []
     unplaced = [n for n, _ in app.names if app.placed(n) == ([], False)]
     if unplaced:
@@ -1527,7 +1718,7 @@ def draw_virtual(scr, app, top, rows, cols, left):
                         key=lambda x: REGION_ORDER.index(x.region)
                         if x.region in REGION_ORDER else 99))
                     put(scr, y0 + 1 + i, x0 + 2,
-                        ("%s %s" % (o.conn, ks or "-"))[:cw - 3],
+                        ("%s %s" % (o.label, ks or "-"))[:cw - 3],
                         curses.color_pair(3) if cur and o is sel_o
                         else curses.A_BOLD if ks else curses.A_DIM)
                 continue
@@ -1565,7 +1756,7 @@ def vdetail_lines(app):
     out = ["cell %d,%d" % (cx, cy)]
     for o in app.desk.on():
         out.append("%s %s %s %dx%d at %d,%d%s" % (
-            ">" if o is sel_o else " ", o.conn, o.token(), o.w, o.h, o.x,
+            ">" if o is sel_o else " ", o.label, o.token(), o.w, o.h, o.x,
             o.y, ("   region: %s" % sel_r) if o is sel_o else ""))
         here = sorted((x for x in app.surfaces
                        if x.conn == o.conn and (x.cx, x.cy) == (cx, cy)),
@@ -1578,7 +1769,8 @@ def vdetail_lines(app):
             out.append("    (nothing here)")
     d = app.default
     out.append("default: " + ("%s %s, %s of %s" % (
-        key_of(app, d.name), label_of(app, d.name), d.region, d.conn)
+        key_of(app, d.name), label_of(app, d.name), d.region,
+        app.plabel(d.conn))
         if d else "none"))
     return out
 
@@ -1587,7 +1779,7 @@ def draw_physical(scr, app, b, cols, left):
     draw_desk(scr, app, 2, b - 6, cols, left)
     o = app.cur
     put(scr, b - 4, left, "%s %s %dx%d at %d,%d  rotate %s%s" % (
-        o.conn, o.token(), o.w, o.h, o.x, o.y, o.degrees(),
+        o.label, o.token(), o.w, o.h, o.x, o.y, o.degrees(),
         "" if o.on else "  (off)"), curses.A_BOLD)
     off = [o.conn for o in app.desk.outs if not o.on]
     if off:
@@ -1615,6 +1807,7 @@ def render(scr, app, now):
         tabs, ("  " + state) if state else "",
         "  labels on" if app.ident else "",
         "  (unsaved)" if app.dirty() else ""), curses.A_BOLD)
+
     # One help line: this tab's keys, then the global ones. It wraps by
     # whole entries rather than lose its tail at the screen edge, and
     # everything above it moves up to make room.
@@ -1626,6 +1819,11 @@ def render(scr, app, now):
     if sw:
         draw_sidebar(scr, app, 2, b - 3, sw)
     left = sw + 2 if sw else 1
+    # Which desk, when it is not the one attached: right of the sidebar's
+    # rule, which starts on this row.
+    where = getattr(app, "where", "")
+    if where:
+        put(scr, 1, left, where, curses.A_DIM)
     if app.tab == 0:
         draw_physical(scr, app, b, w - 1 - left, left)
     elif app.tab == 1:
@@ -1687,9 +1885,16 @@ def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help"):
         print(__doc__.split("\n\n")[1])
         return 0
-    if len(argv) > 1:
-        print("hwdp arrange: the interactive tool takes no arguments",
-              file=sys.stderr)
+    # `--desk KEY [--name NAME]`: a desk AWAY from its panels (`hwdp arrange
+    # <name>` resolves the name and passes both). Nothing else is taken.
+    args, key, name = argv[1:], None, None
+    if args[:1] == ["--desk"] and len(args) in (2, 4) and \
+            (len(args) == 2 or args[2] == "--name"):
+        key = args[1]
+        name = args[3] if len(args) == 4 else key
+    elif args:
+        print("hwdp arrange: the interactive tool takes no arguments but"
+              " a desk (hwdp arrange <desk>)", file=sys.stderr)
         return 2
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print("hwdp arrange: the interactive tool needs a terminal; give"
@@ -1702,8 +1907,19 @@ def main(argv):
     locale.setlocale(locale.LC_ALL, "")
     if locale.getpreferredencoding(False).upper().replace("-", "") == "UTF8":
         G.update(UTF8)
-    hw = Hwdp()
-    app = App(Desk(hw.geometry(), hw.repack), hw)
+    if key:
+        hw = OfflineHwdp(key, name)
+        outs = hw.geometry()
+        if not outs:
+            print("hwdp arrange: %s has no panels on record" % name,
+                  file=sys.stderr)
+            return 2
+        app = App(Desk(outs, hw.repack), hw)
+        hw.desk = app.desk
+        app.where = "%s, not attached: saving writes, nothing applies" % name
+    else:
+        hw = Hwdp()
+        app = App(Desk(hw.geometry(), hw.repack), hw)
 
     def leave(*_):
         raise SystemExit(130)

@@ -1,0 +1,88 @@
+#!/bin/sh
+# hwdp desks: every desk this box knows, by NAME.
+#
+#   hwdp desks                      list them; `*` marks the one attached now
+#   hwdp desks --name <desk> <new>  give a desk a name (`-` goes back to the
+#                                   one made from its hardware)
+#   hwdp desks --resolve <desk>     print the KEY a name (or key) is filed by
+#
+# A desk is filed by a KEY (its desk id, its plain id, or a shape for a
+# generic desk such as BL), which no one should have to type. Each also has a
+# NAME: chosen here, or made from the hardware (u2715h+p2721q, aw2725q-x3,
+# laptop). Names are lowercase `a-z 0-9 + - _` and unique, which is what lets
+# `hwdp arrange <name>` take one without being mistaken for a connector. See
+# lib/desks_lib for how a name is made.
+set -eu
+. "$HWDP_LIB/displayset_lib"
+. "$HWDP_LIB/desks_lib"
+
+case "${1:-}" in
+  '') ;;
+  --resolve)
+    [ $# -eq 2 ] || { echo "usage: hwdp desks --resolve <desk>" >&2; exit 2; }
+    desk_resolve "$2" && exit 0
+    echo "hwdp desks: no desk named \`$2\` (hwdp desks lists them)" >&2
+    exit 1 ;;
+  --name)
+    [ $# -eq 3 ] || { echo "usage: hwdp desks --name <desk> <new>" >&2
+                      exit 2; }
+    _k=$(desk_resolve "$2") || { echo "hwdp desks: no desk named \`$2\`" >&2
+                                 exit 1; }
+    if [ "$3" != - ]; then
+      printf '%s\n' "$3" | grep -Eq "$DESK_NAME_RE" || {
+        echo "hwdp desks: \`$3\` is not a name: lowercase a-z 0-9 + - _," \
+          "starting with a letter or digit (so it can never be read as a" \
+          "connector)" >&2
+        exit 2; }
+      _o=$(desk_table | awk -F"$TAB" -v k="$_k" -v n="$3" \
+             '$1 != k && ($2 == n || $1 == n) { print $1 }')
+      if [ -n "$_o" ]; then
+        echo "hwdp desks: \`$3\` is already the desk $_o" >&2
+        exit 2
+      fi
+    fi
+    mkdir -p "$(dirname "$DESK_NAMES")"
+    _t=$(mktemp "$DESK_NAMES.XXXXXX")
+    { echo "# desk names: <key> <name>; written by hwdp desks --name"
+      [ -f "$DESK_NAMES" ] && awk -v k="$_k" \
+        '!/^[ \t]*(#|$)/ && $1 != k' "$DESK_NAMES"
+      [ "$3" = - ] || printf '%s %s\n' "$_k" "$3"
+    } > "$_t"
+    chmod 644 "$_t"
+    mv "$_t" "$DESK_NAMES"
+    desk_table | awk -F"$TAB" -v k="$_k" '$1 == k {
+      print "hwdp desks: " $1 " is now `" $2 "`" }'
+    exit 0 ;;
+  -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+  *) echo "hwdp desks: unexpected argument '$1'" >&2; exit 2 ;;
+esac
+
+_here=$(desk_here)
+desk_table | while IFS="$TAB" read -r _k _n; do
+  _kind=$(desk_kind "$_k")
+  _p=$(desk_panels "$_k" | awk -F"$TAB" '
+    { m = split($1, w, " "); t = ($1 == "@builtin") ? "laptop" : \
+        ((m >= 2) ? w[m - 1] : w[1])
+      s = s (s ? ", " : "") t ($6 == 0 ? " (off)" : "") }
+    END { print s }')
+  case $_k in
+    *[!A-Z+]*) ;;
+    *) _p="any ${_k} desk (generic)" ;;
+  esac
+  _g=-; _s=-
+  if [ -f "$DESKS/$_k.conf" ]; then
+    _g=$(awk '$1 == "grid" { print $2 "x" $3; exit }' "$DESKS/$_k.conf")
+    _s=$(awk '$1 == "surface" { n++ } $1 == "default" { d = 1 }
+           END { print (n + 0) (d ? " + default" : "") }' "$DESKS/$_k.conf")
+    [ -n "$_g" ] || _g=-
+  fi
+  _m=" "
+  printf '%s\n' "$_here" | grep -qxF "$_k" && _m="*"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_m" "$_n" "$_k" "${_kind:--}" \
+    "$_g" "$_s" "${_p:--}"
+done | awk -F"$TAB" '
+  BEGIN { printf "  %-18s %-13s %-10s %-5s %-12s %s\n", "NAME", "KEY", "KIND",
+          "GRID", "SURFACES", "PANELS" }
+  { printf "%s %-18s %-13s %-10s %-5s %-12s %s\n", $1, $2, $3, $4, $5, $6, $7
+    n++ }
+  END { if (!n) print "  (no desks yet: hwdp arrange lays one out)" }'

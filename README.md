@@ -26,6 +26,9 @@ hwdp arrange    write and apply a layout from placements; with none, at a
                 preview with a revert countdown, labels on every monitor)
 hwdp surfaces   this desk's named surfaces (panel, half, cell), resolved
 hwdp map        draw this desk in text: outputs, surfaces, problems
+hwdp desks      every known desk by name (made from its hardware, or
+                chosen with --name); `hwdp arrange <name>` edits one,
+                attached or not
 hwdp identify   a bright label on every monitor saying which it is
 hwdp watch      supervise the layout; fire display-change hooks
 hwdp apply      fire the changed hooks now, so a config change goes live

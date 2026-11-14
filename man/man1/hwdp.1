@@ -213,6 +213,49 @@ beside the profile), regenerates the layout and nudges a running
 supervisor; with none running it says so instead of starting one. Refusals
 (an output left out, two in one space, an unknown name, a bad alignment) exit
 2 and write nothing.
+.TP
+.BI "hwdp arrange " desk
+The interactive tool on a NAMED desk (see
+.BR "hwdp desks" ).
+One lowercase word is a desk, never a placement: placements start with a
+connector or a quoted EDID name, which always hold capitals. The attached
+desk opens as with no argument. Any other opens from its files with none of
+its panels here: the layout from its profile, the surfaces from its desk
+file, labelled by model number; saving WRITES both (through
+.B "hwdp profile \-\-write"
+and
+.BR "hwdp surfaces \-\-write" ),
+validated as ever, and applies nothing, ready for the next dock. Preview and
+labels on glass need the panels and say so. A desk with no layout on record
+(a generic one, or one never arranged) has only its surfaces to edit.
+.TP
+.BR "hwdp desks" " [" \-\-name
+.IR "desk new" "] [" \-\-resolve
+.IR desk ]
+Every desk the files describe, one per line: its NAME, its KEY (the id or
+shape its files are named by), its kind, grid, surfaces and panels, the one
+attached now marked
+.BR * .
+A name is made from the hardware (the external panels' model numbers left to
+right,
+.IR u2715h+p2721q ;
+a repeat as
+.IR aw2725q-x3 ;
+.I laptop
+for a laptop alone) unless one is chosen with
+.BR \-\-name ,
+kept in
+.IR ~/.config/hwdp/desks/desk-names ;
+.B \-
+puts the made one back. Names are lowercase
+.IR "a-z 0-9 + - _"
+and unique (a made name that would repeat gets
+.IR -2 ),
+so
+.BI "hwdp arrange " name
+can take one.
+.B \-\-resolve
+prints the key a name or key is filed by, exit 1 if none.
 .B \-\-dry\-run
 prints the placements and the profile, and writes nothing.
 .B \-\-preview
@@ -316,7 +359,8 @@ The shipped one uses GTK layer shell (python3-gi with GTK 3 and
 GtkLayerShell): a frameless, click-through window on the overlay layer.
 Exit 3 with no session, 4 when no provider can run.
 .TP
-.BR "hwdp profile" " [" \-\-missing ]
+.BR "hwdp profile" " [" \-\-missing "] [" \-\-write
+.IR key ]
 The authored layout profile for the connected set: its path, exit 0, or exit
 1 when there is none. A desk NEEDS one when
 .B HWDP_MAP_MIN
@@ -325,8 +369,16 @@ to arrange.
 .B \-\-missing
 answers that as a reminder's recheck wants it: 0 still needed, 1 not, 2 when
 it cannot tell (no displays). Headless.
+.B \-\-write
+writes the profile of the desk filed as
+.I key
+from layout records on stdin without applying it (how the tool saves a desk
+away from it), through the same writer as arrange and capture, fires
+.B saved
+with HWDP_SAVED set to the profile, and refreshes a running session's kanshi
+config, which carries every desk.
 .TP
-.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-check|\-\-write]
+.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-raw|\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each (eight fields, FROZEN: a consumer refuses any other count):
 .IP
@@ -401,6 +453,17 @@ tool sees only the panels in front of it), the result is validated first and
 refused whole (exit 2) if broken, and the old file is kept under
 .IR ~/.local/state/hwdp/surfaces ,
 never beside it.
+.B \-\-raw
+prints the desk file's own lines unresolved, TAB-separated:
+.IR "surface|default name panel cx cy region" .
+With
+.B HWDP_DESK
+set to a key, every mode works on THAT desk, attached or not: nothing is
+resolved against panels that are not its own, and
+.B \-\-write
+replaces the file whole (the caller holds every panel of the desk), with
+panels named by quoted EDID name or
+.BR @builtin .
 .TP
 .BR "hwdp map" " [" \-\-width
 .IR N ]

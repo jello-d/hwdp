@@ -4,6 +4,18 @@
 #   hwdp profile             print its path; exit 0 if there is one, 1 if not
 #   hwdp profile --missing   exit 0 if this desk still NEEDS one, 1 if it has
 #                            one (or needs none), 2 if it cannot tell
+#   hwdp profile --write <key>
+#                            write the profile of the desk filed as <key>
+#                            (`hwdp desks` lists them) from records on stdin,
+#                            without applying it: how a desk is laid out
+#                            AWAY from it. The records are profile_text's
+#                            (lib/displayset_lib), panels by EDID name or
+#                            @builtin. Through the same writer as arrange and
+#                            capture, so it reads exactly as theirs; fires
+#                            `saved` (HWDP_SAVED is the profile) so an
+#                            integrator can record it, and refreshes a running
+#                            session's kanshi config, which carries every
+#                            desk, so the change is in place for the next dock
 #
 # A desk NEEDS a profile when HWDP_MAP_MIN or more panels are ATTACHED (default
 # 2) and no profile names this set. One panel has nothing to arrange, so a
@@ -22,7 +34,38 @@ MISSING=0
 case "${1:-}" in
   '') ;;
   --missing) MISSING=1 ;;
-  -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+  --write)
+    [ $# -eq 2 ] || { echo "usage: hwdp profile --write <key>" >&2; exit 2; }
+    case $2 in
+      */*|.*|'') echo "hwdp profile: bad key \`$2\`" >&2; exit 2 ;;
+    esac
+    mkdir -p "$PROFILES"
+    _t=$(mktemp "$PROFILES/.write.XXXXXX")
+    _tq="'$_t'"
+    # shellcheck disable=SC2064  # the literal path, baked in when armed
+    trap "rm -f $_tq" EXIT INT TERM
+    profile_text "$2" "arranged by hwdp arrange" > "$_t"
+    if ! grep -q '^    output "' "$_t"; then
+      echo "hwdp profile: --write: no panels in the records; NOT written" >&2
+      exit 2
+    fi
+    _dst=$(profile_install "$2" "$_t" arrange)
+    trap - EXIT INT TERM
+    printf '%s\n' "$_dst"
+    HWDP_SAVED=$_dst; export HWDP_SAVED
+    # shellcheck disable=SC2034  # read by hooks_lib, sourced next
+    HWDP_HOOK_TAG='hwdp profile'
+    . "$HWDP_LIB/hooks_lib"
+    run_hooks saved
+    # Refresh, never start: a session's supervisor carries every desk in its
+    # kanshi config; with no session there is nothing to refresh.
+    _lock=${XDG_RUNTIME_DIR:-/tmp}/hwdp/watch.lock
+    if [ -e "$_lock" ] && ! ( flock -n 9 ) 9>"$_lock" 2>/dev/null; then
+      "$HWDP_LIBEXEC/cmd/layout" >/dev/null 2>&1 \
+        && "$HWDP_LIBEXEC/cmd/watch" >/dev/null 2>&1 || :
+    fi
+    exit 0 ;;
+  -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
   *) echo "hwdp profile: unexpected argument '$1'" >&2; exit 2 ;;
 esac
 

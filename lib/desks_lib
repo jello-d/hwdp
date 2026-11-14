@@ -1,0 +1,162 @@
+# desks_lib: every DESK this box knows, and a NAME for each. Sourced (after
+# displayset_lib, for PROFILES and TAB), never executed.
+#
+# A desk is known by a KEY: the id its kanshi profile and desk file are filed
+# under (`hwdp id --desk`, or the plain `hwdp id` from before desk ids), or a
+# SHAPE for a GENERIC desk file (BL.conf serves any laptop on its own). Keys
+# are what the files are named by and stay the identity; nobody types them.
+#
+# THE NAME is the shorthand: lowercase, `a-z 0-9 + - _`, so it can never be
+# read as a connector (DP-1, eDP-1, HDMI-A-1) or a quoted EDID name, both of
+# which hold capitals; that is what lets `hwdp arrange <name>` take one
+# without a flag beside its placement syntax. A name the person chose lives in
+# $DESKS/desk-names (`<key> <name>`, not a .conf, so never read as a desk);
+# otherwise one is MADE from the hardware: the external panels' model numbers
+# left to right (u2715h+p2721q), a repeat as model-xN (aw2725q-x3), `laptop`
+# for a laptop alone, the shape in lowercase for any other generic desk. Two
+# desks that would make the same name (identical monitors at two desks) get
+# -2, -3 in key order, so a name is always unique.
+
+_dcfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}/hwdp
+DESKS=${HWDP_DESKS:-$_dcfg/desks}
+DESK_NAMES=${HWDP_DESK_NAMES:-$DESKS/desk-names}
+DESK_NAME_RE='^[a-z0-9][a-z0-9+_-]*$'
+
+# desk_keys: every key, once, sorted.
+desk_keys() {
+  for _dk in "$PROFILES"/*.conf "$DESKS"/*.conf; do
+    [ -f "$_dk" ] || continue
+    _dk=${_dk##*/}
+    printf '%s\n' "${_dk%.conf}"
+  done | sort -u
+}
+
+# desk_panels <key>: one line per panel, `name<TAB>x<TAB>y<TAB>w<TAB>h<TAB>on`,
+# LEFT TO RIGHT (then top to bottom), the order a person reads a desk in.
+# From the profile when there is one: the hwdp-rect gives the size, else the
+# output line's mode turned by its transform (a profile written before the
+# rects has only that); the output line gives the position and whether it is
+# switched on. Else the panels the desk file names, with no geometry (0s).
+desk_panels() {
+  if [ -f "$PROFILES/$1.conf" ]; then
+    awk -v OFS="$TAB" '
+      /^# hwdp-rect "/ { l = $0; sub(/^# hwdp-rect "/, "", l)
+        n = l; sub(/".*/, "", n); sub(/^[^"]*" /, "", l)
+        split(l, r, " "); RW[n] = r[3]; RH[n] = r[4]; next }
+      /^[ \t]*output "/ { l = $0; sub(/^[ \t]*output "/, "", l)
+        n = l; sub(/".*/, "", n)
+        on = (l ~ / disable[ \t]*$/) ? 0 : 1
+        x = y = 0
+        if (!(n in RW) && match(l, / mode [0-9]+x[0-9]+/)) {
+          m = substr(l, RSTART + 6, RLENGTH - 6); split(m, d, "x")
+          RW[n] = d[1]; RH[n] = d[2]
+          if (l ~ / transform (flipped-)?(90|270)( |$)/) {
+            RW[n] = d[2]; RH[n] = d[1]
+          }
+        }
+        if (match(l, / position -?[0-9]+,-?[0-9]+/)) {
+          p = substr(l, RSTART + 10, RLENGTH - 10); split(p, q, ",")
+          x = q[1]; y = q[2]
+        }
+        print n, x, y, RW[n] + 0, RH[n] + 0, on }' "$PROFILES/$1.conf" \
+      | sort -t"$TAB" -k2,2n -k3,3n
+  elif [ -f "$DESKS/$1.conf" ]; then
+    awk -v OFS="$TAB" '$1 == "surface" || $1 == "default" {
+        l = $0; if (!match(l, /"[^"]+"/)) next
+        n = substr(l, RSTART + 1, RLENGTH - 2)
+        if (!(n in S)) { S[n] = 1; print n, 0, 0, 0, 0, 1 } }' \
+      "$DESKS/$1.conf"
+  fi
+}
+
+# desk_kind <key>: its shape token (BL+EL+EP ...). A generic key IS one. From
+# the profile's own sizes: @builtin is B, anything else E; portrait when the
+# laid-out height exceeds the width. Unknown without a profile.
+desk_kind() {
+  case $1 in
+    *[!A-Z+]*) ;;
+    *) printf '%s\n' "$1"; return 0 ;;
+  esac
+  desk_panels "$1" | awk -F"$TAB" '
+    $6 == 1 { t[++n] = (($1 == "@builtin") ? "B" : "E") \
+                       (($5 + 0 > $4 + 0) ? "P" : "L") }
+    END {
+      for (i = 2; i <= n; i++) {          # insertion sort, n is tiny
+        v = t[i]; j = i - 1
+        while (j > 0 && t[j] > v) { t[j + 1] = t[j]; j-- }
+        t[j + 1] = v
+      }
+      for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? "+" : ""), t[i]
+      printf "\n"
+    }'
+}
+
+# desk_madename <key>: the name made from the hardware, before uniqueness.
+desk_madename() {
+  case $1 in
+    BL) echo laptop; return 0 ;;
+    *[!A-Z+]*) ;;
+    *) printf '%s\n' "$1" | tr 'A-Z' 'a-z'; return 0 ;;
+  esac
+  desk_panels "$1" | awk -F"$TAB" '
+    $1 == "@builtin" { lap = 1; next }
+    { m = split($1, w, " "); t = (m >= 2) ? w[m - 1] : w[1]
+      t = tolower(t); gsub(/[^a-z0-9]/, "", t)
+      if (t == "") t = "panel"
+      M[++n] = t }
+    END {
+      if (!n) { print (lap ? "laptop" : "desk"); exit }
+      same = 1
+      for (i = 2; i <= n; i++) if (M[i] != M[1]) same = 0
+      if (same && n > 1) { print M[1] "-x" n; exit }
+      s = M[1]
+      for (i = 2; i <= n; i++) s = s "+" M[i]
+      print s
+    }'
+}
+
+# desk_table: `key<TAB>name` for every desk. A chosen name wins; a made one
+# that would repeat another (chosen or made) gets -2, -3 in key order.
+desk_table() {
+  for _dk in $(desk_keys); do
+    printf '%s\t%s\n' "$_dk" "$(desk_madename "$_dk")"
+  done | awk -F"$TAB" -v OFS="$TAB" -v chosen="$DESK_NAMES" '
+    BEGIN {
+      while ((getline l < chosen) > 0) {
+        if (l ~ /^[ \t]*(#|$)/) continue
+        split(l, f, /[ \t]+/); C[f[1]] = f[2]
+      }
+    }
+    { K[++n] = $1; MADE[$1] = $2 }
+    END {
+      for (i = 1; i <= n; i++) if (K[i] in C) USED[C[K[i]]] = 1
+      for (i = 1; i <= n; i++) {
+        k = K[i]
+        if (k in C) { print k, C[k]; continue }
+        nm = MADE[k]; s = 1
+        while (nm in USED) nm = MADE[k] "-" (++s)
+        USED[nm] = 1; print k, nm
+      }
+    }'
+}
+
+# desk_resolve <name or key>: the key, or nothing (status 1).
+desk_resolve() {
+  desk_table | awk -F"$TAB" -v a="$1" '$1 == a || $2 == a { print $1; f = 1
+    exit } END { exit !f }'
+}
+
+# desk_here: the keys the attached panels are using now, one per line: the
+# desk id and the plain id, and the shape when its generic file is what this
+# desk falls back to. Nothing when no panel is attached.
+desk_here() {
+  _hid=$(hwdp_id)
+  [ -n "$_hid" ] || return 0
+  _hdk=$(desk_id)
+  printf '%s\n%s\n' "$_hdk" "$_hid"
+  if [ ! -f "$DESKS/$_hdk.conf" ]; then
+    _hs=$(shape)
+    [ -n "$_hs" ] && printf '%s\n' "$_hs"
+  fi
+  return 0
+}

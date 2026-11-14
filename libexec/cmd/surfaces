@@ -22,6 +22,18 @@
 #   --check   validate the files and report, in words, instead of resolving
 #   --write   replace this desk's file from lines on stdin (see write_file)
 #   --write-names  replace the names list from stdin (see write_names)
+#   --raw     the desk file's own lines, unresolved, TAB-separated:
+#             `surface|default NAME PANEL CX CY REGION` (`*` cells for the
+#             default), PANEL the quoted EDID name or @builtin as written
+#
+# HWDP_DESK=<key> works on THAT desk instead of the attached one, whether or
+# not its panels are here (`hwdp desks` names the keys; the layout tool uses
+# it to edit a desk away from it). Nothing is resolved against outputs that
+# are not this desk's: --raw and --grid read the file, --write replaces it
+# WHOLE (the caller holds every panel of the desk, so nothing is kept from
+# the old file but its grid when none is given, and panels must be named by
+# EDID name or @builtin, since there are no connectors to resolve), and a
+# plain run or --check validates the file and resolves what it can.
 #
 # THE WORDS (agreed 2026-11-11): a PANEL is a physical screen; a DESK the
 # panels attached together; the GRID the virtual workspace dimensions; a
@@ -82,6 +94,7 @@ case "${1:-}" in
   --check) MODE=check ;;
   --write) MODE='write' ;;
   --write-names) MODE=write-names ;;
+  --raw)   MODE=raw ;;
   -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   *) echo "hwdp surfaces: unexpected argument '$1'" >&2; exit 2 ;;
 esac
@@ -135,7 +148,7 @@ write_names() {
             [ -f "$_df" ] || continue
             awk -v f="$_df" '$1 == "surface" || $1 == "default" {
               print $2 "\t" f }' "$_df"
-          done | awk -F"$TAB" 'NR == FNR { split($0, w, " ")
+          done | awk -F"$TAB" 'FILENAME != "-" { split($0, w, " ")
                                            if (w[1] !~ /^#/) K[w[1]] = 1; next }
                  !($1 in K) { print "`" $1 "` is placed by " $2 }' \
                  "$_nt" -)
@@ -186,7 +199,9 @@ fi
 #   - the old file is kept as a .bak in the state dir, never beside it (the
 #     desks dir may be recorded whole, as muster captures profiles).
 write_file() {
-  if ! _live=$(probe_layout); then
+  if [ -n "${HWDP_DESK:-}" ]; then
+    _live=
+  elif ! _live=$(probe_layout); then
     echo "hwdp surfaces: writing needs a session (to resolve connectors)" >&2
     return 3
   fi
@@ -202,13 +217,15 @@ write_file() {
 
   # connector -> EDID name, for the outputs switched on now; at a desk the
   # built-in by its ROLE, so the file serves whichever laptop is docked.
-  _wb=; docked && _wb=$_bn
+  _wb=; [ -z "${HWDP_DESK:-}" ] && docked && _wb=$_bn
   printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" -v b="$_wb" \
     '$1 != "" && $12 == 1 { print $2, ($1 == b) ? "@builtin" : $1 }' \
     > "$_wd/names"
   # The given lines, connectors resolved; refused whole on any bad line.
+  # By FILENAME, not NR == FNR: offline the names table is EMPTY, and then
+  # NR == FNR holds for every line of stdin, which swallowed them all.
   awk -F"$TAB" '
-    NR == FNR { N[$1] = $2; next }
+    FILENAME != "-" { N[$1] = $2; next }
     /^[ \t]*(#|$)/ { next }
     {
       line = $0; sub(/^[ \t]+/, "", line)
@@ -223,18 +240,26 @@ write_file() {
       conn = rest; sub(/[ \t].*/, "", conn); sub(/^[^ \t]+/, "", rest)
       if (!(conn in N)) {
         print "hwdp surfaces: --write: no switched-on output named `" \
-          conn "`" > "/dev/stderr"; bad = 1; next
+          conn "`" (offline ? " (with HWDP_DESK, name panels by quoted" \
+          " EDID name or \"@builtin\")" : "") > "/dev/stderr"
+        bad = 1; next
       }
       nm = line; sub(/^[a-z]+[ \t]+/, "", nm); sub(/[ \t].*/, "", nm)
       print kw " " nm " \"" N[conn] "\"" rest
     }
-    END { if (bad) exit 2 }' "$_wd/names" - > "$_wd/given" || return 2
+    END { if (bad) exit 2 }' offline="${HWDP_DESK:+1}" "$_wd/names" - \
+    > "$_wd/given" || return 2
   # What the file read keeps: its lines for panels NOT switched on now, and
   # its grid when none was given.
   : > "$_wd/kept"
-  if [ -n "$_file" ]; then
+  if [ -n "$_file" ] && [ -n "${HWDP_DESK:-}" ]; then
+    # The caller holds the WHOLE desk: keep only the grid, when none given.
+    if ! grep -q '^grid[ \t]' "$_wd/given"; then
+      grep '^[ \t]*grid[ \t]' "$_file" | head -1 > "$_wd/kept" || :
+    fi
+  elif [ -n "$_file" ]; then
     awk -F"$TAB" -v grid="$(grep -c '^grid[ \t]' "$_wd/given" || :)" '
-      NR == FNR { ON[$2] = 1; next }
+      FILENAME == ARGV[1] { ON[$2] = 1; next }
       /^[ \t]*grid[ \t]/ { if (grid == 0) print; next }
       match($0, /^[ \t]*(surface|default)[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
         p = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", p)
@@ -253,7 +278,8 @@ write_file() {
   } > "$_wd/$_desk.conf"
   # Validated by this same command, against the candidate, before anything
   # is replaced.
-  if ! HWDP_DESKS=$_wd HWDP_SURFACES=$_wd/none "$0" >/dev/null 2>"$_wd/err"
+  if ! HWDP_DESKS=$_wd HWDP_SURFACES=$_wd/none HWDP_DESK=$_desk "$0" \
+      >/dev/null 2>"$_wd/err"
   then
     sed 's/^/  /' "$_wd/err" >&2
     echo "hwdp surfaces: --write: NOT written, the result would be broken" >&2
@@ -271,20 +297,33 @@ write_file() {
 }
 
 
-_id=$(hwdp_id)
-if [ -z "$_id" ]; then
-  [ "$MODE" = check ] && echo "hwdp surfaces: no displays attached"
-  exit 0
-fi
-# THIS desk's file, then a generic one for its kind, then the files from
-# before desk files existed (under the desk id, then the plain id).
-_desk=$(desk_id)
 _file=
-for _f in "$DESKS/$_desk.conf" "$DESKS/$(shape).conf" "$SURF/$_desk.conf" \
-    "$SURF/$_id.conf"; do
-  if [ -f "$_f" ]; then _file=$_f; break; fi
-done
-_bn=$(builtin_name)
+if [ -n "${HWDP_DESK:-}" ]; then
+  # A NAMED desk, attached or not: its own file only.
+  case $HWDP_DESK in
+    */*|.*|'') echo "hwdp surfaces: bad HWDP_DESK \`$HWDP_DESK\`" >&2
+               exit 2 ;;
+  esac
+  _desk=$HWDP_DESK
+  for _f in "$DESKS/$_desk.conf" "$SURF/$_desk.conf"; do
+    if [ -f "$_f" ]; then _file=$_f; break; fi
+  done
+  _bn=$(builtin_name 2>/dev/null) || _bn=
+else
+  _id=$(hwdp_id)
+  if [ -z "$_id" ]; then
+    [ "$MODE" = check ] && echo "hwdp surfaces: no displays attached"
+    exit 0
+  fi
+  # THIS desk's file, then a generic one for its kind, then the files from
+  # before desk files existed (under the desk id, then the plain id).
+  _desk=$(desk_id)
+  for _f in "$DESKS/$_desk.conf" "$DESKS/$(shape).conf" \
+      "$SURF/$_desk.conf" "$SURF/$_id.conf"; do
+    if [ -f "$_f" ]; then _file=$_f; break; fi
+  done
+  _bn=$(builtin_name)
+fi
 if [ "$MODE" = write ]; then
   write_file
   exit $?
@@ -295,15 +334,35 @@ if [ "$MODE" = grid ]; then
          print $2, $3; exit }' "$_file"
   exit 0
 fi
+if [ "$MODE" = raw ]; then
+  [ -n "$_file" ] || exit 0
+  awk -v OFS="$TAB" '$1 == "surface" || $1 == "default" {
+      kw = $1; nm = $2; l = $0
+      if (!match(l, /"[^"]+"/)) next
+      pn = substr(l, RSTART + 1, RLENGTH - 2)
+      rest = substr(l, RSTART + RLENGTH)
+      n = split(rest, w, /[ \t]+/); cx = cy = "*"; rg = "full"
+      for (i = 1; i <= n; i++) {
+        if (w[i] == "cell") { cx = w[i + 1]; cy = w[i + 2]; i += 2 }
+        else if (w[i] ~ /^(top|bottom|left|right|full)$/) rg = w[i]
+      }
+      print kw, nm, pn, cx, cy, rg }' "$_file"
+  exit 0
+fi
 if [ -z "$_file" ]; then
   [ "$MODE" = check ] && echo "no surfaces for this desk ($DESKS/$_desk.conf)"
   exit 0
 fi
 
 if ! _live=$(probe_layout); then
-  echo "hwdp surfaces: no layout provider could answer; surfaces need a" \
-       "session (the compositor knows which outputs are on)" >&2
-  exit 3
+  if [ -z "${HWDP_DESK:-}" ]; then
+    echo "hwdp surfaces: no layout provider could answer; surfaces need a" \
+         "session (the compositor knows which outputs are on)" >&2
+    exit 3
+  fi
+  # A named desk away from its panels: validated in full, resolved to
+  # nothing (every check that can refuse the file runs before resolution).
+  _live=
 fi
 # connector -> panel id, as `hwdp id --panels` prints it, for --map.
 _pids=$(probe_panels | awk -F"$TAB" '$2 != "" && $1 != "" {
