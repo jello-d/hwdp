@@ -1622,7 +1622,9 @@ def draw_sidebar(scr, app, top, rows, width):
         put(scr, top + 2, 1, "(none: tab 2 adds)", curses.A_DIM)
     put(scr, top + rows - 2, 1, "D default here", curses.A_DIM)
     put(scr, top + rows - 1, 1, "N placed N times  - not", curses.A_DIM)
-    for r in range(top - 1, top + rows):
+    # From the sidebar's own first row, not the one above it, so a blank
+    # row separates the rule from the menu bar.
+    for r in range(top, top + rows):
         put(scr, r, width, G["v"], curses.A_DIM)
 
 
@@ -1725,17 +1727,70 @@ def draw_physical(scr, app, b, cols, left):
             curses.color_pair(4) | curses.A_BOLD)
 
 
+# THE MENU BAR borrows mux's default palette: a purple bar, the active tab a
+# lavender chip in dark bold text, the way mux marks the current window. Set
+# by colors() once the terminal is known; with no colour at all the active
+# tab keeps its brackets, so it is still marked.
+PAIR_BAR, PAIR_CHIP, PAIR_FLAG = 5, 6, 7
+COLOR = False
+
+
+def colors():
+    """The pairs, from the 256-colour palette where the terminal has it,
+    else the basic eight."""
+    global COLOR
+    if not curses.has_colors():
+        return
+    rich = curses.COLORS >= 256
+    curses.init_pair(PAIR_BAR, 189 if rich else curses.COLOR_WHITE,
+                     54 if rich else curses.COLOR_BLUE)
+    curses.init_pair(PAIR_CHIP, 232 if rich else curses.COLOR_BLACK,
+                     141 if rich else curses.COLOR_CYAN)
+    curses.init_pair(PAIR_FLAG, 232 if rich else curses.COLOR_BLACK,
+                     214 if rich else curses.COLOR_YELLOW)
+    COLOR = True
+
+
+def draw_bar(scr, app, w, state):
+    """Row 0: the title, the tabs (the active one a chip), and on the right
+    what is in force: a mode, labels on glass, unsaved changes."""
+    bar = curses.color_pair(PAIR_BAR) if COLOR else 0
+    chip = curses.color_pair(PAIR_CHIP) | curses.A_BOLD if COLOR \
+        else curses.A_BOLD
+    flag = curses.color_pair(PAIR_FLAG) | curses.A_BOLD if COLOR \
+        else curses.A_BOLD
+    if COLOR:
+        try:            # the whole row, the last column too
+            scr.addstr(0, 0, " " * w, bar)
+        except curses.error:
+            pass
+    x = 1
+    put(scr, 0, x, "hwdp arrange", bar | curses.A_BOLD)
+    x += len("hwdp arrange") + 3
+    for i, t in enumerate(TABS):
+        on = i == app.tab
+        text = (" %d %s " if COLOR or not on else "[%d %s]") % (i + 1, t)
+        put(scr, 0, x, text, chip if on else bar)
+        x += len(text) + 1
+    flags = [f for f in (state, "labels on" if app.ident else "",
+                         "unsaved" if app.dirty() else "") if f]
+    right = sum(len(f) + 3 for f in flags)
+    if flags and x + right < w:
+        fx = w - 1 - right
+        for f in flags:
+            put(scr, 0, fx, " %s " % f, flag if f == "unsaved" else
+                bar | curses.A_BOLD)
+            fx += len(f) + 3
+    elif flags:
+        put(scr, 0, x, "  ".join(flags), bar | curses.A_BOLD)
+
+
 def render(scr, app, now):
     scr.erase()
     h, w = scr.getmaxyx()
     state = "MOVE" if app.moving else ("swap: pick the other" if app.mark
                                       else "")
-    tabs = "  ".join(("[%d %s]" if i == app.tab else " %d %s ") % (i + 1, t)
-                     for i, t in enumerate(TABS))
-    put(scr, 0, 1, "hwdp arrange  %s%s%s%s" % (
-        tabs, ("  " + state) if state else "",
-        "  labels on" if app.ident else "",
-        "  (unsaved)" if app.dirty() else ""), curses.A_BOLD)
+    draw_bar(scr, app, w, state)
 
     # One help line: this tab's keys, then the global ones. It wraps by
     # whole entries rather than lose its tail at the screen edge, and
@@ -1748,8 +1803,8 @@ def render(scr, app, now):
     if sw:
         draw_sidebar(scr, app, 2, b - 3, sw)
     left = sw + 2 if sw else 1
-    # Which desk, when it is not the one attached: right of the sidebar's
-    # rule, which starts on this row.
+    # Which desk, when it is not the one attached: the row between the bar
+    # and everything else, right of where the sidebar's rule runs.
     where = getattr(app, "where", "")
     if where:
         put(scr, 1, left, where, curses.A_DIM)
@@ -1798,6 +1853,7 @@ def run(scr, app):
     curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_MAGENTA)
     curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_GREEN)
     curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_RED)
+    colors()
     scr.keypad(True)
     scr.timeout(250)
     while not app.done:
@@ -1845,7 +1901,7 @@ def main(argv):
             return 2
         app = App(Desk(outs, hw.repack), hw)
         hw.desk = app.desk
-        app.where = "%s, not attached: saving writes, nothing applies" % name
+        app.where = "%s: not attached, saving edits its files" % name
     else:
         hw = Hwdp()
         app = App(Desk(hw.geometry(), hw.repack), hw)

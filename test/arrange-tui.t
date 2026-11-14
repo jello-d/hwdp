@@ -510,6 +510,20 @@ desk3 = [tui.Output("DP-9", "normal", 320, 225, 2560, 1440),
          tui.Output("DP-7", "270", 2880, 0, 2160, 3840),
          tui.Output("eDP-1", "normal", 0, 1665, 2880, 1800)]
 out = shown(desk3, [], [2, 2], 0, 60, 18)
+rows = shown(lap, three, [3, 3], 2, 80, 24).split("\n")
+check("the active tab is marked when there is no colour",
+      "[3 Virtual]" in rows[0], rows[0])
+check("the sidebar rule leaves a blank row under the menu bar",
+      rows[1][tui.SIDE_W] == " " and rows[2][tui.SIDE_W] != " ", rows[:3])
+hw = FakeHw()
+hw.namesv, hw.surf, hw.gridv = NAMES, (three, None, ""), [3, 3]
+app = tui.App(tui.Desk(lap, hw.repack), hw)
+app.key(ord("r"), 0)
+scr = Scr(80, 24)
+tui.render(scr, app, 0.0)
+top = scr.text().split("\n")[0]
+check("unsaved changes are flagged at the right of the bar",
+      top.rstrip().endswith(" unsaved") and len(top.rstrip()) >= 75, top)
 check("the physical tab says the selected panel in full",
       "DP-9 EL 2560x1440 at 320,225  rotate 0" in out, out)
 
