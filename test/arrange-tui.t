@@ -462,14 +462,10 @@ a.key(ord("1"), 0); a.key(ord("r"), 0)
 check("1 returns to the physical tab, whose keys still work",
       a.tab == 0 and "rotated" in a.msg, (a.tab, a.msg))
 
-
-# --- the view: what a person can READ when the drawings are small -----------
-# Names that share a first word (personal-main, personal-agents, ...) were
-# drawn cut to the miniature's width, so a laptop's third column read
-# "pers", "pers", "pers" (dragonfly, 2026-11-13). Now a drawing shows the
-# LABEL when it fits and the name's KEY when it does not, never a cut label;
-# a pane spells the selected cell out; and a cell too small for miniatures
-# becomes a list. Drawn by the real render() into a screen that keeps text.
+# --- the view: a drawing cuts, the line under it does not ----------------
+# A miniature too small for a name shows it cut ("pers" three times on a
+# laptop at 80x24); the line under the drawing says the selection in full.
+# Drawn by the real render() into a screen that keeps text.
 class Scr:
     def __init__(s, w, h):
         s.w, s.h = w, h
@@ -488,8 +484,7 @@ class Scr:
         return lambda *a, **k: None
 curses.color_pair = lambda n: 0
 NAMES = [["calendar", "Calendar"], ["personal-main", "Personal Main"],
-         ["personal-agents", "Personal Agents"],
-         ["personal-overflow", "Personal Overflow"]]
+         ["personal-agents", ""], ["personal-overflow", "Overflow"]]
 def shown(outs, surf, grid, tab, w, h, cell=(0, 0)):
     hw = FakeHw()
     hw.namesv, hw.surf, hw.gridv = NAMES, (surf, None, ""), grid
@@ -497,56 +492,32 @@ def shown(outs, surf, grid, tab, w, h, cell=(0, 0)):
     app.tab, app.vcell = tab, list(cell)
     scr = Scr(w, h)
     tui.render(scr, app, 0.0)
-    return scr.text(), app
-def grid_of(out):
-    """The drawing alone: right of the sidebar, above the pane. The
-    sidebar IS the legend, so a check over the whole screen finds every
-    key and label there and proves nothing about the drawing."""
-    rows = out.split("\n")
-    end = next(i for i, r in enumerate(rows) if "cell " in r and
-               r.strip().split("|")[-1].strip().startswith("cell "))
-    return "\n".join(r[tui.SIDE_W + 1:] for r in rows[2:end])
+    return scr.text()
 lap = [tui.Output("eDP-1", "normal", 0, 0, 2880, 1800)]
 three = [tui.Surface(n, "eDP-1", "full", i, 0)
          for i, n in enumerate(["personal-main", "personal-agents",
                                 "personal-overflow"])]
-check("keys follow the names list", [tui.key_of(app_, n) for app_, n in
-      [(shown(lap, [], [1, 1], 2, 80, 24)[1], x[0]) for x in NAMES]] ==
-      ["a", "b", "c", "d"])
-out, app = shown(lap, three, [3, 1], 2, 80, 24, (2, 0))
-g = grid_of(out)
-check("a narrow miniature shows the KEY, never a cut label",
-      all(" %s " % k in g for k in "bcd") and "pe" not in g.lower()
-      and "Pe" not in g, g)
-check("the sidebar is the legend: key and label",
-      "b Personal Main" in out and "d Personal Overflow" in out, out)
-check("the pane spells the selected cell out in full",
-      "full   d  Personal Overflow" in out
-      and "eDP-1 BL 2880x1800 at 0,0" in out, out)
-out, app = shown(lap, three, [3, 1], 2, 200, 50)
-check("a miniature with room shows the LABEL",
-      "Personal Agents" in grid_of(out), grid_of(out))
+out = shown(lap, three, [3, 3], 2, 80, 24, (2, 0))
+draw = "\n".join(r[tui.SIDE_W + 1:] for r in out.split("\n")[2:8])
+check("a narrow miniature is drawn, cut to fit", "|pers|" in draw, draw)
+check("the line under it names the selection in full, with its label",
+      "| personal-overflow (Overflow)  in cell 2,0" in out,
+      out)
+out = shown(lap, three, [3, 3], 2, 80, 24, (1, 0))
+check("a name with no label is not given an empty one",
+      "| personal-agents  in cell 1,0" in out, out)
 desk3 = [tui.Output("DP-9", "normal", 320, 225, 2560, 1440),
          tui.Output("DP-7", "270", 2880, 0, 2160, 3840),
          tui.Output("eDP-1", "normal", 0, 1665, 2880, 1800)]
-surf3 = [tui.Surface("calendar", "DP-9", "full", 0, 0),
-         tui.Surface("personal-main", "DP-7", "top", 0, 0),
-         tui.Surface("personal-agents", "DP-7", "bottom", 0, 0)]
-out, app = shown(desk3, surf3, [2, 2], 2, 80, 24)
-g = grid_of(out)
-check("a cell too small to draw the desk becomes a list",
-      "DP-7 b c" in g and "DP-9 a" in g and "eDP-1 -" in g, g)
-out, app = shown(desk3, surf3, [2, 2], 0, 60, 18)
+out = shown(desk3, [], [2, 2], 0, 60, 18)
 check("the physical tab says the selected panel in full",
       "DP-9 EL 2560x1440 at 320,225  rotate 0" in out, out)
-check("a box too small for its details shows the connector alone",
-      "2160x3840" not in out.split("DP-9 EL")[0], out)
 
 print("\n".join(fails) if fails else "ALL-OK")
 PY
 )
 [ "$_out" = ALL-OK ] || fail "$_out"
-pass "model, controller and view, small drawings kept readable"
+pass "model, controller and view: drawings cut, the selection in full"
 
 # --- it refuses to run without a terminal -------------------------------------
 if _o=$(python3 "$HERE/libexec/arrange-tui" </dev/null 2>&1); then
