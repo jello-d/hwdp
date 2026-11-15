@@ -26,6 +26,12 @@
 # kernel when the supervisor dies), with no PID matching, no duplicate daemons.
 
 set -u
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+  '') ;;
+  *) echo "hwdp watch: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
+
 # For probe_panels, used by the hotplug poller below. probe_lib defines
 # functions and provider roots and runs nothing on its own, so sourcing it is
 # free; using it rather than reading DRM sysfs here keeps ONE answer to "what

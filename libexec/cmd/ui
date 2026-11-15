@@ -70,6 +70,7 @@ UI_BAR_LODPI=${UI_BAR_LODPI:-32}
 BAR_LODPI_MAX_PPI=${BAR_LODPI_MAX_PPI:-130}
 
 case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
   '') ;;
   --outputs)
     if ! _rec=$(probe_layout) || [ -z "$_rec" ]; then
@@ -89,7 +90,7 @@ case "${1:-}" in
           (ppi > 0 && ppi < max) ? lo : hi, ppi
       }'
     exit 0 ;;
-  *) echo "hwdp ui: unknown argument: $1 (try --outputs)" >&2; exit 2 ;;
+  *) echo "hwdp ui: unknown argument: $1 (try --help)" >&2; exit 2 ;;
 esac
 
 # With NO display at all, say so and emit nothing. Every consumer reads these

@@ -7,6 +7,7 @@
 # session start from the sticky per-panel value, and baking one in here would
 # freeze a number that is meant to track the hardware.
 #
+# (end of --help: the rest is for maintainers)
 # WRITES ATOMICALLY, AND NEVER DESTROYS A PROFILE SILENTLY. This used to be a
 # plain `> $dst`, which truncates BEFORE the block that fills it: a re-capture
 # of a set whose profile had been hand-edited threw that work away with no
@@ -39,6 +40,11 @@
 # as two outer ones (see layout_faults). `hwdp layout` checks again once the
 # scales are known.
 set -eu
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+  '') ;;
+  *) echo "hwdp capture: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
 . "$HWDP_LIB/displayset_lib"
 
 _id=$(hwdp_id)

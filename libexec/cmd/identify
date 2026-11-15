@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
   case $1 in
     --seconds) _secs=${2:-}; shift ;;
     --parent)  _parent=${2:-}; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
     *) echo "hwdp identify: unexpected argument '$1'" >&2; exit 2 ;;
   esac
   shift

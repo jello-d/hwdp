@@ -9,7 +9,8 @@
 set -eu
 . "$HWDP_LIB/displayset_lib"
 case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
   '') shape ;;
   --outputs) shape_tokens | tr '\t' ' ' ;;
-  *) echo "hwdp shape: unknown argument: $1 (try --outputs)" >&2; exit 2 ;;
+  *) echo "hwdp shape: unknown argument: $1 (try --help)" >&2; exit 2 ;;
 esac

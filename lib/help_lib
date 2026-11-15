@@ -1,0 +1,22 @@
+# help_lib: `hwdp <cmd> --help` prints the command's own header comment, so
+# the help and the documentation in the source are one text and cannot drift.
+#
+# Each command used to print a hand-typed LINE RANGE of its header, and the
+# ranges had drifted as the headers grew: map and profile lost their last
+# lines, arrange lost what <out> may be, surfaces stopped mid-sentence. So the
+# extent is the header's own: every comment line after the shebang, up to the
+# first line that is not a comment, or up to a marker line where the header
+# goes on into notes for maintainers:
+#
+#   # (end of --help: the rest is for maintainers)
+#
+# help_print FILE: that text with the `# ` prefix removed, trailing blank lines
+# dropped.
+help_print() {
+  awk 'NR == 1 { next }
+    !/^#/ || index($0, "# (end of --help") == 1 { exit }
+    { sub(/^# ?/, "")
+      if ($0 == "") { b++; next }
+      for (; b > 0; b--) print ""
+      print }' "$1"
+}

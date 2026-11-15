@@ -68,7 +68,7 @@ case "${1:-}" in
   --preview)     MODE=preview; shift ;;
   --revert)      MODE=revert; shift ;;
   --interactive) MODE=tui; shift ;;
-  -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
 esac
 
 # ONE LOWERCASE WORD IS A DESK. A desk name is lowercase by construction and

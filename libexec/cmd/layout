@@ -38,6 +38,7 @@
 #     so there is nowhere to put a per-output value. Equalising the LOGICAL
 #     density instead makes one set correct on every panel.
 #
+# (end of --help: the rest is for maintainers)
 # It costs LOGICAL REAL ESTATE, not sharpness, a point worth stating because
 # it was got wrong once here. The compositor advertises
 # wp_fractional_scale_manager_v1 and wp_viewporter, so a client that supports
@@ -49,6 +50,11 @@
 # off the same variable so the pair stays consistent: with a target set it
 # sizes for that target's density, and without one it buckets by panel width.
 set -eu
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+  '') ;;
+  *) echo "hwdp layout: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
 . "$HWDP_LIB/displayset_lib"
 
 # scale_for <res_w> <res_h> <mm_w> <mm_h>: the computed scale for one output.

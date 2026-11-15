@@ -44,6 +44,7 @@
 # REGION full/top/bottom/left/right of a panel; a SURFACE a NAMED region of a
 # panel in one workspace. A surface is a place, never an app.
 #
+# (end of --help: the rest is for maintainers)
 # TWO KINDS OF FILE, by who changes them:
 #   $HWDP_SURFACE_NAMES ($HWDP_DESKS/surfaces.names): every surface NAME,
 #     global across desks, `name [label]`. The same name at two desks is the
@@ -105,7 +106,7 @@ case "${1:-}" in
   --write-names) MODE=write-names ;;
   --raw)   MODE=raw ;;
   --splits) MODE=splits ;;
-  -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
   *) echo "hwdp surfaces: unexpected argument '$1'" >&2; exit 2 ;;
 esac
 
