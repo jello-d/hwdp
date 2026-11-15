@@ -197,4 +197,89 @@ grep -q 'setsid[^|]*>/dev/null' "$HERE/libexec/cmd/watch" \
 grep -q 'setsid.*watch_log\|>>"\$watch_log"' "$HERE/libexec/cmd/watch" \
   || fail "the daemonize does not redirect into the log"
 
+# --- with NO config file to watch: no restart per event ---------------------
+# The real inotifywait exits at once on a path that does not exist. The
+# poller kept running past that (a dead child stays a zombie, and kill -0
+# answers for a zombie) until the supervisor's next command substitution
+# reaped it, which happens while handling an event: then the poller exited,
+# the loop restarted the watcher, and the new poller took a FRESH baseline,
+# so a second monitor change landing in that gap was absorbed and never
+# reported. Measured with the real tool on the old code: one restart per
+# event (1 -> 2 -> 3 -> 4 over three hotplugs). Fixed by watching only what
+# exists, so nothing exits: the watcher must start ONCE and stay up.
+# The stub above never exits, which is why nothing above could see this; this
+# one hands off to the REAL inotifywait, logging each start, so the file
+# appearing later is a real inotify event too.
+_real=$(PATH=$(printf '%s' "$PATH" | sed "s|$T/bin:||") \
+  command -v inotifywait) || _real=
+if [ -z "$_real" ]; then
+  echo "  skip hotplug: no real inotifywait; the no-config-file cases need one"
+else
+cat > "$T/bin/inotifywait" <<EOF
+#!/bin/sh
+echo start >> "$T/inotify.starts"
+exec "$_real" "\$@"
+EOF
+chmod +x "$T/bin/inotifywait"
+sup() {   # <runtime dir> <config file>: a supervisor there; sets _sup
+  mkdir -p "$1"
+  python3 -c 'import socket,sys
+s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])' "$1/wayland-test"
+  XDG_RUNTIME_DIR="$1" WAYLAND_DISPLAY=wayland-test DISPLAY= \
+    HOME="$T/home" XDG_CONFIG_HOME="$T/config" \
+    KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
+    KANSHI_OUT="$1/kanshi.conf" HWDP_DRM="$T/drm" \
+    HWDP_PROVIDER_ROOT="$T/no-providers" \
+    HWDP_MACHINE_PROVIDERS="$T/no-providers" \
+    HWDP_HOOK_ROOT="$T/hooks" HWDP_MACHINE_HOOKS="$T/no-machine-hooks" \
+    WAYFIRE_CONFIG_FILE="$2" HWDP_WATCH_DAEMONIZED=1 HWDP_HOTPLUG_POLL=1 \
+    PATH="$T/bin:$PATH" "$MGR" watch >"$1/mgr.log" 2>&1 &
+  _sup=$!
+  harness_cleanup "kill $_sup 2>/dev/null"
+}
+_starts() { [ -f "$T/inotify.starts" ] && wc -l < "$T/inotify.starts" \
+  || echo 0; }
+unplug() {   # <name>: the connector's files, then its empty directory
+  rm -f "$T/drm/card0-$1/status" "$T/drm/card0-$1/edid" \
+    "$T/drm/card0-$1/modes"
+  rmdir "$T/drm/card0-$1"
+}
+# event <what> <log>: one hotplug, which must be SEEN and must NOT restart
+# the watcher (counted a few poll ticks after it was handled)
+event() {
+  _s0=$(_starts); _before=$(_runs)
+  eval "$1"
+  _wait_runs $((_before + 1)) 15 \
+    || fail "not seen with no config file ($1): $(cat "$2")"
+  sleep 3
+  [ "$(_starts)" -eq "$_s0" ] || fail "the watcher restarted \
+$(($(_starts) - _s0)) time(s) after one event ($1), so the poller lost its \
+baseline"
+}
+
+# Neither the file nor its directory: nothing to watch at all.
+_before=$(_runs); sup "$T/run-nodir" "$T/no-such-dir/wayfire.ini"
+_wait_runs $((_before + 1)) 10 \
+  || fail "no startup pass with no config dir: $(cat "$T/run-nodir/mgr.log")"
+event 'panel DP-3 edid-three 2560x1440' "$T/run-nodir/mgr.log"
+event 'unplug DP-3' "$T/run-nodir/mgr.log"
+event 'panel DP-3 edid-three 2560x1440' "$T/run-nodir/mgr.log"
+kill "$_sup" 2>/dev/null
+
+# The directory but not the file: watched through the directory, so the
+# file arriving later is a config change.
+mkdir -p "$T/cfgdir"
+_before=$(_runs); sup "$T/run-nofile" "$T/cfgdir/wayfire.ini"
+_wait_runs $((_before + 1)) 10 \
+  || fail "no startup pass with no config file"
+event 'unplug DP-3' "$T/run-nofile/mgr.log"
+event 'panel DP-3 edid-three 2560x1440' "$T/run-nofile/mgr.log"
+_before=$(_runs); : > "$T/cfgdir/wayfire.ini"
+_wait_runs $((_before + 1)) 10 || fail "the config file appearing in its \
+watched directory was not a config change: $(cat "$T/run-nofile/mgr.log")"
+kill "$_sup" 2>/dev/null
+pass "no config file or dir: plugs seen, the watcher never restarts, and a
+  file that appears later is a config change"
+fi
+
 pass "hotplug: in, out, swapped, quiet when still, and the supervisor logs"

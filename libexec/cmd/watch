@@ -529,7 +529,22 @@ while true; do
   rm -f "$fifo"
   mkfifo "$fifo" 2>/dev/null || { sleep 1; continue; }
 
-  inotifywait -qm -e "$events" "$cfg" "$cfgdir" >"$fifo" 2>/dev/null 9>&- &
+  # WATCH WHAT EXISTS. inotifywait exits at once on a path that does not, and
+  # the poller below lives only as long as it: so a session with no config
+  # file (a greeter, any compositor but wayfire) re-armed every second, each
+  # re-arm killing the poller before its first tick, and no plug or unplug was
+  # ever seen. A missing file under an existing dir is watched through the dir
+  # (its `create` is then a config change); with neither there is nothing to
+  # watch, and a writer that never writes stands in, so the poller still runs.
+  # (A config dir created later is not noticed until the next start.)
+  set --
+  [ -e "$cfg" ] && set -- "$cfg"
+  [ -d "$cfgdir" ] && set -- "$@" "$cfgdir"
+  if [ "$#" -gt 0 ]; then
+    inotifywait -qm -e "$events" "$@" >"$fifo" 2>/dev/null 9>&- &
+  else
+    sleep 2147483647 >"$fifo" 2>/dev/null 9>&- &
+  fi
   inotify_pid=$!
 
   hotplug_pid=""
