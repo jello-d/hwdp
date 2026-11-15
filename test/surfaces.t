@@ -110,6 +110,14 @@ printf '%s\n' "$_c" | grep -q '^ok    comms .*DP-1, bottom half of Dell' \
   || fail "--check must describe each surface: $_c"
 printf '%s\n' "$_c" | grep -q 'ghost.*no attached panel is named' \
   || fail "--check must flag a panel that matches nothing: $_c"
+# Names past the old fixed width of 12 still line up: the column is as wide
+# as the longest name.
+printf 'surface a-long-surface-name "Dell WIDE SN3" cell 3 0\n' >> "$F"
+_c=$(run --check) || fail "--check with a long name must exit 0"
+printf '%s\n' "$_c" | awk '/^ok / { c = index($0, " " $3 " ")
+    if (n++ && c != c0) bad = 1; c0 = c } END { exit bad || n < 5 }' \
+  || fail "--check names do not line up: $_c"
+sed -i '/a-long-surface-name/d' "$F"
 pass "--check describes each surface and flags a name matching nothing"
 
 # --- a BROKEN file is refused whole -------------------------------------------

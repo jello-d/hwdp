@@ -197,6 +197,9 @@ surfaces_resolve() {
       exit 2
     }
     if (mode == "check" && GW) print "grid  " GW "x" GH
+    # --check lines up its names: as wide as the longest (12 at least).
+    nw = (length(DN) > 12) ? length(DN) : 12
+    for (i = 1; i <= n; i++) if (length(SN[i]) > nw) nw = length(SN[i])
     if (mode == "splits") {
       for (i = 1; i <= ns; i++)
         if (KP[i] in ON) printf "%s %d %d %s\n", ON[KP[i]], KX[i], KY[i], \
@@ -226,7 +229,7 @@ surfaces_resolve() {
         printf "%s %s %d %d %d %d %d %d %s %g %g %g %g\n", SN[i], ON[p], \
           SX[i], SY[i], RX, RY, RW, RH, PID[ON[p]], FX, FY, FW, FH
       else
-        printf "ok    %-12s %s, %s of %s (%dx%d at %d,%d), cell %d %d\n", \
+        printf "ok    %-" nw "s %s, %s of %s (%dx%d at %d,%d), cell %d %d\n", \
           SN[i], ON[p], (SR[i] == "full") ? "all" : SR[i] " half", p, \
           RW, RH, RX, RY, SX[i], SY[i]
     }
@@ -241,8 +244,8 @@ surfaces_resolve() {
           printf "%s %s * * %d %d %d %d %s %g %g %g %g\n", DN, ON[DP], \
             RX, RY, RW, RH, PID[ON[DP]], FX, FY, FW, FH
         else if (mode == "check")
-          printf "ok    %-12s %s, %s of %s: the DEFAULT, for any cell no" \
-            " surface claims\n", DN, ON[DP], (DR == "full") ? "all" : \
+          printf "ok    %-" nw "s %s, %s of %s: the DEFAULT, for any cell" \
+            " no surface claims\n", DN, ON[DP], (DR == "full") ? "all" : \
             DR " half", DP
       }
     }
