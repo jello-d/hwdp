@@ -10,9 +10,9 @@
 # generic desk such as BL), which no one should have to type. Each also has a
 # NAME: chosen here, or made from the hardware (u2715h+p2721q, aw2725q-x3,
 # laptop). Names are lowercase `a-z 0-9 + - _` (a chosen one at most 24
-# characters, so the list fits 80 columns) and unique, which is what lets
-# `hwdp arrange <name>` take one without being mistaken for a connector. See
-# lib/desks_lib for how a name is made.
+# characters, so the list fits an 80-column terminal) and unique, which is
+# what lets `hwdp arrange <name>` take one without being mistaken for a
+# connector. See lib/desks_lib for how a name is made.
 set -eu
 . "$HWDP_LIB/displayset_lib"
 . "$HWDP_LIB/desks_lib"
@@ -86,7 +86,10 @@ desk_table | while IFS="$TAB" read -r _k _n; do
   printf '%s\n' "$_here" | grep -qxF "$_k" && _m="*"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_m" "$_n" "$_k" "${_kind:--}" \
     "$_g" "$_s" "${_p:--}"
-done | awk -F"$TAB" -v W=80 '
+done | awk -F"$TAB" -v W=79 '
+  # W is 79, NOT 80: a line that fills the last column of an 80-column
+  # terminal wraps its final character on some (the user saw exactly that,
+  # with the made names). The tool never writes that column either.
   # Columns as wide as their widest entry; PANELS takes what is left of W
   # and wraps inside its own column between words, so a long desk never
   # folds into the next row. Too narrow for that (under 16), it goes on

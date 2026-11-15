@@ -87,13 +87,16 @@ esac
 pass "desks are listed with names made from their hardware"
 
 # --- the list fits 80 columns, wrapping PANELS in its own column -----------
+# AT MOST 79: a line filling the last column of an 80-column terminal wraps
+# its final character on some (seen live with the made names, a row of
+# exactly 80).
 # A long name widens NAME; PANELS then wraps between words, its continuation
 # under the column, and once too narrow (under 16) moves below the row.
-fits() { printf '%s\n' "$1" | awk 'length > 80 { print "over 80: " $0; b = 1 }
+fits() { printf '%s\n' "$1" | awk 'length > 79 { print "over 79: " $0; b = 1 }
   END { exit b }'; }
 # Here the -2 name alone leaves PANELS 20 columns, so one row wraps.
 _o=$(DESK= run desks)
-fits "$_o" || fail "the list ran past 80 columns: $_o"
+fits "$_o" || fail "the list ran past 79 columns: $_o"
 _c=$(printf '%s\n' "$_o" | awk 'NR == 1 { print index($0, "PANELS") }')
 printf '%s\n' "$_o" | awk -v c="$_c" '
   / aaaaaaaaaaaa / { getline; n = match($0, /[^ ]/)
@@ -105,7 +108,7 @@ DESK= run desks --name u2715h+p2721q \
 DESK= run desks --name u2715h+p2721q twenty-four-characters-x >/dev/null \
   || fail "a 24-character name was refused"
 _o=$(DESK= run desks)
-fits "$_o" || fail "the list ran past 80 columns: $_o"
+fits "$_o" || fail "the list ran past 79 columns: $_o"
 printf '%s\n' "$_o" | awk '/ twenty-four-characters-x / { getline
   exit !($0 ~ /^    laptop, U2715H, P2721Q$/) }' \
   || fail "with no room beside, PANELS goes on its own line: $_o"
@@ -119,11 +122,41 @@ DESK= run desks --name twenty-four-characters-x - >/dev/null
 _long=a-name-so-long-there-is-no-room-for-panels-beside-it
 printf 'aaaaaaaaaaaa %s\n' "$_long" >> "$D/desk-names"
 _o=$(DESK= run desks)
-fits "$_o" || fail "the list ran past 80 columns: $_o"
+fits "$_o" || fail "the list ran past 79 columns: $_o"
 printf '%s\n' "$_o" | awk '/a-name-so-long/ { getline
   exit !($0 ~ /^ {28}aaaaaaaaaaaa /) }' \
   || fail "a name past the column is not on a line of its own: $_o"
 DESK= run desks --name "$_long" - >/dev/null
+# THE BOUNDARY, both ways: chosen names one character apart walk the PANELS
+# column across it, so some width puts that row at exactly 79 unwrapped (it
+# must NOT wrap) and the next at 80 (it MUST). A row is wrapped when the
+# line after it is a continuation (four spaces or more; a row opens with
+# two, or the `*` mark and one).
+_seen=
+# The NAME column is as wide as the WIDEST name, so the other long one
+# (u2715h+p2721q-2, 15) is shortened for the sweep, or it holds the column.
+DESK= run desks --name u2715h+p2721q-2 dd >/dev/null || fail "--name dd"
+for _w in 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+  _nm=$(printf 'w%0*d' $((_w - 1)) 0)
+  DESK= run desks --name u2715h+p2721q "$_nm" >/dev/null || fail "--name $_nm"
+  _o=$(DESK= run desks)
+  fits "$_o" || fail "the list ran past 79 columns at a $_w-wide name: $_o"
+  _c=$(printf '%s\n' "$_o" | awk 'NR == 1 { print index($0, "PANELS") }')
+  [ "$_c" -gt 0 ] || continue                    # PANELS went below the row
+  _full=$((_c - 1 + 22))                          # laptop, U2715H, P2721Q
+  _wr=$(printf '%s\n' "$_o" | awk -v n="$_nm" '$0 ~ " " n " " { getline
+    print (/^    / ? 1 : 0); exit }')
+  if [ "$_full" -le 79 ]; then
+    [ "$_wr" = 0 ] || fail "a $_full-wide row wrapped although it fits: $_o"
+  else
+    [ "$_wr" = 1 ] || fail "a $_full-wide row did not wrap: $_o"
+  fi
+  _seen="$_seen $_full"
+  DESK= run desks --name "$_nm" - >/dev/null
+done
+DESK= run desks --name dd - >/dev/null
+case "$_seen " in *" 79 "*) ;; *) fail "no row of 79 (rows:$_seen)" ;; esac
+case "$_seen " in *" 80 "*) ;; *) fail "no row of 80 (rows:$_seen)" ;; esac
 pass "the list fits 80 columns, wrapping panels under their column"
 
 # --- names: chosen, refused, resolved, reverted ----------------------------
