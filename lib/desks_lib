@@ -31,8 +31,11 @@ desk_keys() {
   done | sort -u
 }
 
-# desk_panels <key>: one line per panel, `name<TAB>x<TAB>y<TAB>w<TAB>h<TAB>on`,
-# LEFT TO RIGHT (then top to bottom), the order a person reads a desk in.
+# desk_panels <key>: one line per panel,
+# `name<TAB>x<TAB>y<TAB>w<TAB>h<TAB>on<TAB>mode`, LEFT TO RIGHT (then top to
+# bottom), the order a person reads a desk in. MODE is the panel's native
+# resolution as the profile names it, `3840x2160`, unrotated (empty for the
+# built-in, which a profile names by role and gives no mode).
 # From the profile when there is one: the hwdp-rect gives the size, else the
 # output line's mode turned by its transform (a profile written before the
 # rects has only that); the output line gives the position and whether it is
@@ -46,7 +49,9 @@ desk_panels() {
       /^[ \t]*output "/ { l = $0; sub(/^[ \t]*output "/, "", l)
         n = l; sub(/".*/, "", n)
         on = (l ~ / disable[ \t]*$/) ? 0 : 1
-        x = y = 0
+        x = y = 0; md = ""
+        if (match(l, / mode [0-9]+x[0-9]+/)) md = substr(l, RSTART + 6, \
+          RLENGTH - 6)
         if (!(n in RW) && match(l, / mode [0-9]+x[0-9]+/)) {
           m = substr(l, RSTART + 6, RLENGTH - 6); split(m, d, "x")
           RW[n] = d[1]; RH[n] = d[2]
@@ -58,13 +63,13 @@ desk_panels() {
           p = substr(l, RSTART + 10, RLENGTH - 10); split(p, q, ",")
           x = q[1]; y = q[2]
         }
-        print n, x, y, RW[n] + 0, RH[n] + 0, on }' "$PROFILES/$1.conf" \
+        print n, x, y, RW[n] + 0, RH[n] + 0, on, md }' "$PROFILES/$1.conf" \
       | sort -t"$TAB" -k2,2n -k3,3n
   elif [ -f "$DESKS/$1.conf" ]; then
     awk -v OFS="$TAB" '$1 == "surface" || $1 == "default" {
         l = $0; if (!match(l, /"[^"]+"/)) next
         n = substr(l, RSTART + 1, RLENGTH - 2)
-        if (!(n in S)) { S[n] = 1; print n, 0, 0, 0, 0, 1 } }' \
+        if (!(n in S)) { S[n] = 1; print n, 0, 0, 0, 0, 1, "" } }' \
       "$DESKS/$1.conf"
   fi
 }

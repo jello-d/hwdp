@@ -70,13 +70,13 @@ case $(row BL) in
   *) fail "the generic laptop desk: $(row BL)" ;;
 esac
 case $(row aaaaaaaaaaaa) in
-  *" u2715h+p2721q "*"BL+EL+EP"*"2x2"*"2+default"*"laptop, U2715H, P2721Q"*)
-    ;;
+  *" u2715h+p2721q "*"BL+EL+EP"*"2x2"*"2+default"*\
+"laptop, U2715H 2560x1440, P2721Q 3840x2160"*) ;;
   *) fail "a docked desk is named by its models, left to right: \
 $(row aaaaaaaaaaaa)" ;;
 esac
 case $(row cccccccccccc) in
-  *" aw2725q-x3 "*"EP+EP+EP"*"AW2725Q x3") ;;
+  *" aw2725q-x3 "*"EP+EP+EP"*"AW2725Q 3840x2160 x3") ;;
   *) fail "a wall from mode-only lines (rotated, so portrait): \
 $(row cccccccccccc)" ;;
 esac
@@ -90,18 +90,22 @@ pass "desks are listed with names made from their hardware"
 # AT MOST 79: a line filling the last column of an 80-column terminal wraps
 # its final character on some (seen live with the made names, a row of
 # exactly 80).
-# A long name widens NAME; PANELS then wraps between words, its continuation
-# under the column, and once too narrow (under 16) moves below the row.
+# A long name widens NAME; PANELS then wraps between ENTRIES (a model and
+# its resolution stay together), its continuation under the column, and once
+# too narrow (under 16) moves below the row.
 fits() { printf '%s\n' "$1" | awk 'length > 79 { print "over 79: " $0; b = 1 }
   END { exit b }'; }
-# Here the -2 name alone leaves PANELS 20 columns, so one row wraps.
+# Here the -2 name alone leaves PANELS 20 columns, so the docked row wraps,
+# and no line may split a model from its resolution.
 _o=$(DESK= run desks)
 fits "$_o" || fail "the list ran past 79 columns: $_o"
 _c=$(printf '%s\n' "$_o" | awk 'NR == 1 { print index($0, "PANELS") }')
 printf '%s\n' "$_o" | awk -v c="$_c" '
   / aaaaaaaaaaaa / { getline; n = match($0, /[^ ]/)
-    exit !(n == c && $0 ~ /P2721Q$/) }' \
+    exit !(n == c && $0 ~ /^ +U2715H 2560x1440,$/) }' \
   || fail "a wrapped PANELS line is not under its column: $_o"
+printf '%s\n' "$_o" | grep -q -E '(U2715H|P2721Q|AW2725Q),?$' \
+  && fail "a model was split from its resolution: $_o"
 DESK= run desks --name u2715h+p2721q \
   a-name-of-twenty-five-chr 2>/dev/null \
   && fail "a name over 24 characters was taken" || :
@@ -110,7 +114,7 @@ DESK= run desks --name u2715h+p2721q twenty-four-characters-x >/dev/null \
 _o=$(DESK= run desks)
 fits "$_o" || fail "the list ran past 79 columns: $_o"
 printf '%s\n' "$_o" | awk '/ twenty-four-characters-x / { getline
-  exit !($0 ~ /^    laptop, U2715H, P2721Q$/) }' \
+  exit !($0 ~ /^    laptop, U2715H 2560x1440, P2721Q 3840x2160$/) }' \
   || fail "with no room beside, PANELS goes on its own line: $_o"
 case $(printf '%s\n' "$_o" | head -1) in
   *PANELS*) fail "the header names a column that is not beside it" ;;
@@ -128,8 +132,9 @@ printf '%s\n' "$_o" | awk '/a-name-so-long/ { getline
   || fail "a name past the column is not on a line of its own: $_o"
 DESK= run desks --name "$_long" - >/dev/null
 # THE BOUNDARY, both ways: chosen names one character apart walk the PANELS
-# column across it, so some width puts that row at exactly 79 unwrapped (it
-# must NOT wrap) and the next at 80 (it MUST). A row is wrapped when the
+# column across it, so some width puts the wall's row ("AW2725Q 3840x2160
+# x3", 20 wide) at exactly 79 unwrapped (it must NOT wrap) and the next at
+# 80 (it MUST). A row is wrapped when the
 # line after it is a continuation (four spaces or more; a row opens with
 # two, or the `*` mark and one).
 _seen=
@@ -138,12 +143,12 @@ _seen=
 DESK= run desks --name u2715h+p2721q-2 dd >/dev/null || fail "--name dd"
 for _w in 6 7 8 9 10 11 12 13 14 15 16 17 18; do
   _nm=$(printf 'w%0*d' $((_w - 1)) 0)
-  DESK= run desks --name u2715h+p2721q "$_nm" >/dev/null || fail "--name $_nm"
+  DESK= run desks --name aw2725q-x3 "$_nm" >/dev/null || fail "--name $_nm"
   _o=$(DESK= run desks)
   fits "$_o" || fail "the list ran past 79 columns at a $_w-wide name: $_o"
   _c=$(printf '%s\n' "$_o" | awk 'NR == 1 { print index($0, "PANELS") }')
   [ "$_c" -gt 0 ] || continue                    # PANELS went below the row
-  _full=$((_c - 1 + 22))                          # laptop, U2715H, P2721Q
+  _full=$((_c - 1 + 20))                          # AW2725Q 3840x2160 x3
   _wr=$(printf '%s\n' "$_o" | awk -v n="$_nm" '$0 ~ " " n " " { getline
     print (/^    / ? 1 : 0); exit }')
   if [ "$_full" -le 79 ]; then
