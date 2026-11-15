@@ -164,6 +164,51 @@ case "$_seen " in *" 79 "*) ;; *) fail "no row of 79 (rows:$_seen)" ;; esac
 case "$_seen " in *" 80 "*) ;; *) fail "no row of 80 (rows:$_seen)" ;; esac
 pass "the list fits 80 columns, wrapping panels under their column"
 
+# --- at a terminal, a rule under the heading and between desks ---------------
+# Piped (every run above), the table is plain: no rule, no escape. At a
+# terminal (script(1) gives one) each desk is preceded by a rule exactly as
+# wide as the widest line: box drawing and dimmed in a UTF-8 locale, `-`
+# and no colour under LC_ALL=C with NO_COLOR.
+_o=$(DESK= run desks)
+_esc=$(printf '\033')
+case $_o in *"$_esc"*) fail "a piped list carries escapes: $_o" ;; esac
+printf '%s\n' "$_o" | grep -q -E '^-+$' && fail "a piped list has rules: $_o"
+cat > "$T/desks-tty" <<EOF
+#!/bin/sh
+exec env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_CONFIG_HOME="$T/config" \\
+  XDG_STATE_HOME="$T/state" XDG_RUNTIME_DIR="$T/run" HWDP_DRM="$T/drm" \\
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \\
+  LANG="\$1" LC_ALL="\$1" TERM="\$2" \${3:+NO_COLOR=1} sh "$KA" desks
+EOF
+if command -v script >/dev/null 2>&1; then
+  _rows=$(printf '%s\n' "$_o" | grep -c -E '^[* ] [a-z]')
+  # <locale> <term> <no_color>: the rule's character, its count, its colour
+  rules() {
+    script -qec "sh $T/desks-tty $1 $2 $3" /dev/null | tr -d '\r' \
+      | python3 -c '
+import re, sys
+lines = sys.stdin.read().splitlines()
+esc = any("\x1b" in l for l in lines)
+plain = [re.sub(r"\x1b\[[0-9;]*m", "", l) for l in lines]
+rules = [l for l in plain if l and set(l) <= set("-\u2500")]
+wide = max(len(l) for l in plain)
+ch = "".join(sorted(set("".join(rules))))
+ok = all(len(l) == wide for l in rules) and wide <= 79
+print(ch.encode("unicode_escape").decode(), len(rules), "esc" if esc else
+      "plain", "ok" if ok else "WIDTH")'
+  }
+  _r=$(rules C.UTF-8 xterm "")
+  [ "$_r" = "\\u2500 $_rows esc ok" ] \
+    || fail "at a UTF-8 terminal: want a dim box rule per desk ($_rows), as \
+wide as the widest line; got: $_r"
+  _r=$(rules C xterm 1)
+  [ "$_r" = "- $_rows plain ok" ] \
+    || fail "under LC_ALL=C and NO_COLOR: want plain - rules; got: $_r"
+  pass "a terminal gets a rule per desk (box drawing, dim), a pipe gets none"
+else
+  note "no script(1): the rule at a terminal was not exercised"
+fi
+
 # --- names: chosen, refused, resolved, reverted ----------------------------
 DESK= run desks --name u2715h+p2721q office >/dev/null \
   || fail "naming a desk failed"

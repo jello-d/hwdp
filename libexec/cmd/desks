@@ -17,6 +17,20 @@ set -eu
 . "$HWDP_LIB/displayset_lib"
 . "$HWDP_LIB/desks_lib"
 
+# A rule between desks, at a terminal only (piped, the table stays plain
+# text): a box-drawing line in a UTF-8 locale, else `-`, dimmed unless
+# NO_COLOR or a dumb terminal says not to.
+_rule=; _dim=; _off=
+if [ -t 1 ]; then
+  case $(locale charmap 2>/dev/null) in
+    UTF-8) _rule=$(printf '\342\224\200') ;;
+    *) _rule=- ;;
+  esac
+  if [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then
+    _dim=$(printf '\033[2m'); _off=$(printf '\033[0m')
+  fi
+fi
+
 case "${1:-}" in
   '') ;;
   --resolve)
@@ -96,7 +110,7 @@ desk_table | while IFS="$TAB" read -r _k _n; do
   printf '%s\n' "$_here" | grep -qxF "$_k" && _m="*"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_m" "$_n" "$_k" "${_kind:--}" \
     "$_g" "$_s" "${_p:--}"
-done | awk -F"$TAB" -v W=79 '
+done | awk -F"$TAB" -v W=79 -v rc="$_rule" -v dim="$_dim" -v off="$_off" '
   # W is 79, NOT 80: a line that fills the last column of an 80-column
   # terminal wraps its final character on some (the user saw exactly that,
   # with the made names). The tool never writes that column either.
@@ -105,8 +119,12 @@ done | awk -F"$TAB" -v W=79 '
   # \001), so a long desk never folds into the next row. An entry wider
   # than the column alone breaks between its words. Too narrow for that
   # (under 16), PANELS goes on its own lines below the row instead.
+  # At a terminal a rule (rc) goes under the heading and between desks, as
+  # wide as the widest line, so a wrapped PANELS line reads as part of its desk.
   function pad(s, n) { return sprintf("%-" n "s", s) }
-  function out(lead, txt) { gsub(/\001/, " ", txt); print lead txt }
+  function out(lead, txt) { gsub(/\001/, " ", txt); emit(lead txt) }
+  function emit(l) { O[++no] = l; if (length(l) > mx) mx = length(l) }
+  function rule() { if (rc != "") O[++no] = "\002" }
   BEGIN { split("NAME KEY KIND GRID SURFACES PANELS", H, " ") }
   { R[++n] = $0
     for (i = 2; i <= 6; i++) if (length($i) > C[i]) C[i] = length($i) }
@@ -124,13 +142,14 @@ done | awk -F"$TAB" -v W=79 '
     head = "  "
     for (i = 2; i <= 6; i++) head = head pad(H[i - 1], C[i]) "  "
     if (below) sub(/ +$/, "", head)
-    print head (below ? "" : "PANELS")
+    emit(head (below ? "" : "PANELS"))
     for (r = 1; r <= n; r++) {
+      rule()
       split(R[r], f, "\t")
       line = f[1] " "
-      if (length(f[2]) > C[2]) { print line f[2]; line = "  "; f[2] = "" }
+      if (length(f[2]) > C[2]) { emit(line f[2]); line = "  "; f[2] = "" }
       for (i = 2; i <= 6; i++) line = line pad(f[i], C[i]) "  "
-      if (below) { sub(/ +$/, "", line); print line; ind = "    "
+      if (below) { sub(/ +$/, "", line); emit(line); ind = "    "
                    room = W - 4 }
       else ind = sprintf("%" at "s", "")
       m = split(f[7], w, " "); nt = 0
@@ -148,4 +167,6 @@ done | awk -F"$TAB" -v W=79 '
       }
       out(below ? ind : line, cur)
     }
+    for (i = 1; i <= mx; i++) bar = bar rc
+    for (i = 1; i <= no; i++) print (O[i] == "\002" ? dim bar off : O[i])
   }'
