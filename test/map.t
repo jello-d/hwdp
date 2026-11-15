@@ -87,12 +87,54 @@ _lc=$(printf '%s\n' "$_m" | grep -n 'comms 0,0' | head -1 | cut -d: -f1)
 [ "$_lc" -gt "$_lm" ] || fail "the bottom-half label is not below the top"
 pass "surfaces drawn into their halves, and listed with their rects"
 
+# --- a CUT panel: its divider even when empty, and the legend says so --------
+# The landscape is cut left-right in cell 1 1 with nothing in it, and the
+# portrait's top-bottom cut in 0 0 (implied by comms and mail) is full. Both
+# divide their panel; only the empty one names an empty half.
+mkdir -p "$T/home/.config/hwdp/desks"
+_dk=$(env -i PATH="$T/bin:/usr/bin:/bin" HWDP_DRM="$T/drm" \
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" sh "$KA" id --desk)
+{ cat "$T/surf/$_id.conf"
+  printf 'split "Acme MODEL SN-DP-1" cell 0 0 top-bottom\n'
+  printf 'split "Acme MODEL SN-DP-2" cell 1 1 left-right\n'
+} > "$T/home/.config/hwdp/desks/$_dk.conf"
+_m=$(run --width 78) || fail "map failed with splits"
+_has "an empty cut is listed with both halves empty" "$_m" \
+  "split   left-right DP-2 cell 1,1  left and right empty"
+_has "a full cut is listed with nothing empty" "$_m" \
+  "split   top-bottom DP-1 cell 0,0"
+printf '%s\n' "$_m" | grep -q 'DP-1 cell 0,0 .*empty' \
+  && fail "a cut with both halves placed is not empty: $_m"
+printf '%s\n' "$_m" | grep -q 'DP-2 cell 1,0 .*empty' \
+  && fail "an implied cut (code, cell 1 0) is not a written one: $_m"
+# DP-2 is cut twice over (code's left half in 1 0, the empty cut in 1 1):
+# one divider column, drawn once, which the surfaces alone also draw. Take
+# the cut away and the drawing must lose nothing else: the same picture.
+_with=$(printf '%s\n' "$_m" | sed -n '1,/^$/p')
+sed -i '/cell 1 1 left-right/d' "$T/home/.config/hwdp/desks/$_dk.conf"
+_without=$(run --width 78 | sed -n '1,/^$/p')
+[ "$_with" = "$_without" ] \
+  || fail "a cut on a panel already divided must not change the picture"
+sed -i '/^surface code/d' "$T/home/.config/hwdp/desks/$_dk.conf"
+printf 'split "Acme MODEL SN-DP-2" cell 1 1 left-right\n' \
+  >> "$T/home/.config/hwdp/desks/$_dk.conf"
+_m=$(run --width 78)
+_cut=$(printf '%s\n' "$_m" | sed -n '1,/^$/p' | grep -c ':')
+[ "$_cut" -gt 0 ] || fail "an EMPTY cut must draw its divider: $_m"
+rm -f "$T/home/.config/hwdp/desks/$_dk.conf"
+pass "a cut panel is divided even when empty, and the legend names it"
+
 # --- a BROKEN surfaces file is reported, never half drawn ---------------------
 printf 'surface code "Acme MODEL SN-DP-2" cell 9 9\n' >> "$T/surf/$_id.conf"
+printf 'split "Acme MODEL SN-DP-2" cell 1 1 left-right\n' \
+  >> "$T/surf/$_id.conf"
 _m=$(run --width 78) || fail "map must still draw with a broken surfaces file"
 _has "a broken file is reported" "$_m" "surfaces  BROKEN, not drawn"
 printf '%s\n' "$_m" | grep -q 'comms 0,0' \
   && fail "a broken surfaces file must not be drawn at all"
+{ printf '%s\n' "$_m" | grep -q '^  split' \
+  || printf '%s\n' "$_m" | sed -n '1,/^$/p' | grep -q ':'; } \
+  && fail "a broken file's cut must not be drawn either: $_m"
 _has "the outputs are still drawn" "$_m" "DP-1 EP"
 rm -f "$T/surf/$_id.conf"
 pass "a broken surfaces file is reported and not drawn"

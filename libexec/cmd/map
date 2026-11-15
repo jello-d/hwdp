@@ -12,10 +12,12 @@
 # reads the surfaces through `hwdp surfaces` (the published contract) and the
 # gap check through layout_faults, so it can never disagree with either.
 #
-# Halves that carry a surface are split with dots, so a panel's border (`|`,
-# `-`) and a region's (`:`, `.`) cannot be confused. A surface's label is its
-# name and its workspace cell. A box too small for its labels truncates them;
-# the legend below always has the whole text.
+# Halves that carry a surface, and panels CUT in two (`hwdp surfaces
+# --splits`) even with nothing placed, are split with dots, so a panel's
+# border (`|`, `-`) and a region's (`:`, `.`) cannot be confused. Every cell
+# is drawn over one picture, a surface's label naming its cell, so a cut's
+# own cell (and any half still empty) is in the legend. A box too small for
+# its labels truncates them; the legend below always has the whole text.
 set -eu
 . "$HWDP_LIB/displayset_lib"
 
@@ -43,6 +45,9 @@ fi
 # The surfaces as published; a broken file is reported, never drawn half.
 _srf=; _srf_rc=0
 _srf=$("$HWDP_LIBEXEC/cmd/surfaces" 2>/dev/null) || _srf_rc=$?
+# A broken file answers nothing here either: the resolver refuses it whole
+# before any mode runs.
+_spl=$("$HWDP_LIBEXEC/cmd/surfaces" --splits 2>/dev/null) || _spl=
 
 _shape=$(shape)
 _faults=$(live_rects | layout_faults | layout_fault_text)
@@ -56,10 +61,23 @@ _faults=$(live_rects | layout_faults | layout_fault_text)
     }'
   [ -n "$_srf" ] && printf '%s\n' "$_srf" | awk -v OFS="$TAB" \
     '{ print "srf", $1, $2, $3, $4, $5, $6, $7, $8 }'
+  [ -n "$_spl" ] && printf '%s\n' "$_spl" | awk -v OFS="$TAB" \
+    '{ print "spl", $1, $2, $3, $4 }'
   :
 } | awk -F"$TAB" -v cols="$WIDTH" '
   function put(x, y, c) {
     if (x >= 0 && x < CW && y >= 0 && y < CH) G[y, x] = c
+  }
+  # The divider a cut panel shows, the same for a surface in a half and for
+  # a cut with nothing in it yet.
+  function cut(i, w,   x, y, my, mx) {
+    if (w == "top-bottom") {
+      my = int((y0[i] + y1[i]) / 2)
+      for (x = x0[i] + 1; x < x1[i]; x++) put(x, my, ".")
+    } else {
+      mx = int((x0[i] + x1[i]) / 2)
+      for (y = y0[i] + 1; y < y1[i]; y++) put(mx, y, ":")
+    }
   }
   function text(x, y, s, max,   i) {
     if (max < 1) return
@@ -74,6 +92,15 @@ _faults=$(live_rects | layout_faults | layout_fault_text)
   $1 == "srf" {
     m++; SN[m] = $2; SC[m] = $3; SWX[m] = $4; SWY[m] = $5
     SX[m] = $6; SY[m] = $7; SW[m] = $8; SH[m] = $9
+    # Which half it fills, for the legend of a cut: first or second. The
+    # outputs came first, so the size of the panel is known here.
+    i = IX[$3]
+    if (i && (SW[m] < W[i] || SH[m] < H[i]))
+      HALF[$3, $4, $5, (SX[m] > 0 || SY[m] > 0) ? 2 : 1] = 1
+    next
+  }
+  $1 == "spl" {
+    q++; KC[q] = $2; KX[q] = $3; KY[q] = $4; KW[q] = $5
   }
   END {
     if (n == 0) { print "(no outputs switched on)"; exit }
@@ -108,15 +135,10 @@ _faults=$(live_rects | layout_faults | layout_fault_text)
     # Region dividers, then labels, so a label is never cut by a divider.
     for (j = 1; j <= m; j++) {
       i = IX[SC[j]]; if (!i) continue
-      if (SH[j] < H[i]) {                        # top or bottom half
-        my = int((y0[i] + y1[i]) / 2)
-        for (x = x0[i] + 1; x < x1[i]; x++) put(x, my, ".")
-      }
-      if (SW[j] < W[i]) {                        # left or right half
-        mx = int((x0[i] + x1[i]) / 2)
-        for (y = y0[i] + 1; y < y1[i]; y++) put(mx, y, ":")
-      }
+      if (SH[j] < H[i]) cut(i, "top-bottom")
+      if (SW[j] < W[i]) cut(i, "left-right")
     }
+    for (j = 1; j <= q; j++) if (IX[KC[j]]) cut(IX[KC[j]], KW[j])
     for (i = 1; i <= n; i++) {
       w = x1[i] - x0[i] - 2
       text(x0[i] + 2, y0[i] + 1, C[i] " " K[i], w)
@@ -145,6 +167,14 @@ _faults=$(live_rects | layout_faults | layout_fault_text)
     for (j = 1; j <= m; j++)
       printf "  surface %-10s %s cell %d,%d  %dx%d at %d,%d\n", SN[j], \
         SC[j], SWX[j], SWY[j], SW[j], SH[j], SX[j], SY[j]
+    for (j = 1; j <= q; j++) {
+      split(KW[j] == "top-bottom" ? "top bottom" : "left right", hn, " ")
+      e = ""
+      for (h = 1; h <= 2; h++)
+        if (!((KC[j], KX[j], KY[j], h) in HALF)) e = e (e ? " and " : "") hn[h]
+      printf "  split   %-10s %s cell %d,%d%s\n", KW[j], KC[j], KX[j], \
+        KY[j], e ? "  " e " empty" : ""
+    }
   }'
 
 printf '\nshape  %s\n' "${_shape:-(none)}"
