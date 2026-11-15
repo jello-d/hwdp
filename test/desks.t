@@ -246,6 +246,22 @@ dtxt = open(D + "/aaaaaaaaaaaa.conf").read()
 check("a moved surface saves to the desk file", rc == 0 and
       'surface calendar "Dell Inc. DELL U2715H SER1" cell 1 1 full' in dtxt
       and "mail" not in dtxt, (rc, why, dtxt))
+check("away from the desk, halves on file imply their split",
+      app.splits.get(("Dell Inc. DELL P2721Q SER2", 0, 0)) == "top-bottom",
+      app.splits)
+cut = [("Dell Inc. DELL U2715H SER1", 0, 0, "left-right")]
+rc, why = hw.write_desk((2, 2), sv, app.default, cut)
+dtxt = open(D + "/aaaaaaaaaaaa.conf").read()
+check("an empty split saves away from the desk, by quoted panel name",
+      rc == 0 and 'split "Dell Inc. DELL U2715H SER1" cell 0 0 left-right'
+      in dtxt, (rc, why, dtxt))
+again = tui.OfflineHwdp("aaaaaaaaaaaa", "office")
+app2 = tui.App(tui.Desk(again.geometry(), again.repack), again)
+check("...and loads again as a split, never as a surface",
+      app2.splits == {("Dell Inc. DELL U2715H SER1", 0, 0): "left-right"}
+      and [x.key() for x in app2.surfaces] ==
+      [("calendar", "Dell Inc. DELL U2715H SER1", "full", 1, 1)],
+      (app2.splits, [x.key() for x in app2.surfaces]))
 generic = tui.OfflineHwdp("BL", "laptop")
 generic.geometry()
 rc, why = generic.arrange(None, [])

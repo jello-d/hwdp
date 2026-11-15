@@ -307,9 +307,13 @@ edits its label and
 deletes it from every desk's list after asking (a desk elsewhere that still
 places it makes the save refuse).
 VIRTUAL is the grid, a miniature of the desk in every workspace cell (3x3 for
-a desk with none): the arrows select a cell, Tab a panel in it,
+a desk with none): the arrows select a cell, Tab the next panel or half in
+it,
 .B g
-cycles the region, Enter opens a PICKER of the names (typing filters it,
+cuts the selected panel IN THAT CELL (whole, top-bottom, left-right, whole
+again; a placed surface moves where it has one home, and joining two placed
+halves asks first and unplaces them), Enter opens a PICKER of the names
+(typing filters it,
 Enter places the choice; a name is in one place per desk, so it moves, and
 what overlapped goes),
 .B x
@@ -429,6 +433,14 @@ or nothing;
 prints the names list,
 .I "name label"
 per line.
+.B \-\-splits
+prints the panels CUT in two,
+.I "CONNECTOR CX CY top-bottom|left-right"
+per panel and cell (switched-on panels only). A
+.I "split <panel> cell <x> <y> top-bottom|left-right"
+line keeps a cut with nothing placed in it yet; a surface there must be one
+of its halves. Each cell decides for itself, and a half with no split line (a
+file from before splits) implies its split.
 .IP
 hwdp owns which part of which panel a name means at a desk, since only it can
 turn a fraction of a panel into pixels at the scale in force; what a name means
@@ -444,6 +456,7 @@ map when there is no default, and names this desk does not place.
 .B \-\-write
 writes THIS desk's own file (never a generic one) from
 .IR "grid <w> <h>" ,
+.IR "split <connector> cell <x> <y> top-bottom|left-right" ,
 .I "surface <name> <connector> cell <x> <y> [region]"
 and
 .I "default <name> <connector> [region]"
@@ -456,7 +469,9 @@ refused whole (exit 2) if broken, and the old file is kept under
 never beside it.
 .B \-\-raw
 prints the desk file's own lines unresolved, TAB-separated:
-.IR "surface|default name panel cx cy region" .
+.I "surface|default name panel cx cy region"
+and
+.IR "split - panel cx cy top-bottom|left-right" .
 With
 .B HWDP_DESK
 set to a key, every mode works on THAT desk, attached or not: nothing is

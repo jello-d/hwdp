@@ -48,13 +48,17 @@ class FakeHw:
     namesv = [["comms", "Comms"], ["mail", "Mail"]]
     def surfaces(self, desk):
         return self.surf
+    splitv = []
+    def splits(self):
+        return list(self.splitv)
     def grid(self):
         return self.gridv
     def names(self):
         return [list(n) for n in self.namesv]
-    def write_desk(self, grid, surfaces, default):
+    def write_desk(self, grid, surfaces, default, splits=()):
         self.calls.append(("write", grid, [x.key() for x in surfaces],
                            default.key() if default else None))
+        self.wsplits = list(splits)
         return self.rc.get("write", 0), "said no" if self.rc.get("write") \
             else ""
     def write_names(self, names):
@@ -371,27 +375,78 @@ a.key(10, 0); a.key(10, 0)
 check("Enter in the picker places the chosen name on the spot",
       [x.key() for x in a.surfaces] == [("comms", "DP-1", "full", 0, 0)],
       [x.key() for x in a.surfaces])
-a.key(ord("g"), 0); a.key(ord("g"), 0); a.key(10, 0)
+a.key(10, 0)
 check("the picker starts on what is there now", a.pick_list()[
       a.pick["sel"]][0] == "comms", a.pick)
-a.key(curses.KEY_DOWN, 0); a.key(10, 0)
-check("a half placed over a whole panel replaces it, and says so",
-      [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 0, 0)]
-      and "replaced comms" in a.msg, ([x.key() for x in a.surfaces], a.msg))
-a.key(curses.KEY_RIGHT, 0); a.key(10, 0); typed(a, "mai")
+a.key(27, 0)
+
+# --- splits: g cuts the selected panel in THIS cell; Tab walks the halves -----
+K = lambda: sorted(x.key() for x in a.surfaces)
+a.key(ord("g"), 0)
+check("g cuts the panel top-bottom here, and the whole surface moves to "
+      "the top half", a.splits == {("DP-1", 0, 0): "top-bottom"}
+      and K() == [("comms", "DP-1", "top", 0, 0)]
+      and "top-bottom" in a.msg, (a.splits, K(), a.msg))
+check("the cut is this cell's alone", a.split_at(p, 1, 0) is None)
+check("Tab stops: each half of the cut panel, then the next panel whole",
+      [(o.conn, rg) for o, rg in a.vstops()] ==
+      [("DP-1", "top"), ("DP-1", "bottom"), ("DP-2", "full")],
+      a.vstops())
+a.key(9, 0)
+check("Tab goes to the bottom half", a.vspot() == (p, "bottom"))
+a.key(10, 0); a.key(curses.KEY_DOWN, 0); a.key(10, 0)
+check("each half holds its own surface", K() == [
+      ("comms", "DP-1", "top", 0, 0), ("mail", "DP-1", "bottom", 0, 0)], K())
+a.key(9, 0)
+check("Tab goes on to the next panel", a.vspot() == (l, "full"))
+a.key(9, 0)
+check("and wraps round to the first half", a.vspot() == (p, "top"))
+a.key(curses.KEY_BTAB, 0)
+check("Shift-Tab walks back", a.vspot() == (l, "full"))
+a.key(curses.KEY_BTAB, 0)
+check("back into the last half", a.vspot() == (p, "bottom"))
+a.key(ord("g"), 0)
+check("g again is left-right: top goes left, bottom right",
+      a.splits == {("DP-1", 0, 0): "left-right"} and K() == [
+      ("comms", "DP-1", "left", 0, 0), ("mail", "DP-1", "right", 0, 0)],
+      (a.splits, K()))
+a.key(ord("g"), 0)
+check("joining two placed halves asks first, changing nothing yet",
+      a.dialog and a.dialog[0] == "unsplit" and len(a.surfaces) == 2
+      and a.splits == {("DP-1", 0, 0): "left-right"}, a.dialog)
+a.key(10, 0)
+check("Enter keeps the split", a.dialog is None and len(a.surfaces) == 2
+      and a.splits == {("DP-1", 0, 0): "left-right"})
+a.key(ord("g"), 0); a.key(ord("y"), 0)
+check("y joins it and unplaces both, saying which",
+      a.splits == {} and a.surfaces == [] and "unplaced comms, mail"
+      in a.msg, (a.splits, K(), a.msg))
+a.key(ord("g"), 0)
+check("a split with nothing in it is kept, and is a change to save",
+      a.splits == {("DP-1", 0, 0): "top-bottom"} and a.surfaces == []
+      and a.desk_dirty(), a.splits)
+a.key(9, 0); a.key(10, 0); a.key(10, 0)          # comms on the bottom
+a.key(ord("g"), 0); a.key(ord("g"), 0)           # left-right, then whole
+check("joining with ONE half placed moves it to the whole panel, unasked",
+      a.dialog is None and a.splits == {}
+      and K() == [("comms", "DP-1", "full", 0, 0)], (a.dialog, K()))
+a.key(curses.KEY_RIGHT, 0); a.key(10, 0); typed(a, "comm")
 check("typing filters the picker", [n for n, _ in a.pick_list()]
-      == ["mail"], a.pick_list())
+      == ["comms"], a.pick_list())
 a.key(10, 0)
 check("a name is in one place per desk: placing it again MOVES it",
-      [x.key() for x in a.surfaces] == [("mail", "DP-1", "bottom", 1, 0)],
-      [x.key() for x in a.surfaces])
+      K() == [("comms", "DP-1", "full", 1, 0)], K())
+a.key(10, 0); typed(a, "mail"); a.key(10, 0)
+check("a name placed over another replaces it, and says so",
+      K() == [("mail", "DP-1", "full", 1, 0)] and "replaced comms" in a.msg,
+      (K(), a.msg))
 a.key(ord("x"), 0)
 check("x clears the spot", a.surfaces == [])
 a.key(9, 0); a.key(ord("f"), 0)
 check("f opens the picker for the default", a.pick["mode"] == "default")
 a.key(10, 0)
 check("the picked name becomes the default on that panel and region",
-      a.default and a.default.key() == ("comms", "DP-2", "bottom", None,
+      a.default and a.default.key() == ("comms", "DP-2", "full", None,
                                         None), a.default and a.default.key())
 a.key(10, 0); a.key(10, 0)
 check("placing the default's name makes it a surface, not both",
@@ -421,6 +476,22 @@ check("the desk save carries the grid and the surfaces",
       hw.calls[1])
 
 a, (p, l), hw = app()
+a.key(ord("3"), 0); a.key(ord("g"), 0); a.key(ord("s"), 0)
+check("a split is saved even with nothing in it",
+      hw.wsplits == [("DP-1", 0, 0, "top-bottom")] and not a.dirty(),
+      getattr(hw, "wsplits", None))
+
+# Loading: written splits come in; a half with no split line implies one.
+d, outs, hw = desk()
+hw.splitv = [("DP-2", 1, 1, "left-right")]
+hw.surf = ([tui.Surface("comms", "DP-1", "bottom", 0, 0)], None, "")
+a = tui.App(d, hw)
+check("splits load, written and implied",
+      a.splits == {("DP-2", 1, 1): "left-right",
+                   ("DP-1", 0, 0): "top-bottom"} and not a.dirty(),
+      a.splits)
+
+a, (p, l), hw = app()
 hw.rc["write"] = 2
 a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
 check("a refused desk write stays and says so", not a.done and a.dirty()
@@ -446,6 +517,14 @@ check("regions are read back from the fractions",
       [("t", "top", 0), ("b", "bottom", 1), ("rt", "right", 2)]
       and dflt.key() == ("else", "DP-2", "full", None, None),
       ([(x.name, x.region) for x in got], dflt and dflt.key()))
+
+# Splits come back from `hwdp surfaces --splits`, connector first.
+r = tui.Hwdp()
+r._run = lambda *a, **k: (0, "DP-1 0 1 top-bottom\nDP-2 2 0 left-right\n",
+                          "")
+check("splits are read back per panel and cell", r.splits() ==
+      [("DP-1", 0, 1, "top-bottom"), ("DP-2", 2, 0, "left-right")],
+      r.splits())
 
 # The review: gaps are named with no default, and gone with one.
 a, (p, l), hw = app()
@@ -510,6 +589,32 @@ desk3 = [tui.Output("DP-9", "normal", 320, 225, 2560, 1440),
          tui.Output("DP-7", "270", 2880, 0, 2160, 3840),
          tui.Output("eDP-1", "normal", 0, 1665, 2880, 1800)]
 out = shown(desk3, [], [2, 2], 0, 60, 18)
+# A split shows in the drawing even with nothing in it: the line between
+# the halves and a dot in each empty one; two side by side labels keep the
+# line between them instead of running into one word. Cropped to the
+# drawing, right of the sidebar and above the selection line.
+def drawn(splits, surf):
+    hw = FakeHw()
+    hw.namesv, hw.surf, hw.gridv, hw.splitv = NAMES, (surf, None, ""), \
+        [1, 1], splits
+    app = tui.App(tui.Desk(lap, hw.repack), hw)
+    app.tab = 2
+    scr = Scr(120, 40)
+    tui.render(scr, app, 0.0)
+    rows = scr.text().split("\n")
+    end = next(i for i, r in enumerate(rows) if " in cell " in r)
+    return [r[tui.SIDE_W + 1:] for r in rows[2:end]]
+g = drawn([("eDP-1", 0, 0, "top-bottom")], [])
+check("an empty top-bottom split draws its line and a dot in each half",
+      any("|" + "-" * 10 in r for r in g)
+      and sum(r.count(".") for r in g) == 2, "\n".join(g))
+g = drawn([("eDP-1", 0, 0, "left-right")],
+          [tui.Surface("personal-main", "eDP-1", "left", 0, 0),
+           tui.Surface("personal-agents", "eDP-1", "right", 0, 0)])
+lab = [r for r in g if "personal" in r]
+check("left and right labels keep the cut between them",
+      lab and "|personal-agents" in lab[0].replace(" ", "")
+      and sum(r.count(".") for r in g) == 0, "\n".join(g))
 rows = shown(lap, three, [3, 3], 2, 80, 24).split("\n")
 check("the active tab is marked when there is no colour",
       "[3 Virtual]" in rows[0], rows[0])

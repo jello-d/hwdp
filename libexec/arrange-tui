@@ -24,8 +24,10 @@ times, - not placed at this desk):
     e             its label                 D  delete it (from every desk's
                                                list; asked first)
   3 VIRTUAL, the grid: a miniature of the desk in every workspace cell
-    arrows        select a cell             Tab  a panel in it
-    g             cycle the region (full, top, bottom, left, right)
+    arrows        select a cell             Tab  the next panel, or half
+    g             cut the selected panel IN THIS CELL: whole, top-bottom,
+                  left-right, whole again (what is placed moves where it
+                  has one home; joining two placed halves asks first)
     Enter         pick the name for that spot (typing filters the list; it
                   MOVES if placed elsewhere at this desk; what overlapped
                   goes)
@@ -476,6 +478,13 @@ class Hwdp:
                                      int(f[3])))
         return found, default, ""
 
+    def splits(self):
+        """[(connector, cx, cy, split)] for the panels on now."""
+        rc, out, _ = self._surf("--splits")
+        return [(f[0], int(f[1]), int(f[2]), f[3]) for f in
+                (ln.split() for ln in out.splitlines()) if len(f) == 4] \
+            if rc == 0 else []
+
     def grid(self):
         """(w, h) the desk sets, or None."""
         rc, out, _ = self._surf("--grid")
@@ -488,8 +497,9 @@ class Hwdp:
         return [ln.split(None, 1) for ln in out.splitlines()
                 if len(ln.split(None, 1)) == 2] if rc == 0 else []
 
-    def write_desk(self, grid, surfaces, default):
+    def write_desk(self, grid, surfaces, default, splits=()):
         lines = "grid %d %d\n" % grid
+        lines += "".join("split %s cell %d %d %s\n" % k for k in splits)
         lines += "".join("surface %s %s cell %d %d %s\n"
                          % (s.name, s.conn, s.cx, s.cy, s.region)
                          for s in surfaces)
@@ -651,12 +661,19 @@ class OfflineHwdp(Hwdp):
                 continue
             if f[0] == "default":
                 default = Surface(f[1], f[2], f[5], None, None)
-            else:
+            elif f[0] == "surface":
                 found.append(Surface(f[1], f[2], f[5], int(f[3]), int(f[4])))
         return found, default, ""
 
-    def write_desk(self, grid, surfaces, default):
+    def splits(self):
+        rc, out, _ = self._surf("--raw")
+        return [(f[2], int(f[3]), int(f[4]), f[5]) for f in
+                (ln.split("\t") for ln in out.splitlines())
+                if len(f) == 6 and f[0] == "split"] if rc == 0 else []
+
+    def write_desk(self, grid, surfaces, default, splits=()):
         lines = "grid %d %d\n" % grid
+        lines += "".join('split "%s" cell %d %d %s\n' % k for k in splits)
         lines += "".join('surface %s "%s" cell %d %d %s\n'
                          % (s.name, s.conn, s.cx, s.cy, s.region)
                          for s in surfaces)
@@ -693,6 +710,13 @@ class OfflineHwdp(Hwdp):
 # --- surfaces: named parts of a monitor --------------------------------------
 
 REGIONS = ("full", "top", "bottom", "left", "right")
+# A panel's SPLIT in one cell: whole (None), or the two halves it is cut
+# into. `g` cycles them in this order; Tab walks the halves.
+SPLITS = (None, "top-bottom", "left-right")
+HALVES = {None: ("full",), "top-bottom": ("top", "bottom"),
+          "left-right": ("left", "right")}
+SPLIT_OF = {"top": "top-bottom", "bottom": "top-bottom",
+            "left": "left-right", "right": "left-right"}
 # `hwdp surfaces --map` gives a region as fractions of its panel.
 REGION_OF = {(0, 0, 1, 1): "full", (0, 0, 1, 0.5): "top",
              (0, 0.5, 1, 0.5): "bottom", (0, 0, 0.5, 1): "left",
@@ -759,7 +783,7 @@ class App:
         self.side = 0             # the sidebar's selected name
         self.vcell = [0, 0]       # the virtual tab's selected cell
         self.vpanel = 0           # ... panel in it (index into desk.on())
-        self.vregion = 0          # ... and region (index into REGIONS)
+        self.vhalf = 0            # ... and half of it, when it is split
         self.rscroll = 0          # the review tab's first line
         self.pick = None          # the picker, while it is up
         surf, default, why = hw.surfaces(desk)
@@ -768,6 +792,13 @@ class App:
         self.names_blocked = why if surf is None else ""
         self.surfaces = surf or []
         self.default = default
+        # {(panel, cx, cy): split}: written ones, then any a placed half
+        # implies (a file from before splits were written).
+        self.splits = {(c, x, y): w for c, x, y, w in hw.splits()}
+        for x in self.surfaces:
+            if x.region in SPLIT_OF:
+                self.splits.setdefault((x.conn, x.cx, x.cy),
+                                       SPLIT_OF[x.region])
         self.grid = hw.grid() or NEW_GRID
         self.names = hw.names()
         self._mark_saved()
@@ -783,6 +814,7 @@ class App:
         self.saved_surfaces = self._surface_keys()
         self.saved_default = self.default.key() if self.default else None
         self.saved_grid = self.grid
+        self.saved_splits = sorted(self.splits.items())
         self.saved_names = [list(n) for n in self.names]
 
     @property
@@ -795,6 +827,7 @@ class App:
     def desk_dirty(self):
         return (self._surface_keys() != self.saved_surfaces
                 or self.grid != self.saved_grid
+                or sorted(self.splits.items()) != self.saved_splits
                 or (self.default.key() if self.default else None)
                 != self.saved_default)
 
@@ -970,7 +1003,8 @@ class App:
         self.dialog = None
         place = self.desk.placements()
         layout = place != self.saved or self.live_unsaved
-        desk = (self.grid, list(self.surfaces), self.default) \
+        desk = (self.grid, list(self.surfaces), self.default,
+                sorted(k + (w,) for k, w in self.splits.items())) \
             if self.desk_dirty() else None
         names = [list(n) for n in self.names]
         keep = [n for n in self.saved_names
@@ -1142,14 +1176,40 @@ class App:
         self.dialog, self.msg = None, "%s deleted" % n
 
     # --- the virtual tab: surfaces on the grid --------------------------
+    def split_at(self, o, cx, cy):
+        """How output O is cut in cell (cx, cy): None (whole) or a SPLITS
+        word."""
+        return self.splits.get((o.conn, cx, cy))
+
+    def vstops(self):
+        """Every stop Tab walks in the selected cell, in order: each panel
+        whole, or each of its halves when it is split there."""
+        return [(o, rg) for o in self.desk.on()
+                for rg in HALVES[self.split_at(o, *self.vcell)]]
+
     def vspot(self):
-        """(output, region) selected in the virtual tab, or (None, region)
-        when no output is on."""
+        """(output, region) selected in the virtual tab, or (None, "full")
+        when no output is on. The half is clamped, so a panel split in one
+        cell and whole in the next is still a valid selection."""
         on = self.desk.on()
         if not on:
-            return None, REGIONS[self.vregion]
+            return None, "full"
         self.vpanel %= len(on)
-        return on[self.vpanel], REGIONS[self.vregion]
+        o = on[self.vpanel]
+        hs = HALVES[self.split_at(o, *self.vcell)]
+        self.vhalf = min(self.vhalf, len(hs) - 1)
+        return o, hs[self.vhalf]
+
+    def _vtab(self, step):
+        """Tab to the next stop (a whole panel, or a half), across panels."""
+        stops = self.vstops()
+        if not stops:
+            return
+        here = stops.index(self.vspot())
+        o, rg = stops[(here + step) % len(stops)]
+        on = self.desk.on()
+        self.vpanel = on.index(o)
+        self.vhalf = HALVES[self.split_at(o, *self.vcell)].index(rg)
 
     def at_spot(self):
         """The surfaces that overlap the selected spot."""
@@ -1164,10 +1224,8 @@ class App:
                           min(max(self.vcell[1] + dy, 0), self.grid[1] - 1)]
             return
         if k in (9, curses.KEY_BTAB):
-            n = max(1, len(self.desk.on()))
-            self.vpanel = (self.vpanel + (1 if k == 9 else -1)) % n
-            return
-        act = {ord("g"): self._vregion, ord("x"): self._vclear,
+            return self._vtab(1 if k == 9 else -1)
+        act = {ord("g"): self._vsplit, ord("x"): self._vclear,
                ord("f"): lambda now: self._pick("default"),
                ord("F"): self._vnodefault,
                ord("+"): lambda now: self._regrid(1, 0),
@@ -1224,8 +1282,48 @@ class App:
         elif 32 < k < 127:
             pk["filter"], pk["sel"] = pk["filter"] + chr(k), 0
 
-    def _vregion(self, now):
-        self.vregion = (self.vregion + 1) % len(REGIONS)
+    def _vsplit(self, now):
+        """Cut the selected panel in THIS cell, or join it again: whole,
+        top-bottom, left-right, whole. What is placed moves where it has
+        exactly one home (whole to the first half, top to left, one half
+        back to whole); joining a panel with BOTH halves placed asks first,
+        and unplaces them, since keeping either would be a guess."""
+        o, _ = self.vspot()
+        if self._blocked() or o is None:
+            return
+        k = (o.conn,) + tuple(self.vcell)
+        nxt = SPLITS[(SPLITS.index(self.splits.get(k)) + 1) % len(SPLITS)]
+        here = [x for x in self.surfaces if (x.conn, x.cx, x.cy) == k]
+        if nxt is None and len(here) > 1:
+            self.dialog = ("unsplit", k)
+            return
+        self._resplit(k, nxt, here)
+
+    def _resplit(self, k, nxt, here):
+        old = HALVES[self.splits.get(k)]
+        new = HALVES[nxt]
+        for x in here:
+            x.region = new[min(old.index(x.region), len(new) - 1)] \
+                if x.region in old else new[0]
+        if nxt:
+            self.splits[k] = nxt
+        else:
+            self.splits.pop(k, None)
+        self.vhalf = 0
+        self.msg = "%s, cell %d %d: %s" % (
+            self.plabel(k[0]), k[1], k[2], nxt or "whole")
+
+    def _unsplit_key(self, k):
+        cell = self.dialog[1]
+        if k in (ord("y"),):
+            gone = [x for x in self.surfaces
+                    if (x.conn, x.cx, x.cy) == cell]
+            self.surfaces = [x for x in self.surfaces if x not in gone]
+            self._resplit(cell, None, [])
+            self.msg += "; unplaced " + ", ".join(x.name for x in gone)
+            self.dialog = None
+        elif k in (ESC, ord("n")) or k in ENTER:
+            self.dialog = None      # Enter keeps it: unplacing is asked
 
     def _vplace(self, n):
         """Put name N HERE. A name is in one place per desk, so it MOVES if
@@ -1319,6 +1417,8 @@ class App:
             return self._form_key(k)
         if kind == "pick":
             return self._pick_key(k, now)
+        if kind == "unsplit":
+            return self._unsplit_key(k)
         if kind == "delname":
             if k in (ord("y"), ord("D")):
                 self._name_gone()
@@ -1352,7 +1452,7 @@ HELP = (
     "Tab/arrows select  m move  r rotate  w swap  o off/on  i identify"
     "  p preview",
     "arrows select  a add  e label  D delete",
-    "arrows cell  Tab panel  g region  Enter place  f default"
+    "arrows cell  Tab panel/half  g split  Enter place  f default"
     "  F no default  x clear  +/- columns  ]/[ rows",
     "arrows / PgUp PgDn scroll")
 HELP_ALL = "1-4 tabs  s save  q quit"
@@ -1361,9 +1461,10 @@ SIDE_W = 26             # the sidebar's columns, when the screen has them
 # Line drawing: the box-drawing glyphs on a UTF-8 terminal, ASCII elsewhere
 # (a Linux text console, an odd locale). main() picks once, after setting the
 # locale; everything draws through G.
-ASCII = {"h": "-", "v": "|", "tl": "+", "tr": "+", "bl": "+", "br": "+"}
+ASCII = {"h": "-", "v": "|", "tl": "+", "tr": "+", "bl": "+", "br": "+",
+         "dot": "."}
 UTF8 = {"h": "\u2500", "v": "\u2502", "tl": "\u250c", "tr": "\u2510",
-        "bl": "\u2514", "br": "\u2518"}
+        "bl": "\u2514", "br": "\u2518", "dot": "\u00b7"}
 G = dict(ASCII)
 
 
@@ -1493,6 +1594,13 @@ def draw_dialog(scr, app, now):
                  else "not placed"),
                 "A desk elsewhere that places it makes the save refuse.",
                 "", "y  delete it", "Esc  keep it"]
+    elif kind == "unsplit":
+        conn, cx, cy = arg
+        here = [x.name for x in app.surfaces if (x.conn, x.cx, x.cy) == arg]
+        text = ["Join %s again in cell %d,%d?" % (app.plabel(conn), cx, cy),
+                "", "Both halves are placed: %s." % ", ".join(here),
+                "Joined, they become unplaced here (still in the list).",
+                "", "y  join it", "Esc  keep the split"]
     elif kind == "pick":
         text = pick_lines(app)
     elif kind == "quit":
@@ -1652,6 +1760,29 @@ def draw_surfaces_tab(scr, app, top, rows, width, left):
         put(scr, top + 2, left, "no names yet: a adds one", curses.A_DIM)
 
 
+def draw_split(scr, app, o, cx, cy, bx, by, w, h):
+    """A panel cut in this cell: a dim line between its halves where the
+    box has room, and a dim dot in each half nothing is placed in, so a cut
+    still shows when the miniature is too small for the line."""
+    sp = app.split_at(o, cx, cy)
+    if not sp:
+        return
+    dim = curses.A_DIM
+    first = region_rect(HALVES[sp][0], w - 2, h - 2)
+    if sp == "top-bottom" and first[3] >= 2:
+        put(scr, by + first[3], bx + 1, G["h"] * (w - 2), dim)
+    elif sp == "left-right" and first[2] >= 2:
+        for r in range(h - 2):
+            put(scr, by + 1 + r, bx + first[2], G["v"], dim)
+    taken = {x.region for x in app.surfaces
+             if x.conn == o.conn and (x.cx, x.cy) == (cx, cy)}
+    for rg in HALVES[sp]:
+        if rg not in taken:
+            rx, ry, rw, rh = region_rect(rg, w - 2, h - 2)
+            put(scr, by + 1 + ry + max(0, (rh - 1) // 2),
+                bx + 1 + rx + max(0, (rw - 1) // 2), G["dot"], dim)
+
+
 def draw_virtual(scr, app, top, rows, cols, left):
     """The grid: in every cell a miniature of the desk, each surface drawn
     into its part of its panel; the selected cell, panel and region lit."""
@@ -1681,13 +1812,18 @@ def draw_virtual(scr, app, top, rows, cols, left):
                     for r in range(rh):
                         put(scr, by + 1 + ry + r, bx + 1 + rx, " " * rw,
                             curses.color_pair(3))
+                # After the highlight, so a selected half keeps its cut.
+                draw_split(scr, app, o, cx, cy, bx, by, w, h)
                 for x in app.surfaces:
                     if x.conn != o.conn or (x.cx, x.cy) != (cx, cy):
                         continue
                     rx, ry, rw, rh = region_rect(x.region, w - 2, h - 2)
                     lit = cur and o is sel_o and x.region == sel_r
+                    # A left half stops short of the cut on its last
+                    # column, or two labels run together into one word.
+                    lw = rw - 1 if x.region == "left" and rw >= 3 else rw
                     put(scr, by + 1 + ry + max(0, (rh - 1) // 2),
-                        bx + 1 + rx, x.name[:max(1, rw)].center(rw),
+                        bx + 1 + rx, x.name[:max(1, lw)].center(lw),
                         curses.color_pair(3) if lit else curses.A_BOLD)
     # THE SELECTION IN FULL, on the line below the drawing: a miniature
     # cuts what does not fit, and this line is where the cut part is read.

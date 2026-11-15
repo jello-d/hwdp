@@ -22,9 +22,12 @@
 #   --check   validate the files and report, in words, instead of resolving
 #   --write   replace this desk's file from lines on stdin (see write_file)
 #   --write-names  replace the names list from stdin (see write_names)
+#   --splits  the panels CUT in two, `CONNECTOR CX CY top-bottom|left-right`
+#             per panel and cell, switched-on panels only (see `split`)
 #   --raw     the desk file's own lines, unresolved, TAB-separated:
 #             `surface|default NAME PANEL CX CY REGION` (`*` cells for the
-#             default), PANEL the quoted EDID name or @builtin as written
+#             default), and `split - PANEL CX CY top-bottom|left-right`;
+#             PANEL the quoted EDID name or @builtin as written
 #
 # HWDP_DESK=<key> works on THAT desk instead of the attached one, whether or
 # not its panels are here (`hwdp desks` names the keys; the layout tool uses
@@ -51,6 +54,7 @@
 #     check, so a desk authored before it existed still resolves.
 #   $HWDP_DESKS/<file>.conf (~/.config/hwdp/desks): ONE desk,
 #       grid 3 3
+#       split "Dell Inc. U2720Q ABC123" cell 0 0 top-bottom
 #       surface comms "Dell Inc. U2720Q ABC123" cell 0 0 bottom
 #       default elsewhere "@builtin"
 #     found as <desk id>.conf (this exact desk), else <shape>.conf (a GENERIC
@@ -61,6 +65,11 @@
 # profile names it, or by `@builtin`, which is whichever laptop panel is
 # present: what a generic file and a desk with a laptop docked both need.
 # The region is one of `top bottom left right full` (halves; default full).
+# A `split` CUTS a panel in one cell, top-bottom or left-right, so a split
+# with nothing placed in it yet is kept; a surface there must then be one of
+# its halves. A half with no split line (a file from before splits were
+# written) implies its split. Each cell decides for itself: a panel can be
+# split in one cell and whole in the next.
 #
 # THE BOUNDARY, which is the whole reason this is hwdp's: hwdp owns which
 # panel and which part of it a NAME means at this desk, because only hwdp can
@@ -95,7 +104,8 @@ case "${1:-}" in
   --write) MODE='write' ;;
   --write-names) MODE=write-names ;;
   --raw)   MODE=raw ;;
-  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+  --splits) MODE=splits ;;
+  -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
   *) echo "hwdp surfaces: unexpected argument '$1'" >&2; exit 2 ;;
 esac
 
@@ -230,9 +240,20 @@ write_file() {
     {
       line = $0; sub(/^[ \t]+/, "", line)
       if (line ~ /^grid[ \t]/) { print line; next }
+      if (line ~ /^split[ \t]/) {
+        # `split <panel> cell ...`: no name, so the panel is word two.
+        rest = line; sub(/^split[ \t]+/, "", rest)
+        if (rest ~ /^"/) { print line; next }
+        conn = rest; sub(/[ \t].*/, "", conn); sub(/^[^ \t]+/, "", rest)
+        if (!(conn in N)) {
+          print "hwdp surfaces: --write: no switched-on output named `" \
+            conn "`" > "/dev/stderr"; bad = 1; next
+        }
+        print "split \"" N[conn] "\"" rest; next
+      }
       if (line !~ /^(surface|default)[ \t]/) {
-        print "hwdp surfaces: --write: not a grid, surface or default" \
-          " line: " $0 > "/dev/stderr"; bad = 1; next
+        print "hwdp surfaces: --write: not a grid, surface, split or" \
+          " default line: " $0 > "/dev/stderr"; bad = 1; next
       }
       kw = line; sub(/[ \t].*/, "", kw)
       rest = line; sub(/^[a-z]+[ \t]+[^ \t]+[ \t]+/, "", rest)
@@ -261,13 +282,15 @@ write_file() {
     awk -F"$TAB" -v grid="$(grep -c '^grid[ \t]' "$_wd/given" || :)" '
       FILENAME == ARGV[1] { ON[$2] = 1; next }
       /^[ \t]*grid[ \t]/ { if (grid == 0) print; next }
-      match($0, /^[ \t]*(surface|default)[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
+      match($0, /^[ \t]*(surface|default)[ \t]+[^ \t]+[ \t]+"[^"]+"/) \
+          || match($0, /^[ \t]*split[ \t]+"[^"]+"/) {
         p = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", p)
         sub(/"$/, "", p); if (!(p in ON)) print
       }' "$_wd/names" "$_file" > "$_wd/kept"
   fi
   { echo "# this desk, written by hwdp surfaces --write:"
     echo "#   grid <w> <h>"
+    echo "#   split \"<EDID name>\" cell <x> <y> top-bottom|left-right"
     echo "#   surface <name> \"<EDID name>\" cell <x> <y> [region]"
     echo "#   default <name> \"<EDID name>\" [region]"
     echo "#   region: top bottom left right full (halves; default full)"
@@ -336,7 +359,14 @@ if [ "$MODE" = grid ]; then
 fi
 if [ "$MODE" = raw ]; then
   [ -n "$_file" ] || exit 0
-  awk -v OFS="$TAB" '$1 == "surface" || $1 == "default" {
+  awk -v OFS="$TAB" '$1 == "split" {
+      l = $0; if (!match(l, /"[^"]+"/)) next
+      pn = substr(l, RSTART + 1, RLENGTH - 2)
+      n = split(substr(l, RSTART + RLENGTH), w, /[ \t]+/)
+      for (i = 1; i <= n; i++) if (w[i] == "cell") {
+        print "split", "-", pn, w[i + 1], w[i + 2], w[i + 3]; next }
+    }
+    $1 == "surface" || $1 == "default" {
       kw = $1; nm = $2; l = $0
       if (!match(l, /"[^"]+"/)) next
       pn = substr(l, RSTART + 1, RLENGTH - 2)

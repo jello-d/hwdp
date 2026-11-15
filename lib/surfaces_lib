@@ -6,6 +6,8 @@
 # surfaces_resolve <mode> <desk file> <names file> <built-in name> <pids>
 #   stdin   probe_layout's TAB records (the live outputs)
 #   mode    emit (the frozen 8 fields) | map (R7) | check (words)
+#           | splits (`CONNECTOR CX CY top-bottom|left-right`, one per split
+#           panel and cell, switched-on panels only)
 #   names   the global names file, or /dev/null for "do not check names"
 #   pids    "<connector> <panel id>" lines, for map
 # Exit 2 with every problem on stderr and NOTHING on stdout when the files
@@ -53,6 +55,20 @@ surfaces_resolve() {
     PN = substr(line, RSTART, RLENGTH); REST = substr(line, RLENGTH + 1)
     sub(/^[ \t]+"/, "", PN); sub(/"$/, "", PN)
     return 1
+  }
+  # "<panel>" ... (a split names no surface): sets PN and REST, or reports.
+  function panel_only(line) {
+    if (!match(line, /^"[^"]+"/)) {
+      err("split: the panel must be a quoted EDID name or \"@builtin\"")
+      return 0
+    }
+    PN = substr(line, 2, RLENGTH - 2); REST = substr(line, RLENGTH + 1)
+    return 1
+  }
+  # The halves a split word cuts a panel into, "" when it is not one.
+  function halves(w) {
+    return (w == "top-bottom") ? "top bottom" : \
+      (w == "left-right") ? "left right" : ""
   }
   function region_word(s) {
     gsub(/^[ \t]+|[ \t]+$/, "", s)
@@ -114,8 +130,28 @@ surfaces_resolve() {
       if (!listed(NM)) next
       DN = NM; DP = PN; DR = rg; DL = FNR; next
     }
+    if (kw == "split") {
+      # A panel CUT in one cell, whether or not anything is placed in its
+      # halves yet: what keeps an empty split across a save.
+      if (!panel_only(line)) next
+      if (!match(REST, /^[ \t]+cell[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+/)) {
+        err("split: expected `cell <x> <y>` after the panel"); next
+      }
+      cs = substr(REST, RSTART, RLENGTH); w = substr(REST, RLENGTH + 1)
+      sub(/^[ \t]+/, "", cs); split(cs, c, /[ \t]+/)
+      gsub(/[ \t]+$/, "", w)
+      if (halves(w) == "") {
+        err("split: `" w "` is not top-bottom or left-right"); next
+      }
+      k = PN SUBSEP c[2] SUBSEP c[3]
+      if (k in SPL) {
+        err("\"" PN "\" is split twice in cell " c[2] " " c[3]); next
+      }
+      SPL[k] = w; ns++; KP[ns] = PN; KX[ns] = c[2]; KY[ns] = c[3]
+      KW[ns] = w; KL[ns] = FNR; next
+    }
     if (kw != "surface") {
-      err("expected `grid`, `surface` or `default`"); next
+      err("expected `grid`, `surface`, `split` or `default`"); next
     }
     if (!name_panel(line, "surface")) next
     if (!match(REST, /^[ \t]+cell[ \t]+[0-9]+[ \t]+[0-9]+/)) {
@@ -131,7 +167,18 @@ surfaces_resolve() {
     SL[n] = FNR
   }
   END {
+    for (i = 1; i <= ns; i++)
+      if (GW && (KX[i] + 0 >= GW || KY[i] + 0 >= GH))
+        E[++ne] = file ":" KL[i] ": the split of \"" KP[i] "\" is in" \
+          " cell " KX[i] " " KY[i] ", outside the grid (" GW "x" GH ")"
     for (i = 1; i <= n; i++) {
+      # A split panel holds only its halves there. A half with NO split
+      # line is a file from before splits were written: its split is
+      # implied, and nothing is refused for it.
+      k = SP[i] SUBSEP SX[i] SUBSEP SY[i]
+      if ((k in SPL) && index(" " halves(SPL[k]) " ", " " SR[i] " ") == 0)
+        E[++ne] = file ":" SL[i] ": `" SN[i] "` is " SR[i] " of \"" \
+          SP[i] "\", which is split " SPL[k] " in cell " SX[i] " " SY[i]
       if (GW && (SX[i] + 0 >= GW || SY[i] + 0 >= GH))
         E[++ne] = file ":" SL[i] ": `" SN[i] "` is in cell " SX[i] " " \
           SY[i] ", outside the grid (" GW "x" GH ")"
@@ -150,6 +197,12 @@ surfaces_resolve() {
       exit 2
     }
     if (mode == "check" && GW) print "grid  " GW "x" GH
+    if (mode == "splits") {
+      for (i = 1; i <= ns; i++)
+        if (KP[i] in ON) printf "%s %d %d %s\n", ON[KP[i]], KX[i], KY[i], \
+          KW[i]
+      exit 0
+    }
     for (i = 1; i <= n; i++) {
       p = SP[i]
       if (!(p in ATT)) {

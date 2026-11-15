@@ -137,7 +137,7 @@ _refuse "an unknown region" 'surface m "Dell WIDE SN3" cell 0 0 middle' \
 _refuse "an unquoted panel" 'surface m Dell cell 0 0' \
   'the panel must be a quoted EDID name'
 _refuse "not a surface line" 'surfaces m "Dell WIDE SN3" cell 0 0' \
-  'expected `grid`, `surface` or `default`'
+  'expected `grid`, `surface`, `split` or `default`'
 # Opposite halves in one cell are NOT a clash (comms + mail above prove it);
 # the same half in a DIFFERENT cell is not either.
 printf 'surface late "Dell PORTRAIT SN2" cell 5 5 bottom\n' >> "$F"
@@ -344,3 +344,47 @@ fi
 [ "$(wc -l < "$T/saved.log")" -eq 2 ] \
   || fail "a refused write must fire nothing: $(cat "$T/saved.log")"
 pass "both writers fire saved with the file, a refused write nothing"
+
+# --- splits: a panel CUT in one cell, kept even with nothing placed -----------
+# Written by connector, filed by EDID name; read back resolved (--splits) and
+# raw; a surface must use its split's halves; each cell decides for itself;
+# a split on a panel not switched on survives a rewrite; and a half with no
+# split line (a file from before splits) still resolves, its split implied.
+printf '%s\n' 'split DP-1 cell 0 0 top-bottom' \
+  'surface comms DP-1 cell 0 0 bottom' 'split DP-2 cell 1 0 left-right' \
+  'surface code DP-1 cell 1 0' | wr >/dev/null 2>"$T/err" \
+  || fail "--write refused splits: $(cat "$T/err")"
+grep -qx 'split "Dell PORTRAIT SN2" cell 0 0 top-bottom' "$FD" \
+  || fail "--write must file a split by EDID name: $(cat "$FD")"
+[ "$(run --splits)" = "$(printf 'DP-1 0 0 top-bottom\nDP-2 1 0 left-right')" ] \
+  || fail "--splits must resolve to connectors: '$(run --splits)'"
+run --raw | grep -qx "$(printf 'split\t-\tDell WIDE SN3\t1\t0\tleft-right')" \
+  || fail "--raw must carry the split: $(run --raw)"
+[ "$(run 2>/dev/null | awk '$1 == "code"')" = \
+  "code DP-1 1 0 0 0 2160 3840" ] \
+  || fail "a panel split in one cell must be whole in the next: $(run)"
+# An empty split (DP-2 in 1 0) is kept: nothing else records it.
+_before=$(cksum < "$FD")
+if printf '%s\n' 'split DP-1 cell 0 0 top-bottom' \
+    'surface comms DP-1 cell 0 0' | wr >/dev/null 2>"$T/err"; then
+  fail "--write took a WHOLE surface on a split panel"
+fi
+grep -q 'split top-bottom in cell 0 0' "$T/err" \
+  || fail "the refusal must name the split: $(cat "$T/err")"
+[ "$(cksum < "$FD")" = "$_before" ] || fail "a refusal must leave the file"
+_twice=$(printf 'split DP-1 cell 0 0 %s\n' top-bottom left-right)
+for _bad in 'split DP-1 cell 0 0 diagonal' "$_twice" \
+    'split DP-1 cell 9 9 top-bottom' 'split DP-9 cell 0 0 top-bottom'; do
+  printf '%s\n' "$_bad" | wr >/dev/null 2>&1 \
+    && fail "--write took a bad split: $_bad"
+done
+[ "$(cksum < "$FD")" = "$_before" ] || fail "bad splits must leave the file"
+printf 'split "Nope ELSEWHERE SN8" cell 1 1 left-right\n' >> "$FD"
+printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null \
+  || fail "a rewrite failed"
+grep -qx 'split "Nope ELSEWHERE SN8" cell 1 1 left-right' "$FD" \
+  || fail "a split on a panel not switched on was lost: $(cat "$FD")"
+printf 'surface comms DP-1 cell 0 0 top\nsurface code DP-1 cell 0 0 bottom\n' \
+  | wr >/dev/null || fail "halves with no split line must still be accepted"
+[ -z "$(run --splits)" ] || fail "an implied split is not a written one"
+pass "splits: written, resolved, raw, enforced, per cell, kept when unseen"
