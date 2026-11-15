@@ -269,9 +269,17 @@ kill "$_sup" 2>/dev/null
 # The directory but not the file: watched through the directory, so the
 # file arriving later is a config change.
 mkdir -p "$T/cfgdir"
+_s_init=$(_starts)
 _before=$(_runs); sup "$T/run-nofile" "$T/cfgdir/wayfire.ini"
 _wait_runs $((_before + 1)) 10 \
   || fail "no startup pass with no config file"
+# The startup pass runs BEFORE the loop arms its first watcher, so wait for
+# that arming: counted after the first event, it read as a restart.
+_i=0
+while [ "$(_starts)" -le "$_s_init" ] && [ "$_i" -lt 40 ]; do
+  sleep 0.25; _i=$((_i + 1))
+done
+[ "$(_starts)" -gt "$_s_init" ] || fail "the directory was never watched"
 event 'unplug DP-3' "$T/run-nofile/mgr.log"
 event 'panel DP-3 edid-three 2560x1440' "$T/run-nofile/mgr.log"
 _before=$(_runs); : > "$T/cfgdir/wayfire.ini"
@@ -280,6 +288,30 @@ watched directory was not a config change: $(cat "$T/run-nofile/mgr.log")"
 kill "$_sup" 2>/dev/null
 pass "no config file or dir: plugs seen, the watcher never restarts, and a
   file that appears later is a config change"
+
+# A CHANGE DURING STARTUP, before any poller exists: a one-shot `changed`
+# hook unplugs DP-3 inside the startup pass. A poller that baselined when it
+# STARTED took the panel's absence as normal and never acted on it (the
+# supervisor's own startup layout still had DP-3); the baseline is taken
+# before the layout now, so this must be a second pass.
+_once=$T/unplug-once; : > "$_once"
+cat > "$T/hooks/changed.d/50-unplug-once" <<EOF
+#!/bin/sh
+[ -f "$_once" ] || exit 0
+rm -f "$_once" "$T/drm/card0-DP-3/status" "$T/drm/card0-DP-3/edid" \
+  "$T/drm/card0-DP-3/modes"
+rmdir "$T/drm/card0-DP-3"
+EOF
+chmod +x "$T/hooks/changed.d/50-unplug-once"
+[ -d "$T/drm/card0-DP-3" ] || fail "DP-3 must be plugged before this case"
+_before=$(_runs); sup "$T/run-race" "$T/cfgdir/wayfire.ini"
+_wait_runs $((_before + 1)) 10 || fail "no startup pass (race case)"
+[ -f "$_once" ] && fail "the one-shot hook did not run at startup"
+_wait_runs $((_before + 2)) 15 || fail "a panel unplugged DURING the \
+startup pass was never acted on: $(cat "$T/run-race/mgr.log")"
+kill "$_sup" 2>/dev/null
+rm -f "$T/hooks/changed.d/50-unplug-once"
+pass "a panel unplugged during the startup pass is still acted on"
 fi
 
 pass "hotplug: in, out, swapped, quiet when still, and the supervisor logs"

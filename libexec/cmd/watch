@@ -75,6 +75,15 @@ settle_gen=0
 # a separate process and cannot read our variables.
 kanshi_pidf="$_rt/watch.$$.kanshi"
 
+# The panel set the poller last ACTED on, as panel_fingerprint. Taken BEFORE
+# the startup layout, and kept in a file across re-arms rather than re-read
+# by each new poller: a poller that baselined when it started folded any plug
+# since the layout into its baseline, and that change was never acted on.
+# Measured: hotplug.t unplugged a panel the instant the startup pass ran and
+# the supervisor never saw it, two runs in three. At a real login that gap is
+# while a dock is still enumerating, which is exactly when panels arrive.
+panels_f="$_rt/watch.$$.panels"
+
 # The `unmapped` timer's generation token, the same mechanism as the settle's.
 unmapped_token="$_rt/watch.$$.unmapped"
 unmapped_gen=0
@@ -201,7 +210,8 @@ cleanup() {
   [ -n "${kanshi_pid:-}" ]   && kill "$kanshi_pid"   2>/dev/null
   # Dropping the token stands down any settle still sleeping; it is detached,
   # so there is nothing of ours left to kill.
-  rm -f "$fifo" "$settle_token" "$kanshi_pidf" "$unmapped_token"
+  rm -f "$fifo" "$settle_token" "$kanshi_pidf" "$unmapped_token" \
+    "$panels_f"
   exit 0
 }
 trap '' HUP
@@ -314,7 +324,8 @@ schedule_unmapped() {
 # wait reads the log from where it stood before the reload. Only when OUR
 # output really is that log (the daemon; a test's stub writes elsewhere), and
 # bounded, so a kanshi that says nothing costs a few seconds, never a hang.
-log_mark() { wc -c < "$watch_log" 2>/dev/null || echo 0; }
+# 2>/dev/null FIRST: a failed `<` is reported before a later redirect.
+log_mark() { wc -c 2>/dev/null < "$watch_log" || echo 0; }
 await_kanshi() {   # <log offset before the reload>
   [ /proc/self/fd/1 -ef "$watch_log" ] 2>/dev/null || return 0
   _aw=0
@@ -337,6 +348,13 @@ await_kanshi() {   # <log offset before the reload>
 # delays bringing kanshi up. The changed pass, after kanshi is up, is the same
 # edge every later config burst fires, and hooks are expected idempotent, so the
 # startup pass and a burst pass are the same call.
+panel_fingerprint() {
+  # cksum keeps it to one number, and sort makes it independent of the order
+  # providers happen to list connectors in.
+  probe_panels 2>/dev/null | sort | cksum
+}
+panel_fingerprint >"$panels_f"   # before the layout is generated
+
 run_hooks pre &
 runtime_pid=$!
 
@@ -468,15 +486,9 @@ cancel_settle() { rm -f "$settle_token"; }
 HOTPLUG_MARK=__hwdp_hotplug__
 KANSHI_MARK=__hwdp_kanshi_gone__
 
-panel_fingerprint() {
-  # cksum keeps it to one number, and sort makes it independent of the order
-  # providers happen to list connectors in.
-  probe_panels 2>/dev/null | sort | cksum
-}
-
 hotplug_poll() {   # <inotify pid>: mark a SET change, or a kanshi death
   _watch_pid=$1
-  _prev=$(panel_fingerprint)
+  _prev=$(cat "$panels_f" 2>/dev/null) || _prev=$(panel_fingerprint)
   _kdead=""
   while kill -0 "$_watch_pid" 2>/dev/null; do
     sleep "$HWDP_HOTPLUG_POLL"
@@ -488,6 +500,7 @@ hotplug_poll() {   # <inotify pid>: mark a SET change, or a kanshi death
     _now=$(panel_fingerprint)
     [ "$_now" = "$_prev" ] && continue
     _prev=$_now
+    printf '%s\n' "$_now" >"$panels_f"
     printf '%s\n' "$HOTPLUG_MARK"
   done
 }
