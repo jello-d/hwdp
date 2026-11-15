@@ -178,6 +178,19 @@ a non-zero overall status. It does NOT regenerate the config or signal
 .B \-q
 says nothing on success, for a provisioning run.
 .TP
+.B hwdp status
+This session's display layer on one screen: the attached desk (its name, id
+and shape), each panel's mode, scale and orientation, the layout profile it
+reads, its surfaces, whether the supervisor and its
+.B kanshi
+are running and which profile
+.B kanshi
+last applied, the hooks wired per edge, and any hook that failed or was not
+executable since the supervisor started. A line that starts with
+.B !
+is a problem, and the status is then 1. Without a session only what is
+attached is judged. It only reads, and never takes the supervisor's lock.
+.TP
 .BR "hwdp arrange" " [" \-\-dry\-run "] " \fIPLACEMENT\fR...
 Write this desk's layout from placements, then apply it. Each output is placed
 against ONE already placed, with its own alignment along that edge, so a mixed

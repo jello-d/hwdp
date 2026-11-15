@@ -22,6 +22,7 @@
 #   hwdp identify   label every monitor on its glass (--seconds N)
 #   hwdp watch      supervise the layout; fire display-change hooks
 #   hwdp apply      fire the changed hooks now, so a config change goes live
+#   hwdp status     is this session's display layer healthy, on one screen
 #
 # `id`, `shape`, `ui` and `panels` answer HEADLESS, from a TTY, over ssh, at
 # boot, at the greeter, because they ask the kernel what is attached when no
@@ -70,7 +71,7 @@ esac
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
   id|shape|ui|panels|geometry|layout|capture|watch|apply) ;;
-  surfaces|map|arrange|profile|identify|desks) ;;
+  surfaces|map|arrange|profile|identify|desks|status) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;

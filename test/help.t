@@ -49,7 +49,7 @@ done
 [ "$_n" -ge 15 ] || fail "only $_n commands found under libexec/cmd"
 pass "--help on all $_n commands: their header, and nothing written"
 
-for _c in capture layout watch shape ui; do
+for _c in capture layout watch shape ui status; do
   snap before
   _o=$(run "$_c" --bogus 2>&1); _rc=$?
   snap after
@@ -59,4 +59,4 @@ for _c in capture layout watch shape ui; do
   cmp -s "$T/snap.before" "$T/snap.after" \
     || fail "hwdp $_c --bogus wrote: $(diff "$T/snap.before" "$T/snap.after")"
 done
-pass "capture, layout, watch, shape and ui refuse an unknown argument"
+pass "capture, layout, watch, shape, ui and status refuse an unknown argument"

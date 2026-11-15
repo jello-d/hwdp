@@ -32,6 +32,8 @@ hwdp desks      every known desk by name (made from its hardware, or
 hwdp identify   a bright label on every monitor saying which it is
 hwdp watch      supervise the layout; fire display-change hooks
 hwdp apply      fire the changed hooks now, so a config change goes live
+hwdp status     is this session's display layer healthy: desk, panels,
+                layout, supervisor, kanshi's last profile, failed hooks
 ```
 
 `id`, `shape`, `ui` and `panels` answer **headless** (from a TTY, over ssh,

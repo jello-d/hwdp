@@ -1,0 +1,175 @@
+#!/bin/sh
+# hwdp status: is the display layer of this session healthy, on one screen.
+#
+#   hwdp status
+#
+#   desk      the attached desk: its name (`hwdp desks`), id and shape
+#   panels    each switched-on panel: mode, scale, orientation (headless:
+#             what is attached)
+#   layout    the authored profile this desk reads, or why there is none
+#   surfaces  how many are placed here, the grid, and the file they come from
+#   watch     the supervisor (`hwdp watch`): running, its pid and start
+#   kanshi    the supervisor's kanshi, and what it last said about a profile:
+#             an authored one (hwdp-<id>) or the synthesized `autoscale`
+#   hooks     the executable hooks per edge, and any hook that failed or was
+#             not executable since the supervisor started (its log)
+#
+# A line that starts with `!` is a problem, and the exit status is then 1;
+# otherwise 0. Without a session (no WAYLAND_DISPLAY) the per-session lines
+# say so and only what is attached is judged.
+#
+# It only READS: the answers the other subcommands publish, the supervisor's
+# runtime files (watch.<pid>.kanshi names the supervisor and holds its
+# kanshi's pid) and its log, which it truncates when it starts, so "since the
+# supervisor started" is this session. It never takes the supervisor's lock,
+# not even for a moment, since a supervisor starting then would mistake the
+# probe for a running one and only nudge.
+set -eu
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+  '') ;;
+  *) echo "hwdp status: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
+. "$HWDP_LIB/displayset_lib"
+. "$HWDP_LIB/desks_lib"
+. "$HWDP_LIB/hooks_lib"
+
+_rt=${XDG_RUNTIME_DIR:-/tmp}/hwdp
+_log=${HWDP_WATCH_LOG:-$_rt/watch.log}
+_bad=0
+say() { printf '%-9s %s\n' "$1" "$2"; }
+bad() { printf '! %-7s %s\n' "$1" "$2"; _bad=1; }
+tilde() { case $1 in "$HOME"/*) printf '~%s\n' "${1#"$HOME"}" ;;
+  *) printf '%s\n' "$1" ;; esac; }
+alive() {  # a running process, not a zombie
+  case "$(ps -o state= -p "${1:-0}" 2>/dev/null)" in ''|Z*) return 1 ;; esac
+}
+session() { [ -n "${WAYLAND_DISPLAY:-}" ]; }
+
+show_desk() {
+  _id=$(hwdp_id)
+  if [ -z "$_id" ]; then
+    bad desk "no panel is attached"
+    return 1
+  fi
+  _nm=$(desk_here | while read -r _k; do
+    desk_table | awk -F"$TAB" -v k="$_k" '$1 == k { print $2; exit }'
+  done | head -1)
+  say desk "${_nm:-(none recorded)} (desk id $(desk_id), shape $(shape))"
+}
+
+show_panels() {
+  if session && _g=$("$HWDP_LIBEXEC/cmd/geometry" --now 2>/dev/null) \
+      && [ -n "$_g" ]; then
+    printf '%s\n' "$_g" | awk '{ printf "%-9s %s %sx%s scale %s, %s\n",
+      (NR == 1 ? "panels" : ""), $1, $2, $3, $5, $10 }'
+  else
+    "$HWDP_LIBEXEC/cmd/panels" 2>/dev/null | awk '{
+      printf "%-9s %s %sx%s (attached)\n", (NR == 1 ? "panels" : ""), $1,
+        $2, $3 }'
+  fi
+}
+
+show_layout() {
+  _p=$(profile_for)
+  if [ -s "$_p" ]; then
+    say layout "$(tilde "$_p")"
+  elif "$HWDP_LIBEXEC/cmd/profile" --missing; then
+    bad layout "none for this desk, which needs one: hwdp arrange"
+  else
+    say layout "none on record; one panel needs none"
+  fi
+}
+
+show_surfaces() {
+  # Resolving needs a session; without one, what the desk file holds.
+  if session; then
+    _n=$("$HWDP_LIBEXEC/cmd/surfaces" 2>/dev/null | grep -c .) || :
+    _w="placed here"
+  else
+    _n=$("$HWDP_LIBEXEC/cmd/surfaces" --raw 2>/dev/null \
+      | grep -c '^surface') || :
+    _w="in the file (unresolved: no session)"
+  fi
+  _gr=$("$HWDP_LIBEXEC/cmd/surfaces" --grid 2>/dev/null | tr ' ' x) || :
+  _f=$("$HWDP_LIBEXEC/cmd/surfaces" --check 2>/dev/null \
+    | sed -n 's/^desk file: //p') || :
+  if [ -z "$_f" ]; then
+    say surfaces "none for this desk"
+  else
+    say surfaces "${_n:-0} $_w, grid ${_gr:--}"
+    say "" "from $(tilde "$_f")"
+  fi
+}
+
+# The supervisor of THIS runtime dir: watch.<pid>.kanshi names it, and the
+# pid must still be a running `cmd/watch`.
+supervisor() {
+  for _f in "$_rt"/watch.*.kanshi; do
+    [ -e "$_f" ] || continue
+    _sp=${_f##*/watch.}; _sp=${_sp%.kanshi}
+    alive "$_sp" || continue
+    tr '\0' ' ' < "/proc/$_sp/cmdline" 2>/dev/null | grep -q 'cmd/watch' \
+      || continue
+    printf '%s\n' "$_sp"
+    return 0
+  done
+  return 1
+}
+
+show_watch() {
+  if ! _sp=$(supervisor); then
+    bad watch "no supervisor is running: hwdp watch"
+    say kanshi "not checked (no supervisor)"
+    return 0
+  fi
+  say watch "running (pid $_sp, since $(ps -o lstart= -p "$_sp" \
+    | awk '{ print $2, $3, $4 }'))"
+  _kp=$(cat "$_rt/watch.$_sp.kanshi" 2>/dev/null) || _kp=
+  if [ -z "$_kp" ] || ! alive "$_kp"; then
+    bad kanshi "not running under the supervisor"
+    return 0
+  fi
+  _v=$(awk '/^configuration for profile .* applied/ { v = $0 }
+    /^no profile matched/ { v = $0 } END { print v }' "$_log" 2>/dev/null)
+  case $_v in
+    *"'autoscale'"*) say kanshi "running (pid $_kp); applied the synthesized\
+ layout (no authored one)" ;;
+    "configuration for profile"*)
+      say kanshi "running (pid $_kp); applied $(printf '%s' "$_v" \
+        | sed "s/^configuration for profile '\([^']*\)'.*/\1/")" ;;
+    "no profile matched"*)
+      bad kanshi "running (pid $_kp), but its last word: no profile matched" ;;
+    *) say kanshi "running (pid $_kp); nothing logged about a profile yet" ;;
+  esac
+}
+
+show_hooks() {
+  _h=
+  for _e in pre changed mapped saved unmapped; do
+    _c=$(count_hooks "$_e")
+    [ "$_c" -gt 0 ] && _h="$_h${_h:+, }$_e $_c"
+  done
+  say hooks "${_h:-none wired}"
+  session && [ -r "$_log" ] || return 0
+  _fl=$(grep -E ': hook [a-z]+\.d/[^ ]+ (failed|is NOT EXECUTABLE)' "$_log" \
+    | sed -E -e 's/^.*: hook ([^ ]+) failed.*/\1 failed/' \
+      -e 's/^.*: hook ([^ ]+) is NOT EXECUTABLE.*/\1 not-executable/' \
+    | sort | uniq -c) || :
+  [ -n "$_fl" ] || return 0
+  bad hooks "since the supervisor started:"
+  printf '%s\n' "$_fl" | awk '{ r = $3; sub(/-/, " ", r)
+    printf "%-9s %s %s (%dx)\n", "", $2, r, $1 }'
+}
+
+show_desk || :
+show_panels
+show_layout
+show_surfaces
+if session; then
+  show_watch
+else
+  say session "none here (no WAYLAND_DISPLAY): watch and kanshi not checked"
+fi
+show_hooks
+exit "$_bad"
