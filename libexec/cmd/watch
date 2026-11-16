@@ -187,7 +187,15 @@ hup_kanshi() {  # reload this session's kanshi, and no one else's
 # fire now AND again after a short settle: the second HUP lands after the reset
 # and makes the re-apply stick. The delayed shot is backgrounded so callers
 # (and the inotify loop) stay snappy; it survives our exit by reparenting.
+#
+# The nudge is said in the SUPERVISOR's log, naming who asked (our parent:
+# bin/hwdp execs this, so it is the caller), or its reloads read there as
+# unexplained: apply-wayfire-runtime nudges at every login. Only into a log
+# that exists; a nudge never creates one.
 nudge() {
+  _by=$(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null | cut -c1-100) || :
+  [ -w "$watch_log" ] && wlog "nudged by pid $PPID (${_by% }): reloading" \
+    "kanshi now and again in 0.4s" 2>>"$watch_log"
   hup_kanshi
   ( sleep 0.4; hup_kanshi ) &
 }

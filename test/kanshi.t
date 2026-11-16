@@ -99,6 +99,15 @@ _wait_for 5 _has "$T/ours.hups" \
   || fail "a nudge did not reload this session's kanshi"
 sleep 1    # the nudge's delayed second shot
 [ -s "$T/foreign.hups" ] && fail "a nudge HUPed another session's kanshi"
+# Said in the supervisor's log, naming the caller (this test), and only into
+# a log that exists: the nudge above found none and must not have made one.
+[ -e "$T/run/hwdp/watch.log" ] && fail "a nudge created the supervisor's log"
+: > "$T/run/hwdp/watch.log"
+( _env "$MGR" watch ) >"$T/nudge.log" 2>&1 || fail "the second nudge failed"
+grep -q "hwdp watch: nudged by pid [0-9]* (.*kanshi\.t.*): reloading" \
+  "$T/run/hwdp/watch.log" \
+  || fail "the nudge is not in the supervisor's log: \
+$(cat "$T/run/hwdp/watch.log")"
 kill "$_ours" "$_holder" 2>/dev/null
 wait "$_ours" "$_holder" 2>/dev/null || :
 pass "a nudge reloads this session's kanshi and no other"
