@@ -116,6 +116,21 @@ HWDP_HOOK_TAG='hwdp watch'
 # A crashed daemon lingers as a <defunct> zombie, still named, still passing
 # kill -0, until reaped, so a dead kanshi looked alive and the watchdog never
 # restarted it (the stuck-outputs bug). Judge life by process STATE.
+# wlog: one timestamped line on stderr, which is the supervisor's log when it
+# runs as the daemon. Timestamped because the log interleaves our lines with
+# kanshi's, and ordering the two is the whole question when a change is lost.
+wlog() { printf '%s hwdp watch: %s\n' "$(date '+%F %T.%3N')" "$*" >&2; }
+# exit_of <pid>: how a child of ours ended, in _xo: `status N`, `running` or
+# `off`. Sets a variable rather than printing, because a `wait` inside $( )
+# runs in a subshell, where the pid is no child of its, and answers 127.
+exit_of() {
+  _xo=off
+  [ -n "$1" ] || return 0
+  if pid_alive "$1"; then _xo=running; return 0; fi
+  wait "$1" 2>/dev/null
+  _xo="status $?"
+}
+
 pid_alive() {  # 0 if the pid is running and not a zombie
   case "$(ps -o state= -p "${1:-0}" 2>/dev/null)" in
     ''|Z*) return 1 ;;
@@ -287,7 +302,7 @@ start_kanshi() {
     i=$((i + 1))
   done
 
-  echo "hwdp watch: kanshi failed to stay up after retries" >&2
+  wlog "kanshi failed to stay up after retries"
   kanshi_pid=""
   : >"$kanshi_pidf"
   return 1
@@ -312,8 +327,7 @@ schedule_unmapped() {
       "$HWDP_LIBEXEC/cmd/profile" --missing >/dev/null 2>&1 || exit 0
       HWDP_ID=$(hwdp_id) || exit 0
       export HWDP_ID
-      echo "hwdp watch: this desk ($HWDP_ID) has no layout profile;" \
-        "firing unmapped" >&2
+      wlog "this desk ($HWDP_ID) has no layout profile; firing unmapped"
       run_hooks unmapped ) 9>&- & )
 }
 
@@ -344,8 +358,8 @@ await_kanshi() {   # <log offset before the reload>
     sleep 0.1
     _aw=$((_aw + 1))
   done
-  echo "hwdp watch: kanshi said nothing about the reload; firing the" \
-    "changed hooks anyway" >&2
+  wlog "kanshi said nothing about the reload; firing the changed hooks" \
+    "anyway"
 }
 
 # React to the layout coming up via the `pre`/`changed` hooks. The pre pass runs
@@ -359,7 +373,13 @@ panel_fingerprint() {
   # providers happen to list connectors in.
   probe_panels 2>/dev/null | sort | cksum
 }
+# The same set in words, for the log: `eDP-1 2880x1800, DP-3 2560x1440`.
+panel_desc() {
+  probe_panels 2>/dev/null | awk -F'\t' '{ print $2 " " $3 "x" $4 }' \
+    | sort | awk '{ s = s (NR > 1 ? ", " : "") $0 } END { print s }'
+}
 panel_fingerprint >"$panels_f"   # before the layout is generated
+wlog "supervisor up (pid $$); panels: $(panel_desc)"
 
 run_hooks pre &
 runtime_pid=$!
@@ -376,10 +396,10 @@ schedule_unmapped
 # manual `hwdp watch` (nudge) still works. Still respawn kanshi if it dies, and
 # the watchdog still exits us when Wayfire goes.
 if ! command -v inotifywait >/dev/null 2>&1; then
-  echo "hwdp watch: inotifywait not found; running without auto-reapply" >&2
+  wlog "inotifywait not found; running without auto-reapply"
   while true; do
     if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
-      echo "hwdp watch: kanshi gone, restarting" >&2
+      wlog "kanshi gone, restarting"
       start_kanshi
     fi
     sleep 5
@@ -444,8 +464,15 @@ schedule_settle() {   # [relayout]
   printf '%s' "$settle_gen" >"$settle_token"
   _g=$settle_gen
   _re=${1:-}
-  ( ( sleep 0.3
-      [ "$(cat "$settle_token" 2>/dev/null)" = "$_g" ] || exit 0
+  wlog "settle $_g scheduled (${_re:+re-generate, }reload, hooks)"
+  ( ( sleep "${HWDP_SETTLE_S:-0.3}"   # a test widens the window
+      _now=$(cat "$settle_token" 2>/dev/null) || _now=
+      if [ "$_now" != "$_g" ]; then
+        if [ -n "$_now" ]; then wlog "settle $_g superseded by $_now"
+        else wlog "settle $_g dropped (cancelled)"; fi
+        exit 0
+      fi
+      wlog "settle $_g runs (${_re:+re-generate, }reload, hooks)"
       # Regenerate BEFORE the hooks and the HUP: a hook asking `hwdp geometry`
       # or reading the runtime config must see the new layout, and kanshi must
       # reload a file that already describes the new set.
@@ -457,7 +484,11 @@ schedule_settle() {   # [relayout]
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
-cancel_settle() { rm -f "$settle_token"; }
+cancel_settle() {
+  [ -e "$settle_token" ] \
+    && wlog "settle $(cat "$settle_token" 2>/dev/null) cancelled"
+  rm -f "$settle_token"
+}
 
 # --- display hotplug: the SECOND writer to the event FIFO -------------------
 # Until this existed `watch` reacted to the compositor CONFIG changing and to
@@ -495,6 +526,7 @@ KANSHI_MARK=__hwdp_kanshi_gone__
 hotplug_poll() {   # <inotify pid>: mark a SET change, or a kanshi death
   _watch_pid=$1
   _prev=$(cat "$panels_f" 2>/dev/null) || _prev=$(panel_fingerprint)
+  _prevd=$(panel_desc)
   _kdead=""
   while kill -0 "$_watch_pid" 2>/dev/null; do
     sleep "$HWDP_HOTPLUG_POLL"
@@ -507,7 +539,9 @@ hotplug_poll() {   # <inotify pid>: mark a SET change, or a kanshi death
     [ "$_now" = "$_prev" ] && continue
     _prev=$_now
     printf '%s\n' "$_now" >"$panels_f"
-    printf '%s\n' "$HOTPLUG_MARK"
+    _nowd=$(panel_desc)
+    printf '%s %s -> %s\n' "$HOTPLUG_MARK" "${_prevd:-none}" "${_nowd:-none}"
+    _prevd=$_nowd
   done
 }
 
@@ -515,7 +549,7 @@ cfgdir=$(dirname "$cfg")
 events="close_write,move_self,delete_self,moved_to,create"
 while true; do
   if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
-    echo "hwdp watch: kanshi gone, restarting" >&2
+    wlog "kanshi gone, restarting"
     start_kanshi
   fi
 
@@ -545,12 +579,14 @@ while true; do
     hotplug_poll "$inotify_pid" >"$fifo" 2>/dev/null &
     hotplug_pid=$!
   fi
+  wlog "watching ${*:-nothing (no config file or dir)}: watcher $inotify_pid," \
+    "poller ${hotplug_pid:-off} every ${HWDP_HOTPLUG_POLL}s"
 
   # Reading the FIFO blocks until the writer opens it, so this rendezvous needs
   # no sleep. The loop ends only when inotifywait (the writer) is gone.
   while IFS= read -r _ev <"$fifo"; do
     if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
-      echo "hwdp watch: kanshi gone, restarting" >&2
+      wlog "kanshi gone, restarting"
       start_kanshi
     fi
     # A DISPLAY change needs the kanshi config REGENERATED, not just reloaded:
@@ -559,8 +595,9 @@ while true; do
     # config change needs no regeneration and does not pay for one.
     case $_ev in
       "$KANSHI_MARK") ;;   # restarted just above; not a display change
-      "$HOTPLUG_MARK")
-        echo "hwdp watch: display set changed, re-generating the layout" >&2
+      "$HOTPLUG_MARK"*)
+        wlog "display set changed (${_ev#"$HOTPLUG_MARK" }), re-generating" \
+          "the layout"
         schedule_settle relayout
         schedule_unmapped ;;
       *) schedule_settle ;;
@@ -568,6 +605,11 @@ while true; do
   done
 
   # Writers gone: drop any pending nudge, back off, let the loop re-arm fresh.
+  # Their exit status says why (141 is SIGPIPE: a write with no reader).
+  # Never wait on one still running: that would hang the supervisor.
+  exit_of "$inotify_pid"; _wx=$_xo
+  exit_of "${hotplug_pid:-}"
+  wlog "the writers ended (watcher $_wx, poller $_xo); re-arming"
   cancel_settle
   [ -n "${hotplug_pid:-}" ] && kill "$hotplug_pid" 2>/dev/null
   hotplug_pid=""
