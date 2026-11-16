@@ -75,6 +75,13 @@ fifo="$_rt/watch.$$.events"
 # number after its sleep stands down, which is how a burst coalesces and how
 # teardown cancels without owning the process.
 settle_token="$_rt/watch.$$.settle"
+# A RE-GENERATION OWED, as a file rather than an argument of one settle: the
+# poller has already moved its baseline when it reports a change, so nothing
+# will report it again, and the settle that runs must re-generate whichever
+# settle asked. It was an argument, and a config event inside the window
+# (a newer settle, no re-generation) stood the hotplug's settle down: kanshi
+# reloaded a config without the new panel (settle.t, 2026-11-15).
+relayout_due="$_rt/watch.$$.relayout"
 settle_gen=0
 
 # The kanshi this supervisor runs (or adopted), for the poller below, which is
@@ -232,7 +239,7 @@ cleanup() {
   # Dropping the token stands down any settle still sleeping; it is detached,
   # so there is nothing of ours left to kill.
   rm -f "$fifo" "$settle_token" "$kanshi_pidf" "$unmapped_token" \
-    "$panels_f"
+    "$panels_f" "$relayout_due"
   exit 0
 }
 trap '' HUP
@@ -288,12 +295,12 @@ start_kanshi() {
   i=0
   while [ "$i" -lt 40 ]; do          # up to ~10s, but exits as soon as it's up
     if [ -n "$_kcfg" ]; then
-      kanshi --config "$_kcfg" 9>&- &
+      kanshi --config "$_kcfg" 9>&- 7<&- &
     else
-      kanshi 9>&- &
+      kanshi 9>&- 7<&- &
     fi
     kanshi_pid=$!
-    sleep 0.25
+    sleep 0.25 9>&-
     if pid_alive "$kanshi_pid"; then
       printf '%s' "$kanshi_pid" >"$kanshi_pidf"
       return 0                       # came up and stayed up -> done immediately
@@ -355,7 +362,7 @@ await_kanshi() {   # <log offset before the reload>
     then
       return 0
     fi
-    sleep 0.1
+    sleep 0.1 9>&-
     _aw=$((_aw + 1))
   done
   wlog "kanshi said nothing about the reload; firing the changed hooks" \
@@ -402,7 +409,7 @@ if ! command -v inotifywait >/dev/null 2>&1; then
       wlog "kanshi gone, restarting"
       start_kanshi
     fi
-    sleep 5
+    sleep 5 9>&-
   done
 fi
 
@@ -463,8 +470,12 @@ schedule_settle() {   # [relayout]
   settle_gen=$((settle_gen + 1))
   printf '%s' "$settle_gen" >"$settle_token"
   _g=$settle_gen
-  _re=${1:-}
+  [ -n "${1:-}" ] && : >"$relayout_due"
+  _re=; [ -e "$relayout_due" ] && _re=1
   wlog "settle $_g scheduled (${_re:+re-generate, }reload, hooks)"
+  # fd 9 CLOSED, like the unmapped timer: a settle still running when the
+  # supervisor exits held the lock through its hooks, and a supervisor
+  # started then only nudged (settle.t, 2026-11-15).
   ( ( sleep "${HWDP_SETTLE_S:-0.3}"   # a test widens the window
       _now=$(cat "$settle_token" 2>/dev/null) || _now=
       if [ "$_now" != "$_g" ]; then
@@ -472,6 +483,8 @@ schedule_settle() {   # [relayout]
         else wlog "settle $_g dropped (cancelled)"; fi
         exit 0
       fi
+      # Taken as it runs: a newer settle may have owed one since.
+      _re=; rm "$relayout_due" 2>/dev/null && _re=1
       wlog "settle $_g runs (${_re:+re-generate, }reload, hooks)"
       # Regenerate BEFORE the hooks and the HUP: a hook asking `hwdp geometry`
       # or reading the runtime config must see the new layout, and kanshi must
@@ -480,7 +493,7 @@ schedule_settle() {   # [relayout]
       _m=$(log_mark)
       hup_kanshi
       await_kanshi "$_m"
-      run_hooks changed ) & )
+      run_hooks changed ) 7<&- 9>&- & )
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
@@ -554,7 +567,7 @@ while true; do
   fi
 
   rm -f "$fifo"
-  mkfifo "$fifo" 2>/dev/null || { sleep 1; continue; }
+  mkfifo "$fifo" 2>/dev/null || { sleep 1 9>&-; continue; }
 
   # WATCH WHAT EXISTS. inotifywait exits at once on a path that does not, and
   # the poller below lives only as long as it: so a session with no config
@@ -574,9 +587,13 @@ while true; do
   fi
   inotify_pid=$!
 
+  # EVERY sleep and child of the supervisor closes fd 9 (the lock): one
+  # killed with the supervisor is orphaned, and a `sleep` still holding the
+  # lock made the next supervisor a mere nudger (settle.t, 2026-11-15; the
+  # watchdog's own `sleep` was the first, see above).
   hotplug_pid=""
   if [ "${HWDP_HOTPLUG_POLL:-0}" != 0 ]; then
-    hotplug_poll "$inotify_pid" >"$fifo" 2>/dev/null &
+    hotplug_poll "$inotify_pid" >"$fifo" 2>/dev/null 9>&- &
     hotplug_pid=$!
   fi
   wlog "watching ${*:-nothing (no config file or dir)}: watcher $inotify_pid," \
@@ -584,7 +601,12 @@ while true; do
 
   # Reading the FIFO blocks until the writer opens it, so this rendezvous needs
   # no sleep. The loop ends only when inotifywait (the writer) is gone.
-  while IFS= read -r _ev <"$fifo"; do
+  # OPENED ONCE, on fd 7, for the whole loop. It was reopened per line, and a
+  # writer writing while the reader had it closed met a pipe with no reader
+  # and died of SIGPIPE: a burst of config events killed inotifywait (status
+  # 141), the writers ended and the loop re-armed (settle.t, 2026-11-15).
+  exec 7<"$fifo"
+  while IFS= read -r _ev <&7; do
     if ! pid_alive "${kanshi_pid:-0}" && ! kanshi_live_pid >/dev/null; then
       wlog "kanshi gone, restarting"
       start_kanshi
@@ -604,15 +626,24 @@ while true; do
     esac
   done
 
+  exec 7<&-
   # Writers gone: drop any pending nudge, back off, let the loop re-arm fresh.
   # Their exit status says why (141 is SIGPIPE: a write with no reader).
   # Never wait on one still running: that would hang the supervisor.
   exit_of "$inotify_pid"; _wx=$_xo
   exit_of "${hotplug_pid:-}"
   wlog "the writers ended (watcher $_wx, poller $_xo); re-arming"
-  cancel_settle
+  # EXCEPT one owing a re-generation: the poller that reported that change
+  # has moved its baseline, so the next one will not report it again, and
+  # dropping it lost the change for good (settle.t, 2026-11-15).
+  if [ -e "$relayout_due" ]; then
+    wlog "keeping settle $(cat "$settle_token" 2>/dev/null): it owes a" \
+      "re-generation"
+  else
+    cancel_settle
+  fi
   [ -n "${hotplug_pid:-}" ] && kill "$hotplug_pid" 2>/dev/null
   hotplug_pid=""
   inotify_pid=""
-  sleep 1
+  sleep 1 9>&-
 done
