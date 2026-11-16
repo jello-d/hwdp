@@ -196,12 +196,15 @@ hup_kanshi() {  # reload this session's kanshi, and no one else's
 # we are then init's child: the first login with this named systemd. So pid 1
 # is said as an exited caller, and a hook's nudge names the hook (HWDP_HOOK,
 # inherited from run_hooks), which outlives the caller in our environment.
+# So is an EMPTY command line: a caller that exited but is not yet reaped is
+# a zombie, which has none (the first dock with this said "pid N ()").
 nudge() {
-  if [ "$PPID" = 1 ]; then
+  _cl=$(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null | cut -c1-100 \
+    | sed 's/ $//') || :
+  if [ "$PPID" = 1 ] || [ -z "$_cl" ]; then
     _by="a caller that had already exited"
   else
-    _by="pid $PPID ($(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null \
-      | cut -c1-100 | sed 's/ $//'))"
+    _by="pid $PPID ($_cl)"
   fi
   [ -n "${HWDP_HOOK:-}" ] && _by="$_by, from the $HWDP_HOOK hook"
   [ -w "$watch_log" ] && wlog "nudged by $_by: reloading kanshi now and" \

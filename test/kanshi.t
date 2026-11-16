@@ -136,6 +136,37 @@ else
   note "orphans here go to pid $_reaper, not 1: the exited-caller line was" \
     "not exercised"
 fi
+# The caller was ALIVE when the nudge started (so $PPID names it) and EXITED
+# before the nudge read its command line, unreaped: a zombie, whose command
+# line is empty, printed as `pid N ()` on the first dock. Forced here by a
+# `flock` stub, which watch runs just before nudging: it kills the caller
+# (the inner python) and only then runs the real flock, while the OUTER
+# python sleeps on without reaping it.
+mkdir -p "$T/zbin"
+cat > "$T/zbin/flock" <<EOF
+#!/bin/sh
+kill "\$(ps -o ppid= -p "\$PPID" | tr -d ' ')"
+sleep 0.3
+exec $(command -v flock) "\$@"
+EOF
+chmod +x "$T/zbin/flock"
+: > "$T/run/hwdp/watch.log"
+python3 -c 'import subprocess, sys, time
+subprocess.Popen([sys.executable, "-c",
+  "import subprocess, sys, time; subprocess.Popen(sys.argv[1:]); "
+  "time.sleep(10)"] + sys.argv[1:])
+time.sleep(4)' env XDG_RUNTIME_DIR="$T/run" WAYLAND_DISPLAY=wayland-test \
+  DISPLAY= KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \
+  HWDP_DRM="$T/drm" HWDP_PROVIDER_ROOT="$T/no-providers" \
+  PATH="$T/zbin:$T/bin:$PATH" "$MGR" watch &
+_zp=$!
+_pids="$_pids $_zp"
+_wait_for 5 grep -q 'nudged by' "$T/run/hwdp/watch.log" \
+  || fail "the zombie caller's nudge was not logged"
+grep -q 'nudged by a caller that had already exited' \
+  "$T/run/hwdp/watch.log" || fail "a zombie caller must be said as exited: \
+$(cat "$T/run/hwdp/watch.log")"
+wait "$_zp" 2>/dev/null || :
 kill "$_ours" "$_holder" 2>/dev/null
 wait "$_ours" "$_holder" 2>/dev/null || :
 pass "a nudge reloads this session's kanshi and no other"
