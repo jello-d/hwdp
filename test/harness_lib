@@ -59,7 +59,22 @@ harness_cleanup() {   # [cmd]
 }
 
 pass() { printf 'ok   %s%s\n' "$TEST_NAME" "${1:+ ($1)}"; }
-fail() { printf 'FAIL %s: %s\n' "$TEST_NAME" "$1" >&2; exit 1; }
+# fail KEEPS THE EVIDENCE: the scratch dir is copied to /var/tmp before the
+# exit trap removes it (logs, stub records, runtime files, the fixture state),
+# and its path is printed. A failure that happens once in fifty runs is only
+# diagnosable from what it left, and the trap used to delete all of it.
+# HWDP_TEST_KEEP=0 turns it off. /var/tmp, not /tmp: it survives a reboot.
+fail() {
+  printf 'FAIL %s: %s\n' "$TEST_NAME" "$1" >&2
+  if [ "${HWDP_TEST_KEEP:-1}" != 0 ] && [ -d "${T:-}" ]; then
+    _kept=/var/tmp/hwdp-fail.$TEST_NAME.$(date +%Y%m%d-%H%M%S).$$
+    # Sockets and fifos may not copy; everything else does, so a partial
+    # copy is still kept and still named.
+    cp -a "$T" "$_kept" 2>/dev/null || :
+    [ -d "$_kept" ] && printf 'kept   %s: %s\n' "$TEST_NAME" "$_kept" >&2
+  fi
+  exit 1
+}
 skip() { printf 'skip %s (%s)\n' "$TEST_NAME" "$1"; exit 0; }
 # note: this run covered LESS than the test can, and says which part. Unlike
 # skip() it does not end the test: it is for partial coverage (a backend not
