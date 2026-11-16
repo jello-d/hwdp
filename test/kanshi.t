@@ -108,6 +108,34 @@ grep -q "hwdp watch: nudged by pid [0-9]* (.*kanshi\.t.*): reloading" \
   "$T/run/hwdp/watch.log" \
   || fail "the nudge is not in the supervisor's log: \
 $(cat "$T/run/hwdp/watch.log")"
+# A nudge from a hook names the hook (HWDP_HOOK, which run_hooks exports).
+: > "$T/run/hwdp/watch.log"
+( HWDP_HOOK=pre.d/10-x; export HWDP_HOOK; _env "$MGR" watch ) \
+  >"$T/nudge.log" 2>&1 || fail "the hook's nudge failed"
+grep -q "nudged by pid [0-9]* (.*), from the pre\.d/10-x hook: reloading" \
+  "$T/run/hwdp/watch.log" \
+  || fail "a hook's nudge must name the hook: $(cat "$T/run/hwdp/watch.log")"
+# A caller that fired and forgot, and EXITED before the nudge started: the
+# nudge is then init's child and must not name init as its caller (the first
+# login with this logging said systemd). Only where orphans go to pid 1; a
+# subreaper would adopt them instead, and that is said, not failed.
+( sleep 3 & echo $! > "$T/orphan.pid" )
+sleep 0.2
+_reaper=$(ps -o ppid= -p "$(cat "$T/orphan.pid")" | tr -d ' ')
+kill "$(cat "$T/orphan.pid")" 2>/dev/null
+if [ "$_reaper" = 1 ]; then
+  : > "$T/run/hwdp/watch.log"
+  ( ( sleep 0.5; _env "$MGR" watch >/dev/null 2>&1 ) & )
+  _wait_for 5 grep -q 'already exited' "$T/run/hwdp/watch.log" \
+    || fail "an exited caller must be said as one: \
+$(cat "$T/run/hwdp/watch.log")"
+  grep -q 'systemd\|init' "$T/run/hwdp/watch.log" \
+    && fail "an exited caller was named as init: \
+$(cat "$T/run/hwdp/watch.log")"
+else
+  note "orphans here go to pid $_reaper, not 1: the exited-caller line was" \
+    "not exercised"
+fi
 kill "$_ours" "$_holder" 2>/dev/null
 wait "$_ours" "$_holder" 2>/dev/null || :
 pass "a nudge reloads this session's kanshi and no other"

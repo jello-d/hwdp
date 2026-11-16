@@ -525,7 +525,10 @@ with
 .B HWDP_SAVED
 the file written, so the desk tool's data can be recorded at once. Every hook
 is told the edge that fired it as
-.BR HWDP_EDGE .
+.B HWDP_EDGE
+and its own name as
+.BR HWDP_HOOK " (" pre.d/10-name ),
+which whatever it starts inherits.
 .PP
 It reacts to the DISPLAY SET changing as well as to the compositor config: the
 connected panels are polled every

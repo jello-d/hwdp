@@ -36,7 +36,9 @@
 #             layout profile exists, and a desk may have surfaces without one.
 #
 # Every hook is told which edge fired it, as HWDP_EDGE, so one executable can
-# serve several edges and still know why it ran.
+# serve several edges and still know why it ran, and which hook it is, as
+# HWDP_HOOK (`pre.d/10-name`): whatever a hook starts inherits it, so a nudge
+# a hook fires and forgets can still be traced to it once the hook is gone.
 #
 # Hooks live in <root>/<edge>.d/* (executable), machine root first then user,
 # each sorted by name, fail-soft. Hooks are expected IDEMPOTENT: the startup
@@ -103,6 +105,7 @@ run_hooks() {   # <edge>; sets HWDP_HOOK_FAILURES
              "leading dot to disable it deliberately)" >&2
         continue
       fi
+      HWDP_HOOK=$_edge.d/$(basename "$_h"); export HWDP_HOOK
       "$_h" 9>&- || {
         HWDP_HOOK_FAILURES=$((HWDP_HOOK_FAILURES + 1))
         echo "${HWDP_HOOK_TAG:-hwdp}: hook $_edge.d/$(basename "$_h")" \

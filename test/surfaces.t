@@ -338,6 +338,10 @@ cat > "$T/home/.config/hwdp/hooks/saved.d/10-rec" <<HOOK
 echo "\$HWDP_EDGE \$HWDP_SAVED" >> "$T/saved.log"
 HOOK
 chmod +x "$T/home/.config/hwdp/hooks/saved.d/10-rec"
+# And told its own name, as HWDP_HOOK.
+printf '#!/bin/sh\necho "$HWDP_HOOK" >> "%s/hook.log"\n' "$T" \
+  > "$T/home/.config/hwdp/hooks/saved.d/20-name"
+chmod +x "$T/home/.config/hwdp/hooks/saved.d/20-name"
 : > "$T/saved.log"
 printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null || fail "--write failed"
 grep -qx "saved $FD" "$T/saved.log" \
@@ -351,6 +355,8 @@ if printf 'surface a DP-9 cell 0 0\n' | wr >/dev/null 2>&1; then
 fi
 [ "$(wc -l < "$T/saved.log")" -eq 2 ] \
   || fail "a refused write must fire nothing: $(cat "$T/saved.log")"
+[ "$(sort -u "$T/hook.log")" = "saved.d/20-name" ] \
+  || fail "a hook must be told its name as HWDP_HOOK: $(cat "$T/hook.log")"
 pass "both writers fire saved with the file, a refused write nothing"
 
 # --- splits: a panel CUT in one cell, kept even with nothing placed -----------

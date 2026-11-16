@@ -192,10 +192,20 @@ hup_kanshi() {  # reload this session's kanshi, and no one else's
 # bin/hwdp execs this, so it is the caller), or its reloads read there as
 # unexplained: apply-wayfire-runtime nudges at every login. Only into a log
 # that exists; a nudge never creates one.
+# A caller that fires and forgets has often EXITED by the time we start, and
+# we are then init's child: the first login with this named systemd. So pid 1
+# is said as an exited caller, and a hook's nudge names the hook (HWDP_HOOK,
+# inherited from run_hooks), which outlives the caller in our environment.
 nudge() {
-  _by=$(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null | cut -c1-100) || :
-  [ -w "$watch_log" ] && wlog "nudged by pid $PPID (${_by% }): reloading" \
-    "kanshi now and again in 0.4s" 2>>"$watch_log"
+  if [ "$PPID" = 1 ]; then
+    _by="a caller that had already exited"
+  else
+    _by="pid $PPID ($(tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null \
+      | cut -c1-100 | sed 's/ $//'))"
+  fi
+  [ -n "${HWDP_HOOK:-}" ] && _by="$_by, from the $HWDP_HOOK hook"
+  [ -w "$watch_log" ] && wlog "nudged by $_by: reloading kanshi now and" \
+    "again in 0.4s" 2>>"$watch_log"
   hup_kanshi
   ( sleep 0.4; hup_kanshi ) &
 }
