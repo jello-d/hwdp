@@ -11,7 +11,12 @@
 harness_init arrange-tui
 command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
 
-_out=$(python3 -I - "$HERE" 2>&1 <<'PY'
+mkdir -p "$T/stub/cmd"
+printf '%s\n' '#!/bin/sh' 'echo "  hwdp surfaces: the REASON" >&2' \
+  'echo "hwdp surfaces: --write: NOT written" >&2' 'exit 2' \
+  > "$T/stub/cmd/surfaces"
+chmod +x "$T/stub/cmd/surfaces"
+_out=$(python3 -I - "$HERE" "$T" 2>&1 <<'PY'
 import curses, importlib.machinery, importlib.util, sys
 here = sys.argv[1]
 loader = importlib.machinery.SourceFileLoader(
@@ -248,8 +253,13 @@ check("s in the exit prompt saves and quits", a.done and not a.dirty())
 a, (p, l), hw = app()
 hw.rc[None] = 2
 a.key(ord("r"), 0); a.key(ord("s"), 0)
-check("a refused save stays, and says why", not a.done and a.dirty()
-      and a.msg == "said no", a.msg)
+check("a refused save stays, and says why in a dialog",
+      not a.done and a.dirty() and a.dialog and a.dialog[0] == "error"
+      and a.dialog[1]["text"] == "said no"
+      and a.msg == "not saved: said no", (a.dialog, a.msg))
+a.key(10, 0)
+check("Enter closes the error, the changes still unsaved",
+      a.dialog is None and a.dirty(), a.dialog)
 
 # A slow save (an integrator's hook) runs BESIDE the screen, which says what
 # it is waiting on and takes no key until it lands.
@@ -296,8 +306,12 @@ check("discarding with a kept preview reverts it first",
 a, (p, l), hw = app()
 hw.rc["--preview"] = 5
 a.key(ord("p"), 0)
-check("a preview with no supervisor says so", a.dialog is None
-      and a.msg == "said no", a.msg)
+check("a preview with no supervisor says so, in a dialog",
+      a.dialog and a.dialog[0] == "error"
+      and a.dialog[1]["title"] == "Not previewed"
+      and a.msg == "not previewed: said no", (a.dialog, a.msg))
+a.key(27, 0)
+check("Esc closes it", a.dialog is None, a.dialog)
 
 a, (p, l), hw = app()
 a.key(ord("i"), 0)
@@ -494,8 +508,39 @@ check("splits load, written and implied",
 a, (p, l), hw = app()
 hw.rc["write"] = 2
 a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
-check("a refused desk write stays and says so", not a.done and a.dirty()
-      and a.msg == "saving the desk: said no", a.msg)
+check("a refused desk write stays and says so, in a dialog",
+      not a.done and a.dirty() and a.dialog and a.dialog[0] == "error"
+      and a.dialog[1]["text"] == "saving the desk: said no", a.dialog)
+
+# The dialog's text: what hwdp said, all of it, the REASON included (the
+# status line once showed only "...the result would be bro", 2026-11-18).
+said = "\n".join(
+    ["  hwdp surfaces: line %d of the new BL.conf: surface `s%d` is "
+     "defined twice" % (20 + i, i) for i in range(30)]
+    + ["hwdp surfaces: --write: no switched-on output named `eDP-1`"] * 3
+    + ["hwdp surfaces: --write: NOT written, the result would be broken"])
+d_ = {"title": "Not saved", "text": said, "top": 0}
+lines = tui.error_lines(d_, 72, 20)
+check("the error dialog leads with its title", lines[0] == "Not saved",
+      lines[:2])
+check("the reasons are there, without the `hwdp surfaces:` prefix",
+      lines[2].startswith("line 20 of the new BL.conf: surface `s0`")
+      and not any("hwdp surfaces:" in x for x in lines), lines[2:4])
+check("every line fits the width it is given",
+      all(len(x) <= 72 for x in lines), max(map(len, lines)))
+check("a taller text scrolls, and says where it is",
+      len(lines) <= 20 and "arrows scroll" in lines[-1], lines[-1])
+d_["top"] = 999
+end = tui.error_lines(d_, 72, 20)
+check("scrolled to the end: the summary is the last line shown",
+      "NOT written, the result would be broken" in end[-3]
+      and "no switched-on output named `eDP-1` (x3)" in end[-4], end[-5:])
+check("scrolling stops at the end", d_["top"] < 999, d_["top"])
+short = tui.error_lines({"title": "Not saved", "text": "said no",
+                         "top": 0}, 72, 20)
+check("a short error is shown whole, with no scroll line",
+      short == ["Not saved", "", "said no", "", "Enter or Esc closes"],
+      short)
 
 d, outs, hw = desk()
 hw.surf = (None, None, "a broken line")
@@ -631,6 +676,28 @@ check("unsaved changes are flagged at the right of the bar",
       top.rstrip().endswith(" unsaved") and len(top.rstrip()) >= 75, top)
 check("the physical tab says the selected panel in full",
       "DP-9 EL 2560x1440 at 320,225  rotate 0" in out, out)
+
+# Drawn: the dialog fits an 80x24 screen and carries the reason.
+hw = FakeHw()
+hw.rc["write"] = 2
+hw.namesv, hw.surf, hw.gridv = NAMES, (three, None, ""), [3, 3]
+app = tui.App(tui.Desk(lap, hw.repack), hw)
+app.fail("Not saved", said)
+scr = Scr(80, 24)
+tui.render(scr, app, 0.0)
+shown = scr.text()
+check("the drawn error dialog shows the first reason",
+      "line 20 of the new BL.conf" in shown, shown)
+check("and fits the screen",
+      all(len(r) <= 80 for r in shown.split("\n")), "too wide")
+
+# The REAL Hwdp keeps all of what hwdp said: the reason comes before the
+# summary, and keeping only the last line is how the reason was lost.
+stub = tui.Hwdp()
+stub.libexec = sys.argv[2] + "/stub"
+rc, _, why = stub._surf("--write", stdin="")
+check("Hwdp keeps the whole complaint, reason first",
+      rc == 2 and "the REASON" in why and why.endswith("NOT written"), why)
 
 print("\n".join(fails) if fails else "ALL-OK")
 PY

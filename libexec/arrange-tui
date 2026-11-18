@@ -62,6 +62,7 @@ import curses
 import os
 import re
 import subprocess
+import textwrap
 import sys
 import threading
 import time
@@ -437,13 +438,13 @@ class Hwdp:
         p = subprocess.Popen(argv + list(placements), stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL,
                              stderr=subprocess.PIPE, text=True, env=env)
-        said = [""]
+        said = []
 
         def read():
             for line in p.stderr:
                 line = line.strip()
                 if line:
-                    said[0] = line
+                    said.append(line)
                     if progress:
                         progress(line)
         # Done when ARRANGE exits, not when its stderr closes: a hook that
@@ -452,12 +453,14 @@ class Hwdp:
         reader.start()
         rc = p.wait()
         reader.join(0.5)
-        return rc, said[0]
+        # All of it on a failure (the reason comes before the summary); the
+        # last line on success, which is what the status line shows.
+        return rc, "\n".join(said) if rc else (said[-1] if said else "")
 
     def _surf(self, *args, stdin=None):
         rc, out, err = self._run(os.path.join(self.libexec, "cmd",
                                               "surfaces"), *args, stdin=stdin)
-        return rc, out, (err.strip().splitlines() or ["exit %d" % rc])[-1]
+        return rc, out, err.strip() or "exit %d" % rc
 
     def surfaces(self, desk):
         """(placements, default, why) for this desk, as the tool edits them;
@@ -701,7 +704,7 @@ class OfflineHwdp(Hwdp):
         rc, out, err = self._run(os.path.join(self.libexec, "cmd", "profile"),
                                  "--write", self.key,
                                  stdin="\n".join(recs) + "\n")
-        return rc, (err.strip().splitlines() or [""])[-1]
+        return rc, err.strip()
 
     def identify(self, on):
         return False
@@ -789,7 +792,7 @@ class App:
         surf, default, why = hw.surfaces(desk)
         # Files `hwdp surfaces` refuses are NOT edited on top of: rewriting
         # them from what the tool could read would drop what it could not.
-        self.names_blocked = why if surf is None else ""
+        self.names_blocked = brief(why) if surf is None else ""
         self.surfaces = surf or []
         self.default = default
         # {(panel, cx, cy): split}: written ones, then any a placed half
@@ -983,7 +986,7 @@ class App:
         if rc == 0:
             self.dialog = ("keep", now + PREVIEW_SECONDS)
         else:
-            self.msg = why or "preview failed (%d)" % rc
+            self.fail("Not previewed", why or "preview failed (%d)" % rc)
 
     def _revert(self, why):
         self.hw.arrange("--revert", [])
@@ -1018,7 +1021,12 @@ class App:
         def step(what, call, *args):
             self.busy[0] = what
             rc, why = call(*args)
-            return "" if rc == 0 else "%s: %s" % (what, why or "exit %d" % rc)
+            if rc == 0:
+                return ""
+            why = why or "exit %d" % rc
+            # A reason of several lines starts on its own line, so each is
+            # read as one (and loses its `hwdp <cmd>:` prefix in the dialog).
+            return "%s:%s%s" % (what, "\n" if "\n" in why else " ", why)
 
         def work():
             if layout:
@@ -1048,7 +1056,10 @@ class App:
                 self._mark_saved()
                 if upto == "desk":           # the list still holds `keep`
                     self.saved_names = names + keep
-            self.msg = why or "saved"
+            if why:
+                self.fail("Not saved", why)
+            else:
+                self.msg = "saved"
             self.done = then_exit and not why
         self.job = self.spawn(work, finish)
         self._landed()
@@ -1411,8 +1422,28 @@ class App:
         else:
             self._quit(now, ESC)
 
+    def fail(self, title, why):
+        """A failure, in a dialog sized to what it says: the reasons come
+        before hwdp's one-line summary, and the status line has room for
+        neither (it showed "...the result would be bro", 2026-11-18)."""
+        self.dialog = ("error", {"title": title, "text": why, "top": 0})
+        self.msg = "%s: %s" % (title.lower(), brief(why))
+
     def _dialog_key(self, k, now):
         kind = self.dialog[0]
+        if kind == "error":
+            d = self.dialog[1]
+            if k in ENTER or k in (ESC, ord("q")):
+                self.dialog = None
+            elif k in (curses.KEY_DOWN, ord("j")):
+                d["top"] += 1
+            elif k in (curses.KEY_UP, ord("k")):
+                d["top"] = max(0, d["top"] - 1)
+            elif k == curses.KEY_NPAGE:
+                d["top"] += 10
+            elif k == curses.KEY_PPAGE:
+                d["top"] = max(0, d["top"] - 10)
+            return
         if kind == "name":
             return self._form_key(k)
         if kind == "pick":
@@ -1603,6 +1634,9 @@ def draw_dialog(scr, app, now):
                 "", "y  join it", "Esc  keep the split"]
     elif kind == "pick":
         text = pick_lines(app)
+    elif kind == "error":
+        h, w = scr.getmaxyx()
+        text = error_lines(arg, w - 8, h - 4)
     elif kind == "quit":
         text = (["Unsaved changes.", ""] +
                 [("> " if arg == key else "  ") + line for key, line in QUIT]
@@ -1622,6 +1656,42 @@ def box(scr, text):
     frame(scr, y0, x0, bw, len(text) + 2, attr, fill=True)
     for i, t in enumerate(text):
         put(scr, y0 + 1 + i, x0 + 3, t, attr)
+
+
+def brief(why):
+    """One line of WHY for the status line: hwdp's own summary, its last."""
+    lines = [ln for ln in (why or "").splitlines() if ln.strip()]
+    return lines[-1].strip() if lines else ""
+
+
+def error_lines(d, width, height):
+    """The error dialog's text: D's title, then what hwdp said, its
+    `hwdp <cmd>: ` prefixes dropped, a run of the same line said once with
+    its count, wrapped to WIDTH, and scrolled from d["top"] when it is
+    taller than HEIGHT (which clamps d["top"])."""
+    said, runs = [], []
+    for ln in d["text"].splitlines():
+        ln = re.sub(r"^\s*hwdp [a-z-]+: ", "", ln).strip()
+        if not ln:
+            continue
+        if runs and runs[-1][0] == ln:
+            runs[-1][1] += 1
+        else:
+            runs.append([ln, 1])
+    for ln, n in runs:
+        ln = ln if n == 1 else "%s (x%d)" % (ln, n)
+        said += textwrap.wrap(ln, max(20, width - 6),
+                              subsequent_indent="  ") or [""]
+    foot = ["", "Enter or Esc closes"]
+    room = max(1, height - 4 - len(foot))
+    if len(said) > room:
+        d["top"] = min(d["top"], len(said) - room)
+        shown = said[d["top"]:d["top"] + room]
+        foot = ["", "lines %d-%d of %d   arrows scroll   Enter or Esc closes"
+                % (d["top"] + 1, d["top"] + len(shown), len(said))]
+    else:
+        d["top"], shown = 0, said
+    return [d["title"], ""] + shown + foot
 
 
 def pick_lines(app):
