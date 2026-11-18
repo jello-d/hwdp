@@ -280,8 +280,17 @@ write_file() {
       grep '^[ \t]*grid[ \t]' "$_file" | head -1 > "$_wd/kept" || :
     fi
   elif [ -n "$_file" ]; then
-    awk -F"$TAB" -v grid="$(grep -c '^grid[ \t]' "$_wd/given" || :)" '
-      FILENAME == ARGV[1] { ON[$2] = 1; next }
+    # The built-in has TWO spellings, its EDID name and "@builtin", and the
+    # file read may use the other one from the lines given (a laptop alone
+    # writes by EDID name over a generic file's "@builtin"). Either switched
+    # on means both, or every line on it was kept AND given, and the result
+    # refused as each surface "defined twice" (dragonfly, 2026-11-18).
+    awk -F"$TAB" -v grid="$(grep -c '^grid[ \t]' "$_wd/given" || :)" \
+        -v bn="${_bn:-}" '
+      FILENAME == ARGV[1] { ON[$2] = 1
+        if (bn != "" && ($2 == bn || $2 == "@builtin")) {
+          ON[bn] = 1; ON["@builtin"] = 1 }
+        next }
       /^[ \t]*grid[ \t]/ { if (grid == 0) print; next }
       match($0, /^[ \t]*(surface|default)[ \t]+[^ \t]+[ \t]+"[^"]+"/) \
           || match($0, /^[ \t]*split[ \t]+"[^"]+"/) {
@@ -305,7 +314,11 @@ write_file() {
   if ! HWDP_DESKS=$_wd HWDP_SURFACES=$_wd/none HWDP_DESK=$_desk "$0" \
       >/dev/null 2>"$_wd/err"
   then
-    sed 's/^/  /' "$_wd/err" >&2
+    # The candidate is a scratch file, so its PATH says nothing: name the
+    # line of the desk file it would have become.
+    _at="s|$_wd/$_desk\\.conf:\\([0-9][0-9]*\\): |"
+    sed -e "${_at}line \\1 of the new $_desk.conf: |" -e 's/^/  /' \
+      "$_wd/err" >&2
     echo "hwdp surfaces: --write: NOT written, the result would be broken" >&2
     return 2
   fi

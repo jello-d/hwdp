@@ -281,6 +281,26 @@ code eDP-1 1 0 0 0 2880 1800" ] \
   || fail "a laptop alone must find BL.conf, @builtin its panel: $_o"
 pass "a desk with no file of its own finds the generic one for its kind"
 
+# And WRITES over it, the whole desk by connector as the tool sends it: the
+# built-in is "@builtin" in the generic file and its EDID name in the lines
+# given, two spellings of ONE switched-on panel. Kept as a panel not switched
+# on, every line came out twice and the save was refused "defined twice"
+# (dragonfly, 2026-11-18, growing BL to 4x3).
+_lw=$(printf '%s\n' 'grid 4 3' 'surface comms eDP-1 cell 0 0 full' \
+  'surface code eDP-1 cell 1 0 full' 'surface spare eDP-1 cell 3 0 full' \
+  | env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+  WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
+  HWDP_PROVIDER_ROOT="$T/no-user" HWDP_DRM="$T/drm-laptop" \
+  XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" HWDP_DESKS="$T/desks" \
+  ONLY_LAPTOP=yes sh "$KA" surfaces --write 2>&1) \
+  || fail "a laptop alone could not write over the generic BL file: $_lw"
+_lf=$(ls "$T/desks"/*.conf | grep -v -e '/BL.conf$' -e '/BL+EL+EP.conf$' \
+  | head -1)
+[ "$(grep -c '^surface ' "$_lf")" -eq 3 ] \
+  || fail "a laptop's own file must hold each surface once: $(cat "$_lf")"
+rm -f "$_lf"
+pass "a laptop alone writes over the generic file, each surface once"
+
 # --write from a generic file: it writes THIS desk's file and keeps the grid,
 # and the generic file is left exactly as it was.
 printf '%s\n' 'grid 3 3' 'surface comms "@builtin" cell 0 0' \
@@ -292,6 +312,21 @@ grep -qx 'grid 3 3' "$FD" || fail "--write must keep the grid: $(cat "$FD")"
 [ "$(cksum < "$T/desks/BL+EL+EP.conf")" = "$_g" ] \
   || fail "--write must never change the generic file"
 pass "--write writes this desk's own file, keeping the generic one's grid"
+
+# The mirror image, docked: the desk's own file names the laptop by its EDID
+# name, the lines given say "@builtin" (its role at a desk). Still one panel.
+# The desk file is restored after: later cases read what it held.
+cp "$FD" "$T/fd.keep"
+printf '%s\n' 'grid 3 3' 'surface ref "Acme LAPTOP SN1" cell 2 1 right' \
+  > "$FD"
+printf '%s\n' 'surface ref eDP-1 cell 2 1 right' \
+  'surface code DP-2 cell 1 0' | wr >/dev/null 2>"$T/err" \
+  || fail "docked, a file naming the laptop by EDID was refused: \
+$(cat "$T/err")"
+[ "$(grep -c '^surface ref ' "$FD")" -eq 1 ] \
+  || fail "the laptop's surface must be written once: $(cat "$FD")"
+cp "$T/fd.keep" "$FD"
+pass "docked, a file naming the laptop by EDID name is replaced, not doubled"
 
 # --- --write-names: the one writer of the global list -------------------------
 # A name ANY desk file still places cannot be dropped (the list is global, so
