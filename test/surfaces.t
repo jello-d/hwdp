@@ -145,7 +145,7 @@ _refuse "an unknown region" 'surface m "Dell WIDE SN3" cell 0 0 middle' \
 _refuse "an unquoted panel" 'surface m Dell cell 0 0' \
   'the panel must be a quoted EDID name'
 _refuse "not a surface line" 'surfaces m "Dell WIDE SN3" cell 0 0' \
-  'expected `grid`, `surface`, `split` or `default`'
+  'expected `grid`, `surface`, `split`, `wallpaper` or `default`'
 # Opposite halves in one cell are NOT a clash (comms + mail above prove it);
 # the same half in a DIFFERENT cell is not either.
 printf 'surface late "Dell PORTRAIT SN2" cell 5 5 bottom\n' >> "$F"
@@ -437,3 +437,59 @@ printf 'surface comms DP-1 cell 0 0 top\nsurface code DP-1 cell 0 0 bottom\n' \
   | wr >/dev/null || fail "halves with no split line must still be accepted"
 [ -z "$(run --splits)" ] || fail "an implied split is not a written one"
 pass "splits: written, resolved, raw, enforced, per cell, kept when unseen"
+
+# --- wallpapers: one per workspace, per desk, by their own writer ------------
+# `X Y FILE` in, `wallpaper cell X Y FILE` in the desk file, `X Y FILE` out
+# (the shape a wallpaper map already has), cells inside the grid only. The
+# surfaces writer keeps them; this one keeps everything else.
+ww() {
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+    WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
+    HWDP_PROVIDER_ROOT="$T/no-user" HWDP_DRM="$T/drm" \
+    XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" HWDP_DESKS="$T/desks" \
+    ${DESK:+HWDP_DESK="$DESK"} LAPTOP_ON=yes \
+    sh "$KA" surfaces --write-wallpapers
+}
+printf 'grid 3 2\nsurface code DP-1 cell 1 0\n' | wr >/dev/null \
+  || fail "a desk to put wallpapers on was refused"
+_surf_before=$(grep '^surface ' "$FD")
+: > "$T/saved.log"
+printf '%s\n' '0 0 bubbles.jpg' '1 0 night sky.png' '2 1 sub/fog.jpg' \
+  | ww >/dev/null 2>"$T/err" \
+  || fail "--write-wallpapers failed: $(cat "$T/err")"
+[ "$(run --wallpapers)" = "$(printf '0 0 bubbles.jpg\n1 0 night sky.png
+2 1 sub/fog.jpg')" ] || fail "--wallpapers: '$(run --wallpapers)'"
+[ "$(grep '^surface ' "$FD")" = "$_surf_before" ] \
+  || fail "--write-wallpapers changed the surfaces: $(cat "$FD")"
+grep -qx "saved $FD" "$T/saved.log" \
+  || fail "--write-wallpapers must fire saved: $(cat "$T/saved.log")"
+printf 'surface code DP-2 cell 1 0\n' | wr >/dev/null || fail "a rewrite failed"
+[ "$(run --wallpapers | wc -l)" -eq 3 ] \
+  || fail "--write dropped the wallpapers: $(cat "$FD")"
+_before=$(cksum < "$FD")
+for _bad in '0 0 /etc/passwd' '0 0 ../up.jpg' '0 x a.jpg' '1 1'; do
+  printf '%s\n' '0 1 fine.jpg' "$_bad" | ww >/dev/null 2>&1 \
+    && fail "--write-wallpapers took a bad line: $_bad"
+done
+printf '0 0 a.jpg\n0 0 b.jpg\n' | ww >/dev/null 2>"$T/err" \
+  && fail "--write-wallpapers took one cell twice"
+grep -q 'cell 0 0 is set twice' "$T/err" || fail "say the cell: $(cat "$T/err")"
+[ "$(cksum < "$FD")" = "$_before" ] || fail "a refusal must leave the file"
+# Outside the grid: kept (a shrink must not break the file), not published,
+# and --check says so.
+printf '0 0 a.jpg\n5 5 far.jpg\n' | ww >/dev/null \
+  || fail "a wallpaper outside the grid was refused"
+[ "$(run --wallpapers)" = "0 0 a.jpg" ] \
+  || fail "a wallpaper outside the grid was published: $(run --wallpapers)"
+run --check 2>&1 | grep -q 'wallpaper for cell 5 5 is outside the grid' \
+  || fail "--check must note it: $(run --check 2>&1)"
+: | ww >/dev/null || fail "clearing the wallpapers failed"
+[ -z "$(run --wallpapers)" ] || fail "nothing given must clear them"
+grep -q '^wallpaper' "$FD" && fail "cleared wallpapers left lines: $(cat "$FD")"
+# Away from the desk: the same writer, by HWDP_DESK.
+_k=$(basename "$FD" .conf)
+printf '1 1 away.jpg\n' | DESK=$_k ww >/dev/null 2>"$T/err" \
+  || fail "--write-wallpapers away from the desk: $(cat "$T/err")"
+grep -qx 'wallpaper cell 1 1 away.jpg' "$FD" \
+  || fail "the named desk did not get it: $(cat "$FD")"
+pass "wallpapers: written, published in the grid, kept, refused whole, cleared"

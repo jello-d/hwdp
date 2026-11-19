@@ -397,7 +397,8 @@ away from it), through the same writer as arrange and capture, fires
 with HWDP_SAVED set to the profile, and refreshes a running session's kanshi
 config, which carries every desk.
 .TP
-.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-raw|\-\-check|\-\-write]
+.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-wallpapers|\-\-raw|\
+\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each (eight fields, FROZEN: a consumer refuses any other count):
 .IP
@@ -455,6 +456,20 @@ per panel and cell (switched-on panels only). A
 line keeps a cut with nothing placed in it yet; a surface there must be one
 of its halves. Each cell decides for itself, and a half with no split line (a
 file from before splits) implies its split.
+A
+.I "wallpaper cell <x> <y> <file>"
+line picks the wallpaper of that workspace, a file in the wallpaper directory
+(the integrator's), relative to it;
+.B \-\-wallpapers
+prints
+.I "X Y FILE"
+for the cells inside the grid (one outside is kept, not used), nothing when
+the desk sets none, and every other cell keeps its default.
+.B \-\-write\-wallpapers
+replaces them from
+.I "X Y FILE"
+lines on stdin, the rest of the desk file untouched; the surfaces writer
+keeps them.
 .IP
 hwdp owns which part of which panel a name means at a desk, since only it can
 turn a fraction of a panel into pixels at the scale in force; what a name means

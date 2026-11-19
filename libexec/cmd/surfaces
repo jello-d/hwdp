@@ -22,6 +22,13 @@
 #   --check   validate the files and report, in words, instead of resolving
 #   --write   replace this desk's file from lines on stdin (see write_file)
 #   --write-names  replace the names list from stdin (see write_names)
+#   --wallpapers   this desk's wallpaper per workspace, `X Y FILE`, the
+#             cells inside its grid only; FILE is relative to the wallpaper
+#             directory (the integrator's), as a wallpaper map writes it.
+#             Nothing when the desk sets none: every cell keeps its default
+#   --write-wallpapers  replace this desk's wallpapers from `X Y FILE` lines
+#             on stdin, every other line of the desk file kept as it is
+#             (see write_wallpapers)
 #   --splits  the panels CUT in two, `CONNECTOR CX CY top-bottom|left-right`
 #             per panel and cell, switched-on panels only (see `split`)
 #   --raw     the desk file's own lines, unresolved, TAB-separated:
@@ -104,6 +111,8 @@ case "${1:-}" in
   --check) MODE=check ;;
   --write) MODE='write' ;;
   --write-names) MODE=write-names ;;
+  --wallpapers) MODE=wallpapers ;;
+  --write-wallpapers) MODE=write-wallpapers ;;
   --raw)   MODE=raw ;;
   --splits) MODE=splits ;;
   -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
@@ -216,15 +225,7 @@ write_file() {
     echo "hwdp surfaces: writing needs a session (to resolve connectors)" >&2
     return 3
   fi
-  mkdir -p "$DESKS"
-  _wd=$(mktemp -d "$DESKS/.write.XXXXXX") || _wd=
-  case $_wd in
-    "$DESKS"/.write.?*) [ -d "$_wd" ] ;;
-    *) false ;;
-  esac || { echo "hwdp surfaces: no temp dir in $DESKS" >&2; return 1; }
-  _wq="'$_wd'"
-  # shellcheck disable=SC2064  # the literal path, baked in when armed
-  trap "rm -rf $_wq" EXIT INT TERM
+  desk_scratch || return 1
 
   # connector -> EDID name, for the outputs switched on now; at a desk the
   # built-in by its ROLE, so the file serves whichever laptop is docked.
@@ -298,39 +299,104 @@ write_file() {
         sub(/"$/, "", p); if (!(p in ON)) print
       }' "$_wd/names" "$_file" > "$_wd/kept"
   fi
-  { echo "# this desk, written by hwdp surfaces --write:"
-    echo "#   grid <w> <h>"
-    echo "#   split \"<EDID name>\" cell <x> <y> top-bottom|left-right"
-    echo "#   surface <name> \"<EDID name>\" cell <x> <y> [region]"
-    echo "#   default <name> \"<EDID name>\" [region]"
-    echo "#   region: top bottom left right full (halves; default full)"
+  # The wallpapers are written by --write-wallpapers, never here: kept as
+  # they are, whichever desk is written, or a desk save would drop them.
+  if [ -n "$_file" ]; then
+    grep '^[ \t]*wallpaper[ \t]' "$_file" >> "$_wd/kept" || :
+  fi
+  { desk_header
     grep '^[ \t]*grid[ \t]' "$_wd/given" "$_wd/kept" | sed 's/^[^:]*://' \
       | head -1
     grep -v '^[ \t]*grid[ \t]' "$_wd/given" || :
     grep -v '^[ \t]*grid[ \t]' "$_wd/kept" || :
   } > "$_wd/$_desk.conf"
-  # Validated by this same command, against the candidate, before anything
-  # is replaced.
-  if ! HWDP_DESKS=$_wd HWDP_SURFACES=$_wd/none HWDP_DESK=$_desk "$0" \
-      >/dev/null 2>"$_wd/err"
+  install_desk "$_wd" --write
+}
+
+# desk_header: the comment every desk file this command writes begins with.
+desk_header() {
+  echo "# this desk, written by hwdp surfaces --write:"
+  echo "#   grid <w> <h>"
+  echo "#   split \"<EDID name>\" cell <x> <y> top-bottom|left-right"
+  echo "#   surface <name> \"<EDID name>\" cell <x> <y> [region]"
+  echo "#   default <name> \"<EDID name>\" [region]"
+  echo "#   wallpaper cell <x> <y> <file in the wallpaper directory>"
+  echo "#   region: top bottom left right full (halves; default full)"
+}
+
+# desk_scratch: a scratch dir beside the desk files, removed on exit, in _wd.
+desk_scratch() {
+  mkdir -p "$DESKS"
+  _wd=$(mktemp -d "$DESKS/.write.XXXXXX") || _wd=
+  case $_wd in
+    "$DESKS"/.write.?*) [ -d "$_wd" ] ;;
+    *) false ;;
+  esac || { echo "hwdp surfaces: no temp dir in $DESKS" >&2; return 1; }
+  _wq="'$_wd'"
+  # shellcheck disable=SC2064  # the literal path, baked in when armed
+  trap "rm -rf $_wq" EXIT INT TERM
+}
+
+# install_desk <scratch dir> <verb>: the candidate <dir>/<desk>.conf is
+# validated by this same command before anything is replaced, refused whole
+# (exit 2) if broken; else the old file is kept in the state dir and the
+# candidate moved into place, its path printed, and `saved` fired. The ONE
+# tail of both writers, so they cannot validate or record differently.
+install_desk() {
+  if ! HWDP_DESKS=$1 HWDP_SURFACES=$1/none HWDP_DESK=$_desk "$0" \
+      >/dev/null 2>"$1/err"
   then
     # The candidate is a scratch file, so its PATH says nothing: name the
     # line of the desk file it would have become.
-    _at="s|$_wd/$_desk\\.conf:\\([0-9][0-9]*\\): |"
+    _at="s|$1/$_desk\\.conf:\\([0-9][0-9]*\\): |"
     sed -e "${_at}line \\1 of the new $_desk.conf: |" -e 's/^/  /' \
-      "$_wd/err" >&2
-    echo "hwdp surfaces: --write: NOT written, the result would be broken" >&2
+      "$1/err" >&2
+    echo "hwdp surfaces: $2: NOT written, the result would be broken" >&2
     return 2
   fi
   _dst=$DESKS/$_desk.conf
-  if [ -f "$_dst" ] && ! cmp -s "$_wd/$_desk.conf" "$_dst"; then
+  if [ -f "$_dst" ] && ! cmp -s "$1/$_desk.conf" "$_dst"; then
     _bk=${XDG_STATE_HOME:-${HOME:-}/.local/state}/hwdp/surfaces
     mkdir -p "$_bk"
     cp -p "$_dst" "$_bk/$_desk.conf.bak"
   fi
-  mv "$_wd/$_desk.conf" "$_dst"
+  mv "$1/$_desk.conf" "$_dst"
   printf '%s\n' "$_dst"
   fire_saved "$_dst"
+}
+
+# write_wallpapers: REPLACE this desk's wallpapers from `X Y FILE` lines on
+# stdin (none clears them), the ONE writer of them. Every other line of the
+# file read stays exactly as it was, and it always writes THIS desk's own
+# file, as --write does. FILE is a file in the wallpaper directory, which is
+# the integrator's: relative, no `..`. Refused whole on a bad line; a cell
+# outside the grid is NOT refused (a grid shrunk later must not make the
+# file invalid), only left unpublished.
+write_wallpapers() {
+  desk_scratch || return 1
+  awk '/^[ \t]*(#|$)/ { next }
+    {
+      line = $0; sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+      if (!match(line, /^[0-9]+[ \t]+[0-9]+[ \t]+[^ \t]/)) {
+        print "hwdp surfaces: --write-wallpapers: expected `X Y FILE`: " \
+          $0 > "/dev/stderr"; bad = 1; next
+      }
+      f = line; sub(/^[0-9]+[ \t]+[0-9]+[ \t]+/, "", f)
+      if (f ~ /^\// || f ~ /(^|\/)\.\.(\/|$)/) {
+        print "hwdp surfaces: --write-wallpapers: `" f "` is not a file" \
+          " in the wallpaper directory" > "/dev/stderr"; bad = 1; next
+      }
+      print "wallpaper cell " $1 " " $2 " " f
+    }
+    END { exit bad ? 2 : 0 }' > "$_wd/given" || return 2
+  { desk_header
+    if [ -n "$_file" ]; then
+      grep -v -e '^[ \t]*#' -e '^[ \t]*$' -e '^[ \t]*wallpaper[ \t]' \
+        "$_file" || :
+    fi
+    cat "$_wd/given"
+  } > "$_wd/$_desk.conf"
+  install_desk "$_wd" --write-wallpapers
 }
 
 
@@ -364,6 +430,23 @@ fi
 if [ "$MODE" = write ]; then
   write_file
   exit $?
+fi
+if [ "$MODE" = write-wallpapers ]; then
+  write_wallpapers
+  exit $?
+fi
+if [ "$MODE" = wallpapers ]; then
+  [ -n "$_file" ] || exit 0
+  awk '$1 == "grid" && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && !gw {
+         gw = $2; gh = $3 }
+    $1 == "wallpaper" && $2 == "cell" && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {
+      f = $0; sub(/^[ \t]*wallpaper[ \t]+cell[ \t]+/, "", f)
+      sub(/^[0-9]+[ \t]+[0-9]+[ \t]+/, "", f); sub(/[ \t]+$/, "", f)
+      n++; X[n] = $3; Y[n] = $4; F[n] = f }
+    END { for (i = 1; i <= n; i++)
+            if (!gw || (X[i] + 0 < gw && Y[i] + 0 < gh))
+              print X[i], Y[i], F[i] }' "$_file"
+  exit 0
 fi
 if [ "$MODE" = grid ]; then
   [ -n "$_file" ] || exit 0

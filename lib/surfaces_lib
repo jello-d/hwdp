@@ -150,8 +150,29 @@ surfaces_resolve() {
       SPL[k] = w; ns++; KP[ns] = PN; KX[ns] = c[2]; KY[ns] = c[3]
       KW[ns] = w; KL[ns] = FNR; next
     }
+    if (kw == "wallpaper") {
+      # The wallpaper of one workspace: a FILE in the wallpaper directory,
+      # which the integrator owns. Outside the grid is not an error (a grid
+      # shrunk later must not break the file); --wallpapers leaves it out.
+      if (!match(line, /^cell[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+[^ \t]/)) {
+        err("wallpaper: expected `cell <x> <y> <file>`"); next
+      }
+      split(line, c, /[ \t]+/); wf = line
+      sub(/^cell[ \t]+[0-9]+[ \t]+[0-9]+[ \t]+/, "", wf)
+      sub(/[ \t]+$/, "", wf)
+      if (wf ~ /^\// || wf ~ /(^|\/)\.\.(\/|$)/) {
+        err("wallpaper: `" wf "` is not a file in the wallpaper directory")
+        next
+      }
+      k = c[2] SUBSEP c[3]
+      if (k in WALL) {
+        err("wallpaper: cell " c[2] " " c[3] " is set twice"); next
+      }
+      WALL[k] = wf; nwp++; WX[nwp] = c[2]; WY[nwp] = c[3]; next
+    }
     if (kw != "surface") {
-      err("expected `grid`, `surface`, `split` or `default`"); next
+      err("expected `grid`, `surface`, `split`, `wallpaper` or `default`")
+      next
     }
     if (!name_panel(line, "surface")) next
     if (!match(REST, /^[ \t]+cell[ \t]+[0-9]+[ \t]+[0-9]+/)) {
@@ -197,6 +218,11 @@ surfaces_resolve() {
       exit 2
     }
     if (mode == "check" && GW) print "grid  " GW "x" GH
+    if (mode == "check")
+      for (i = 1; i <= nwp; i++)
+        if (GW && (WX[i] + 0 >= GW || WY[i] + 0 >= GH))
+          note("the wallpaper for cell " WX[i] " " WY[i] " is outside the" \
+            " grid (" GW "x" GH "); not used")
     # --check lines up its names: as wide as the longest (12 at least).
     nw = (length(DN) > 12) ? length(DN) : 12
     for (i = 1; i <= n; i++) if (length(SN[i]) > nw) nw = length(SN[i])
