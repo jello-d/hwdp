@@ -618,9 +618,9 @@ def faint_and_lit():
     top, bottom = rgb(12, 12), rgb(12, 88)
     check("over a picture a placed surface has no tint: grey, about half",
           top[0] == top[1] == top[2] and abs(top[0] - 128) <= 3, top)
-    check("and the selected spot shows it stronger, about three quarters",
+    check("and the selected spot shows it whole",
           bottom[0] == bottom[1] == bottom[2]
-          and abs(bottom[0] - 191) <= 3, bottom)
+          and abs(bottom[0] - 255) <= 3, bottom)
 
 def surfaces_tab(w, a, hw):
     key(w, Gdk.KEY_2)

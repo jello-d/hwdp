@@ -93,7 +93,8 @@ PREVIEW_SPAN = 960  # the whole desk this many pixels across, for slices
 PREVIEW_WAIT = 400  # ms of no change before a preview is cut
 THUMB = (128, 72)   # the picker's thumbnails
 SLICE_ALPHA = 0.5   # a cell's wallpaper, faint, so the names stand out
-LIT_ALPHA = 0.75    # ... and the selected spot's part of it, stronger
+LIT_ALPHA = 1.0     # ... and the selected spot's part of it, whole (its
+                    # label has a backing; 75% read too close to 50%)
 FRACTION = {r: f for f, r in REGION_OF.items()}         # region -> x y w h
 
 
@@ -360,9 +361,9 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
 
     WITH A WALLPAPER the picture carries it all, on the plain background:
     faint (SLICE_ALPHA), surfaces untinted so no colour sits on it, and the
-    selected spot's part stronger (LIT_ALPHA) with a thin outline, which a
-    dark or even picture needs to show the spot at all. Without one the
-    accent tints say which parts are placed and which is selected."""
+    selected spot's part at full strength (LIT_ALPHA) with a thin outline,
+    which a dark or even picture needs to show the spot at all. Without one
+    the accent tints say which parts are placed and which is selected."""
     if img is not None:
         paint(cr, img, b)
         if lit:
