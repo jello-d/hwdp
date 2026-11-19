@@ -494,6 +494,37 @@ class Hwdp:
         f = out.split()
         return (int(f[0]), int(f[1])) if rc == 0 and len(f) == 2 else None
 
+    def wallpapers(self):
+        """{(cx, cy): file}, this desk's wallpapers inside its grid; empty
+        when it sets none (every cell keeps its default)."""
+        rc, out, _ = self._surf("--wallpapers")
+        found = {}
+        for ln in out.splitlines() if rc == 0 else []:
+            f = ln.split(None, 2)
+            if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+                found[(int(f[0]), int(f[1]))] = f[2]
+        return found
+
+    def wallpaper_images(self):
+        """The images a workspace can take: the files in the wallpaper
+        directory (HWDP_WALLPAPER_DIR, else ~/Pictures/wallpaper, which is
+        where the integrator points the plugin), by name."""
+        d = os.environ.get("HWDP_WALLPAPER_DIR") or os.path.expanduser(
+            "~/Pictures/wallpaper")
+        try:
+            names = os.listdir(d)
+        except OSError:
+            return []
+        return sorted((n for n in names if not n.startswith(".")
+                       and n.lower().endswith(IMAGE_SUFFIXES)
+                       and os.path.isfile(os.path.join(d, n))),
+                      key=str.lower)
+
+    def write_wallpapers(self, walls):
+        rc, _, why = self._surf("--write-wallpapers", stdin="".join(
+            "%d %d %s\n" % (x, y, f) for (x, y), f in sorted(walls.items())))
+        return rc, why
+
     def names(self):
         """[[name, label], ...], the global list, in its order."""
         rc, out, _ = self._surf("--names")    # always `name label`
@@ -712,6 +743,9 @@ class OfflineHwdp(Hwdp):
 
 # --- surfaces: named parts of a monitor --------------------------------------
 
+# What the wallpaper picker lists: the images the wallpaper plugin draws.
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
+
 REGIONS = ("full", "top", "bottom", "left", "right")
 # A panel's SPLIT in one cell: whole (None), or the two halves it is cut
 # into. `g` cycles them in this order; Tab walks the halves.
@@ -804,6 +838,8 @@ class App:
                                        SPLIT_OF[x.region])
         self.grid = hw.grid() or NEW_GRID
         self.names = hw.names()
+        self.walls = dict(hw.wallpapers())   # {(cx, cy): file}
+        self.wpick = None                    # the wallpaper picker, if up
         self._mark_saved()
 
     def plabel(self, conn):
@@ -819,6 +855,7 @@ class App:
         self.saved_grid = self.grid
         self.saved_splits = sorted(self.splits.items())
         self.saved_names = [list(n) for n in self.names]
+        self.saved_walls = dict(self.walls)
 
     @property
     def cur(self):
@@ -829,6 +866,7 @@ class App:
 
     def desk_dirty(self):
         return (self._surface_keys() != self.saved_surfaces
+                or self.walls != self.saved_walls
                 or self.grid != self.saved_grid
                 or sorted(self.splits.items()) != self.saved_splits
                 or (self.default.key() if self.default else None)
@@ -1013,6 +1051,7 @@ class App:
         keep = [n for n in self.saved_names
                 if n[0] not in {m[0] for m in names}]
         names_changed = names != self.saved_names
+        walls = dict(self.walls) if self.walls != self.saved_walls else None
         self.busy = ["saving", now, ""]
 
         def said(line):
@@ -1040,6 +1079,11 @@ class App:
                     return why, "layout"
             if desk is not None:
                 why = step("saving the desk", self.hw.write_desk, *desk)
+                if why:
+                    return why, "layout"
+            if walls is not None:
+                why = step("saving the wallpapers", self.hw.write_wallpapers,
+                           walls)
                 if why:
                     return why, "layout"
             if keep:
@@ -1237,6 +1281,7 @@ class App:
         if k in (9, curses.KEY_BTAB):
             return self._vtab(1 if k == 9 else -1)
         act = {ord("g"): self._vsplit, ord("x"): self._vclear,
+               ord("b"): self._wpick_open,
                ord("f"): lambda now: self._pick("default"),
                ord("F"): self._vnodefault,
                ord("+"): lambda now: self._regrid(1, 0),
@@ -1292,6 +1337,53 @@ class App:
             pk["filter"], pk["sel"] = pk["filter"][:-1], 0
         elif 32 < k < 127:
             pk["filter"], pk["sel"] = pk["filter"] + chr(k), 0
+
+    # --- the wallpaper picker: which image the selected cell shows -------
+    def _wpick_open(self, now):
+        """Open the picker over the wallpaper directory for the selected
+        CELL (a wallpaper is per workspace, not per panel). It starts on the
+        cell's own choice; "(default)" leaves the cell to its default."""
+        if self._blocked():
+            return
+        imgs = self.hw.wallpaper_images()
+        if not imgs:
+            self.msg = "no images in the wallpaper directory"
+            return
+        cur = self.walls.get(tuple(self.vcell))
+        self.wpick = {"filter": "", "images": imgs,
+                      "sel": imgs.index(cur) + 1 if cur in imgs else 0}
+        self.dialog = ("wpick", None)
+
+    def wpick_list(self):
+        """What the picker shows: "(default)" first, then the images whose
+        name holds what has been typed."""
+        f = self.wpick["filter"].lower()
+        return ([DEFAULT_WALL] if not f else []) + \
+            [n for n in self.wpick["images"] if f in n.lower()]
+
+    def _wpick_key(self, k, now):
+        wp, shown = self.wpick, self.wpick_list()
+        if k == ESC:
+            self.wpick, self.dialog = None, None
+        elif k in ENTER:
+            if shown:
+                n = shown[min(wp["sel"], len(shown) - 1)]
+                self.wpick, self.dialog = None, None
+                cell = tuple(self.vcell)
+                if n == DEFAULT_WALL:
+                    self.walls.pop(cell, None)
+                    self.msg = "cell %d,%d: the default wallpaper" % cell
+                else:
+                    self.walls[cell] = n
+                    self.msg = "cell %d,%d: %s" % (cell + (n,))
+        elif k == curses.KEY_DOWN:
+            wp["sel"] = min(wp["sel"] + 1, max(0, len(shown) - 1))
+        elif k == curses.KEY_UP:
+            wp["sel"] = max(wp["sel"] - 1, 0)
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            wp["filter"], wp["sel"] = wp["filter"][:-1], 0
+        elif 32 < k < 127:
+            wp["filter"], wp["sel"] = wp["filter"] + chr(k), 0
 
     def _vsplit(self, now):
         """Cut the selected panel in THIS cell, or join it again: whole,
@@ -1386,6 +1478,14 @@ class App:
         self.grid = (w, h)
         self.vcell = [min(self.vcell[0], w - 1), min(self.vcell[1], h - 1)]
         self.msg = "grid %dx%d" % self.grid
+        # A wallpaper never blocks a shrink, unlike a surface: it is a look,
+        # not a place something lives. It goes, and is said.
+        gone = sorted(c for c in self.walls if c[0] >= w or c[1] >= h)
+        for c in gone:
+            del self.walls[c]
+        if gone:
+            self.msg += "; dropped the wallpaper of " + ", ".join(
+                "cell %d,%d" % c for c in gone)
 
     def _save_here(self, now):
         if self.dirty():
@@ -1431,6 +1531,8 @@ class App:
 
     def _dialog_key(self, k, now):
         kind = self.dialog[0]
+        if kind == "wpick":
+            return self._wpick_key(k, now)
         if kind == "error":
             d = self.dialog[1]
             if k in ENTER or k in (ESC, ord("q")):
@@ -1484,7 +1586,7 @@ HELP = (
     "  p preview",
     "arrows select  a add  e label  D delete",
     "arrows cell  Tab panel/half  g split  Enter place  f default"
-    "  F no default  x clear  +/- columns  ]/[ rows",
+    "  F no default  x clear  b wallpaper  +/- columns  ]/[ rows",
     "arrows / PgUp PgDn scroll")
 HELP_ALL = "1-4 tabs  s save  q quit"
 SIDE_W = 26             # the sidebar's columns, when the screen has them
@@ -1634,6 +1736,8 @@ def draw_dialog(scr, app, now):
                 "", "y  join it", "Esc  keep the split"]
     elif kind == "pick":
         text = pick_lines(app)
+    elif kind == "wpick":
+        text = wpick_lines(app)
     elif kind == "error":
         h, w = scr.getmaxyx()
         text = error_lines(arg, w - 8, h - 4)
@@ -1694,6 +1798,22 @@ def error_lines(d, width, height):
     return [d["title"], ""] + shown + foot
 
 
+DEFAULT_WALL = "(default)"
+
+
+def wpick_lines(app):
+    """The wallpaper picker: the cell, the filter, the images that match."""
+    wp, shown = app.wpick, app.wpick_list()
+    sel = min(wp["sel"], max(0, len(shown) - 1))
+    first = max(0, min(sel - 5, len(shown) - 12))
+    rows = [("> " if i == sel else "  ") + n
+            for i, n in enumerate(shown) if first <= i < first + 12]
+    return ["Wallpaper of cell %d,%d" % tuple(app.vcell), "",
+            "filter: " + wp["filter"] + "_", ""] + \
+        (rows or ["  (no image matches)"]) + \
+        ["", "type to filter  arrows choose  Enter set  Esc cancel"]
+
+
 def pick_lines(app):
     """The picker: what the choice is for, the filter typed so far, and the
     names that match it, the chosen one marked."""
@@ -1747,7 +1867,8 @@ def review_lines(app):
     for cy in range(app.grid[1]):
         for cx in range(app.grid[0]):
             out.append("")
-            out.append("cell %d,%d" % (cx, cy))
+            out.append("cell %d,%d  wallpaper %s" % (
+                cx, cy, app.walls.get((cx, cy), DEFAULT_WALL)))
             for o in app.desk.on():
                 here = sorted((x for x in app.surfaces if x.conn == o.conn
                                and (x.cx, x.cy) == (cx, cy)),
@@ -1906,7 +2027,9 @@ def draw_virtual(scr, app, top, rows, cols, left):
             sel_o.label, sel_o.token(), sel_r))[:cols], curses.A_BOLD)
     d = app.default
     put(scr, top + gh * ch + 1, left, (
-        "default: " + ("%s, %s of %s" % (
+        "wallpaper: %s   default: " % app.walls.get(tuple(app.vcell),
+                                                    DEFAULT_WALL)
+        + ("%s, %s of %s" % (
             full_name(app, d.name), d.region, app.plabel(d.conn))
             if d else "none"))[:cols], curses.A_DIM)
 

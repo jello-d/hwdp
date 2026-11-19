@@ -11,7 +11,12 @@
 harness_init arrange-tui
 command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
 
-mkdir -p "$T/stub/cmd"
+mkdir -p "$T/stub/cmd" "$T/stub2/cmd" "$T/walls/sub"
+: > "$T/walls/b.JPG"; : > "$T/walls/a.png"; : > "$T/walls/.hidden.jpg"
+: > "$T/walls/notes.txt"
+printf '%s\n' '#!/bin/sh' 'printf "0 0 a.png\n2 1 night sky.png\n"' \
+  > "$T/stub2/cmd/surfaces"
+chmod +x "$T/stub2/cmd/surfaces"
 printf '%s\n' '#!/bin/sh' 'echo "  hwdp surfaces: the REASON" >&2' \
   'echo "hwdp surfaces: --write: NOT written" >&2' 'exit 2' \
   > "$T/stub/cmd/surfaces"
@@ -65,6 +70,16 @@ class FakeHw:
                            default.key() if default else None))
         self.wsplits = list(splits)
         return self.rc.get("write", 0), "said no" if self.rc.get("write") \
+            else ""
+    wallsv = {}
+    imagesv = ["aurora.jpg", "bubbles.jpg", "night sky.png"]
+    def wallpapers(self):
+        return dict(self.wallsv)
+    def wallpaper_images(self):
+        return list(self.imagesv)
+    def write_wallpapers(self, walls):
+        self.calls.append(("walls", dict(walls)))
+        return self.rc.get("walls", 0), "said no" if self.rc.get("walls") \
             else ""
     def write_names(self, names):
         self.calls.append(("names", [list(n) for n in names]))
@@ -690,6 +705,68 @@ check("the drawn error dialog shows the first reason",
       "line 20 of the new BL.conf" in shown, shown)
 check("and fits the screen",
       all(len(r) <= 80 for r in shown.split("\n")), "too wide")
+
+# --- wallpapers: one per workspace, `b` in the virtual tab -------------------
+d, outs, hw = desk()                 # (`app` is a drawn App by this point)
+a = tui.App(d, hw)
+a.spawn = sync
+a.key(ord("3"), 0); a.key(ord("b"), 0)
+check("b opens the wallpaper picker on the selected cell",
+      a.dialog == ("wpick", None) and a.wpick_list()[0] == "(default)"
+      and a.wpick["sel"] == 0, (a.dialog, a.wpick))
+for ch in "bub":
+    a.key(ord(ch), 0)
+a.key(10, 0)
+check("typing filters and Enter sets the cell",
+      a.walls == {(0, 0): "bubbles.jpg"} and a.dirty() and a.dialog is None,
+      (a.walls, a.msg))
+a.key(curses.KEY_RIGHT, 0); a.key(ord("b"), 0); a.key(27, 0)
+check("Esc in the picker changes nothing",
+      a.walls == {(0, 0): "bubbles.jpg"} and a.dialog is None, a.walls)
+a.key(ord("s"), 0)
+kinds = [c[0] for c in hw.calls]
+check("a save writes the wallpapers after the desk",
+      "walls" in kinds and kinds.index("walls") > kinds.index("write")
+      and hw.calls[kinds.index("walls")][1] == {(0, 0): "bubbles.jpg"}
+      and not a.dirty(), hw.calls)
+a.key(curses.KEY_LEFT, 0); a.key(ord("b"), 0)
+check("the picker starts on the cell's own wallpaper",
+      a.wpick_list()[a.wpick["sel"]] == "bubbles.jpg", a.wpick)
+a.key(curses.KEY_UP, 0); a.key(curses.KEY_UP, 0); a.key(10, 0)
+check("(default) clears the cell", a.walls == {} and a.dirty(), a.walls)
+
+d, outs, hw = desk()
+hw.wallsv = {(0, 0): "aurora.jpg", (2, 1): "night sky.png"}
+hw.gridv = (3, 2)
+a = tui.App(d, hw)
+check("the wallpapers load, and a fresh desk is not dirty",
+      a.walls == hw.wallsv and not a.dirty(), a.walls)
+check("the review tab says each cell's wallpaper",
+      "cell 0,0  wallpaper aurora.jpg" in tui.review_lines(a)
+      and "cell 1,0  wallpaper (default)" in tui.review_lines(a),
+      tui.review_lines(a)[:6])
+a.key(ord("3"), 0); a.key(ord("-"), 0)
+check("a shrink drops the wallpapers that fall off, and says so",
+      a.walls == {(0, 0): "aurora.jpg"} and a.grid == (2, 2)
+      and "dropped the wallpaper of cell 2,1" in a.msg, (a.walls, a.msg))
+hw.imagesv = []
+a.key(ord("b"), 0)
+check("no images: says so, opens nothing",
+      a.dialog is None and "no images" in a.msg, a.msg)
+
+# The REAL Hwdp: the images are the files in the wallpaper directory with an
+# image suffix, hidden ones and directories left out; --wallpapers is read
+# as `X Y FILE`, a name with spaces whole.
+import os
+os.environ["HWDP_WALLPAPER_DIR"] = sys.argv[2] + "/walls"
+real2 = tui.Hwdp()
+check("the images are the image files there, by name",
+      real2.wallpaper_images() == ["a.png", "b.JPG"],
+      real2.wallpaper_images())
+real2.libexec = sys.argv[2] + "/stub2"
+check("--wallpapers is read cell by cell, spaces kept",
+      real2.wallpapers() == {(0, 0): "a.png", (2, 1): "night sky.png"},
+      real2.wallpapers())
 
 # The REAL Hwdp keeps all of what hwdp said: the reason comes before the
 # summary, and keeping only the last line is how the reason was lost.
