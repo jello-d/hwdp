@@ -66,9 +66,21 @@ row() { printf '%s\n' "$_o" | awk -v k="$1" '
   $0 ~ " " k " " { r = $0; f = 1 }
   END { print r }'; }
 case $(row BL) in
-  *" laptop "*"BL"*"3x3"*"1 "*) ;;
+  *" any-laptop "*"BL"*"3x3"*"1 "*) ;;
   *) fail "the generic laptop desk: $(row BL)" ;;
 esac
+# A laptop's OWN desk (its file under its own id, the panel "@builtin" as
+# the writer files it) is a laptop, kind BL, named apart from the generic.
+printf 'grid 4 3\nsurface comms "@builtin" cell 3 0\n' \
+  > "$D/eeeeeeeeeeee.conf"
+_o=$(DESK= run desks) || fail "hwdp desks failed: $_o"
+case $(row eeeeeeeeeeee) in
+  *" laptop "*" BL "*"4x3"*) ;;
+  *) fail "a laptop's own desk must read as BL, named laptop: \
+$(row eeeeeeeeeeee)" ;;
+esac
+rm -f "$D/eeeeeeeeeeee.conf"
+_o=$(DESK= run desks) || fail "hwdp desks failed: $_o"
 case $(row aaaaaaaaaaaa) in
   *" u2715h+p2721q "*"BL+EL+EP"*"2x2"*"2+default"*\
 "laptop, U2715H 2560x1440, P2721Q 3840x2160"*) ;;
@@ -220,7 +232,7 @@ DESK= run desks --name u2715h+p2721q office >/dev/null \
   || fail "once the first desk is renamed, its made name is the other's"
 DESK= run desks --name office Office 2>/dev/null \
   && fail "a name with capitals (a connector could look so) was taken" || :
-DESK= run desks --name laptop office 2>/dev/null \
+DESK= run desks --name any-laptop office 2>/dev/null \
   && fail "a name already in use was taken twice" || :
 DESK= run desks --resolve nowhere 2>/dev/null \
   && fail "an unknown name resolved" || :
@@ -345,7 +357,7 @@ check("...and loads again as a split, never as a surface",
       and [x.key() for x in app2.surfaces] ==
       [("calendar", "Dell Inc. DELL U2715H SER1", "full", 1, 1)],
       (app2.splits, [x.key() for x in app2.surfaces]))
-generic = tui.OfflineHwdp("BL", "laptop")
+generic = tui.OfflineHwdp("BL", "any-laptop")
 generic.geometry()
 rc, why = generic.arrange(None, [])
 check("a desk with no layout on record will not invent one",

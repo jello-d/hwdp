@@ -298,6 +298,10 @@ _lf=$(ls "$T/desks"/*.conf | grep -v -e '/BL.conf$' -e '/BL+EL+EP.conf$' \
   | head -1)
 [ "$(grep -c '^surface ' "$_lf")" -eq 3 ] \
   || fail "a laptop's own file must hold each surface once: $(cat "$_lf")"
+# By its ROLE, alone as at a desk: by EDID name, `hwdp desks` read a
+# laptop's own desk as an external panel.
+[ "$(grep -c '^surface .* "@builtin" ' "$_lf")" -eq 3 ] \
+  || fail "a laptop alone must be written as \"@builtin\": $(cat "$_lf")"
 rm -f "$_lf"
 pass "a laptop alone writes over the generic file, each surface once"
 

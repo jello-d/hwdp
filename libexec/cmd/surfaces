@@ -227,9 +227,12 @@ write_file() {
   fi
   desk_scratch || return 1
 
-  # connector -> EDID name, for the outputs switched on now; at a desk the
-  # built-in by its ROLE, so the file serves whichever laptop is docked.
-  _wb=; [ -z "${HWDP_DESK:-}" ] && docked && _wb=$_bn
+  # connector -> EDID name, for the outputs switched on now, the built-in
+  # by its ROLE ("@builtin") docked OR NOT, as the desk format has always
+  # meant it: written by EDID name when alone, a laptop's own desk read as
+  # an EXTERNAL panel (`hwdp desks`: kind EL, named from its model,
+  # dragonfly 2026-11-19).
+  _wb=; [ -z "${HWDP_DESK:-}" ] && _wb=$_bn
   printf '%s\n' "$_live" | awk -F"$TAB" -v OFS="$TAB" -v b="$_wb" \
     '$1 != "" && $12 == 1 { print $2, ($1 == b) ? "@builtin" : $1 }' \
     > "$_wd/names"

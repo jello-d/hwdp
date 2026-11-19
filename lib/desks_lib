@@ -99,7 +99,7 @@ desk_kind() {
 # desk_madename <key>: the name made from the hardware, before uniqueness.
 desk_madename() {
   case $1 in
-    BL) echo laptop; return 0 ;;
+    BL) echo any-laptop; return 0 ;;     # the generic: ANY laptop alone
     *[!A-Z+]*) ;;
     *) printf '%s\n' "$1" | tr 'A-Z' 'a-z'; return 0 ;;
   esac
