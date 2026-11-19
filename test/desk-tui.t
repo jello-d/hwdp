@@ -1,5 +1,5 @@
 #!/bin/sh
-# arrange-tui.t - the interactive layout tool, driven key by key without a
+# desk-tui.t - the interactive layout tool, driven key by key without a
 # screen: its model (rotate, swap, move), and what every key and dialog does.
 #
 # The curses view only draws, so everything a person decides goes through
@@ -8,7 +8,7 @@
 # a recorder, EXCEPT the re-pack, which stays the real shell layout_repack:
 # the arithmetic under test is hwdp's own, not a stand-in for it.
 . "$(dirname "$0")/harness_lib"
-harness_init arrange-tui
+harness_init desk-tui
 command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
 
 mkdir -p "$T/stub/cmd" "$T/stub2/cmd" "$T/walls/sub"
@@ -25,7 +25,7 @@ _out=$(python3 -I - "$HERE" "$T" 2>&1 <<'PY'
 import curses, importlib.machinery, importlib.util, sys
 here = sys.argv[1]
 loader = importlib.machinery.SourceFileLoader(
-    "tui", here + "/libexec/arrange-tui")
+    "tui", here + "/libexec/desk-tui")
 spec = importlib.util.spec_from_loader("tui", loader)
 tui = importlib.util.module_from_spec(spec)
 loader.exec_module(tui)
@@ -809,7 +809,7 @@ PY
 pass "model, controller and view: drawings cut, the selection in full"
 
 # --- it refuses to run without a terminal -------------------------------------
-if _o=$(python3 "$HERE/libexec/arrange-tui" </dev/null 2>&1); then
+if _o=$(python3 "$HERE/libexec/desk-tui" </dev/null 2>&1); then
   fail "the tool ran with no terminal"
 fi
 case $_o in

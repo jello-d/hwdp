@@ -1,4 +1,4 @@
-"""hwdp arrange: text both views show: the review, an error, a name."""
+"""hwdp desk: text both views show: the review, an error, a name."""
 import re
 import textwrap
 

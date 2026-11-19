@@ -1,4 +1,4 @@
-"""hwdp arrange: every call out to hwdp, and the offline stand-in for it."""
+"""hwdp desk: every call out to hwdp, and the offline stand-in for it."""
 import os
 import re
 import subprocess
@@ -9,7 +9,7 @@ from .model import IMAGE_SUFFIXES, Output, REGION_OF, Surface
 
 def here():
     """The package's own dirs, from the dispatcher's environment or our own
-    path (a checkout run directly: this file is lib/hwdp_arrange/hwdp.py)."""
+    path (a checkout run directly: this file is lib/hwdp_desk/hwdp.py)."""
     root = os.path.realpath(__file__)
     for _ in range(3):
         root = os.path.dirname(root)
@@ -39,7 +39,7 @@ class Hwdp:
         rc, out, err = self._run(os.path.join(self.libexec, "cmd",
                                               "geometry"), "--now")
         if rc != 0 or not out.strip():
-            raise SystemExit("hwdp arrange: no outputs to arrange (it needs"
+            raise SystemExit("hwdp desk: no outputs to arrange (it needs"
                              " a session)\n" + err)
         outs = []
         for line in out.splitlines():

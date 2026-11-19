@@ -226,13 +226,25 @@ beside the profile), regenerates the layout and nudges a running
 supervisor; with none running it says so instead of starting one. Refusals
 (an output left out, two in one space, an unknown name, a bad alignment) exit
 2 and write nothing.
+.IP
+.B \-\-dry\-run
+prints the placements and the profile, and writes nothing.
+.B \-\-preview
+applies them LIVE without saving anything, and
+.B \-\-revert
+puts back what is saved (both exit 5 with no supervisor running).
+With no placements at a terminal it shows its usage and exits 2: the
+interactive tool is
+.BR "hwdp desk" ,
+which saves through this.
 .TP
-.BI "hwdp arrange " desk
-The interactive tool on a NAMED desk (see
-.BR "hwdp desks" ).
-One lowercase word is a desk, never a placement: placements start with a
-connector or a quoted EDID name, which always hold capitals. The attached
-desk opens as with no argument. Any other opens from its files with none of
+.BR "hwdp desk" " [" \fIdesk\fR ]
+The INTERACTIVE desk tool, in a terminal. With a
+.I desk
+(a name or key from
+.BR "hwdp desks" )
+it opens that desk: the attached one as with no argument, any other from
+its files with none of
 its panels here: the layout from its profile, the surfaces from its desk
 file, labelled by model number; saving WRITES both (through
 .B "hwdp profile \-\-write"
@@ -241,47 +253,8 @@ and
 validated as ever, and applies nothing, ready for the next dock. Preview and
 labels on glass need the panels and say so. A desk with no layout on record
 (a generic one, or one never arranged) has only its surfaces to edit.
-.TP
-.BR "hwdp desks" " [" \-\-name
-.IR "desk new" "] [" \-\-resolve
-.IR desk ]
-Every desk the files describe, one per line: its NAME, its KEY (the id or
-shape its files are named by), its kind, grid, surfaces and panels (each
-with its native resolution, from the profile, and the laptop's from the
-panel itself when it is attached), the one attached now marked
-.BR * .
-A name is made from the hardware (the external panels' model numbers left to
-right,
-.IR u2715h+p2721q ;
-a repeat as
-.IR aw2725q-x3 ;
-.I laptop
-for a laptop alone, and
-.I any-laptop
-for the generic desk any laptop alone falls back to) unless one is chosen with
-.BR \-\-name ,
-kept in
-.IR ~/.config/hwdp/desks/desk-names ;
-.B \-
-puts the made one back. Names are lowercase
-.IR "a-z 0-9 + - _" ,
-a chosen one at most 24 characters,
-and unique (a made name that would repeat gets
-.IR -2 ),
-so
-.BI "hwdp arrange " name
-can take one.
-.B \-\-resolve
-prints the key a name or key is filed by, exit 1 if none.
-.B \-\-dry\-run
-prints the placements and the profile, and writes nothing.
-.B \-\-preview
-applies them LIVE without saving anything, and
-.B \-\-revert
-puts back what is saved (both exit 5 with no supervisor running).
 .IP
-WITH NO PLACEMENTS, AT A TERMINAL, it is the INTERACTIVE desk tool: four
-tabs over one desk, in the order you work
+Four tabs over one desk, in the order you work
 .RB ( 1 " to " 4 ),
 beside a READ-ONLY sidebar of every surface NAME, each marked placed here
 (with how many), the default, or not placed at this desk. Lines are drawn in
@@ -357,7 +330,40 @@ quits, at once when nothing is unsaved, and otherwise asks: save and quit,
 discard and quit (which reverts a kept preview), or keep editing. Esc with
 nothing in progress asks the same, but there Enter answers keep editing,
 so a stray Esc never writes or discards anything. It needs python3
-(curses), and saves through the scripted form above.
+(curses), and saves through
+.BR "hwdp arrange" .
+.TP
+.BR "hwdp desks" " [" \-\-name
+.IR "desk new" "] [" \-\-resolve
+.IR desk ]
+Every desk the files describe, one per line: its NAME, its KEY (the id or
+shape its files are named by), its kind, grid, surfaces and panels (each
+with its native resolution, from the profile, and the laptop's from the
+panel itself when it is attached), the one attached now marked
+.BR * .
+A name is made from the hardware (the external panels' model numbers left to
+right,
+.IR u2715h+p2721q ;
+a repeat as
+.IR aw2725q-x3 ;
+.I laptop
+for a laptop alone, and
+.I any-laptop
+for the generic desk any laptop alone falls back to) unless one is chosen with
+.BR \-\-name ,
+kept in
+.IR ~/.config/hwdp/desks/desk-names ;
+.B \-
+puts the made one back. Names are lowercase
+.IR "a-z 0-9 + - _" ,
+a chosen one at most 24 characters,
+and unique (a made name that would repeat gets
+.IR -2 ),
+so
+.BI "hwdp desk " name
+can take one.
+.B \-\-resolve
+prints the key a name or key is filed by, exit 1 if none.
 .TP
 .BR "hwdp identify" " [" \-\-seconds
 .IR N "] [" \-\-parent

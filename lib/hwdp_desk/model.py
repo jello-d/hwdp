@@ -1,4 +1,4 @@
-"""hwdp arrange: the desk as data: outputs, where they may go, surfaces."""
+"""hwdp desk: the desk as data: outputs, where they may go, surfaces."""
 
 
 QUARTER = ("normal", "90", "180", "270")

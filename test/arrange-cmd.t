@@ -241,3 +241,35 @@ else
 fi
 [ "$_rc" -eq 3 ] || fail "no session: exit $_rc, expected 3"
 pass "without a session it says so (exit 3)"
+
+# --- no placements: what it takes, and nothing else ---------------------------
+# The interactive tool is `hwdp desk`; bare arrange at a terminal used to open
+# it, and now says what arguments it expects, exit 2, writing nothing.
+_rc=0
+run </dev/null >/dev/null 2>"$T/err" || _rc=$?
+[ "$_rc" -eq 2 ] || fail "empty placements: exit $_rc, expected 2"
+grep -q 'no placements given' "$T/err" && grep -q 'PLACEMENT\.\.\.' "$T/err" \
+  || fail "empty placements must say so and show the usage: $(cat "$T/err")"
+if command -v script >/dev/null 2>&1; then
+  cat > "$T/arrange-tty" <<EOF
+env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \\
+  WAYLAND_DISPLAY=wayland-test HWDP_DRM="$T/drm" XDG_RUNTIME_DIR="$T/run" \\
+  HWDP_MACHINE_PROVIDERS="$T/no-machine" HWDP_PROVIDER_ROOT="$T/no-user" \\
+  KANSHI_PROFILES="$T/profiles" KANSHI_STICKY="$T/sticky" \\
+  sh "$KA" arrange; echo "rc=\$?"
+EOF
+  rm -f "$P"
+  _o=$(script -qec "sh $T/arrange-tty" /dev/null </dev/null | tr -d '\r')
+  printf '%s\n' "$_o" | grep -q '^rc=2$' \
+    || fail "bare arrange at a terminal must exit 2: $_o"
+  printf '%s\n' "$_o" | grep -q 'hwdp desk' \
+    || fail "bare arrange at a terminal must show the usage: $_o"
+  # and must not READ the terminal for placements (it would wait on the
+  # keyboard; script(1) ends that wait with EOF, so the tell is the message)
+  printf '%s\n' "$_o" | grep -q 'no placements given' \
+    && fail "bare arrange at a terminal read stdin for placements: $_o"
+  [ ! -e "$P" ] || fail "bare arrange at a terminal wrote a profile"
+  pass "with no placements it shows its usage (exit 2), at a terminal too"
+else
+  pass "with no placements it shows its usage (exit 2; no script(1) here)"
+fi

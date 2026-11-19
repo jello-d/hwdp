@@ -75,7 +75,7 @@ show_layout() {
   if [ -s "$_p" ]; then
     say layout "$(tilde "$_p")"
   elif "$HWDP_LIBEXEC/cmd/profile" --missing; then
-    bad layout "none for this desk, which needs one: hwdp arrange"
+    bad layout "none for this desk, which needs one: hwdp desk"
   else
     say layout "none on record; one panel needs none"
   fi

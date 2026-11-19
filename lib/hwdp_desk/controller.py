@@ -1,4 +1,4 @@
-"""hwdp arrange: what a key means: the App both views drive."""
+"""hwdp desk: what a key means: the App both views drive."""
 import curses
 import threading
 

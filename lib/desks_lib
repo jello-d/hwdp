@@ -8,8 +8,8 @@
 #
 # THE NAME is the shorthand: lowercase, `a-z 0-9 + - _`, so it can never be
 # read as a connector (DP-1, eDP-1, HDMI-A-1) or a quoted EDID name, both of
-# which hold capitals; that is what lets `hwdp arrange <name>` take one
-# without a flag beside its placement syntax. A name the person chose lives in
+# which hold capitals, so wherever a desk and a panel may both be named, a
+# name never reads as a panel. A name the person chose lives in
 # $DESKS/desk-names (`<key> <name>`, not a .conf, so never read as a desk);
 # otherwise one is MADE from the hardware: the external panels' model numbers
 # left to right (u2715h+p2721q), a repeat as model-xN (aw2725q-x3), `laptop`

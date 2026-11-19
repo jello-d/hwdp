@@ -1,0 +1,34 @@
+#!/bin/sh
+# hwdp desk: the interactive desk tool, in a terminal.
+#
+#   hwdp desk            the desk attached now
+#   hwdp desk <desk>     a NAMED desk (`hwdp desks`), attached or not; away
+#                        from it, saving writes its files without applying
+#
+# Four tabs over one desk: the layout (where the panels sit and how they
+# turn), the surface names, the virtual grid with the surfaces placed in it,
+# and a review of what will be saved. Its keys are under `hwdp desk` in
+# hwdp(1). Everything it saves goes through the scripted commands (`hwdp
+# arrange`, `hwdp profile --write`, `hwdp surfaces --write`), so it can never
+# write what they would refuse.
+# (end of --help)
+set -eu
+
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+esac
+[ $# -le 1 ] || { echo "usage: hwdp desk [<desk>]" >&2; exit 2; }
+[ $# -eq 1 ] || exec "$HWDP_LIBEXEC/desk-tui"
+
+# The attached desk opens the ordinary tool; any other opens it on that
+# desk's files.
+. "$HWDP_LIB/displayset_lib"
+. "$HWDP_LIB/desks_lib"
+if ! _dk=$(desk_resolve "$1"); then
+  echo "hwdp desk: no desk named \`$1\` (hwdp desks lists them)" >&2
+  exit 2
+fi
+if desk_here | grep -qxF "$_dk"; then
+  exec "$HWDP_LIBEXEC/desk-tui"
+fi
+exec "$HWDP_LIBEXEC/desk-tui" --desk "$_dk" --name "$1"

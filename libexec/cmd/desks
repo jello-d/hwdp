@@ -10,8 +10,8 @@
 # generic desk such as BL), which no one should have to type. Each also has a
 # NAME: chosen here, or made from the hardware (u2715h+p2721q, aw2725q-x3,
 # laptop). Names are lowercase `a-z 0-9 + - _` (a chosen one at most 24
-# characters, so the list fits an 80-column terminal) and unique, which is
-# what lets `hwdp arrange <name>` take one without being mistaken for a
+# characters, so the list fits an 80-column terminal) and unique, so
+# `hwdp desk <name>` takes one bare and it can never be mistaken for a
 # connector. See lib/desks_lib for how a name is made.
 set -eu
 . "$HWDP_LIB/displayset_lib"
@@ -131,7 +131,7 @@ done | awk -F"$TAB" -v W=79 -v rc="$_rule" -v dim="$_dim" -v off="$_off" '
   # NAME is at most 24 wide; a longer one (made from many monitors) takes
   # a line of its own, the rest of its row below it in the columns.
   END {
-    if (!n) { print "  (no desks yet: hwdp arrange lays one out)"; exit }
+    if (!n) { print "  (no desks yet: hwdp desk lays one out)"; exit }
     if (C[2] > 24) C[2] = 24
     at = 2
     for (i = 2; i <= 6; i++) {

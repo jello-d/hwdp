@@ -8,12 +8,11 @@
 #   <out> [rotate R] at X,Y                       an exact position
 #   <out> off
 #
-#   hwdp arrange                  (at a terminal) the interactive layout tool
-#   hwdp arrange <desk>           the same tool on a NAMED desk (`hwdp desks`),
-#                                 attached or not; away from it, saving
-#                                 writes its files without applying them
 #   hwdp arrange --preview ...    apply live WITHOUT saving
 #   hwdp arrange --revert         put back what is saved
+#
+# This is the SCRIPTED form; the interactive desk tool is `hwdp desk`, and
+# saves through it.
 #
 #   hwdp arrange 'DP-1 rotate 90' 'DP-2 right-of DP-1 align bottom' \
 #                'eDP-1 below DP-2 align center'
@@ -67,33 +66,19 @@ case "${1:-}" in
   --dry-run)     MODE=dry; shift ;;
   --preview)     MODE=preview; shift ;;
   --revert)      MODE=revert; shift ;;
-  --interactive) MODE=tui; shift ;;
   -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
 esac
 
-# ONE LOWERCASE WORD IS A DESK. A desk name is lowercase by construction and
-# a placement never is (it starts with a connector or a quoted EDID name,
-# both of which hold capitals), so this cannot take a placement for a name.
-# The attached desk opens the ordinary tool; any other opens it on that
-# desk's files.
-if [ "$MODE" = write ] && [ $# -eq 1 ] \
-    && printf '%s\n' "$1" | grep -Eq '^[a-z0-9][a-z0-9+_-]*$'; then
-  . "$HWDP_LIB/desks_lib"
-  if ! _dk=$(desk_resolve "$1"); then
-    echo "hwdp arrange: no desk named \`$1\` (hwdp desks lists them)" >&2
-    exit 2
-  fi
-  if desk_here | grep -qxF "$_dk"; then
-    exec "$HWDP_LIBEXEC/arrange-tui"
-  fi
-  exec "$HWDP_LIBEXEC/arrange-tui" --desk "$_dk" --name "$1"
-fi
-
-# With no placements and a person at the keyboard, this is the interactive
-# layout tool; the scripted form below is what it saves through.
-if [ "$MODE" = tui ] || { [ $# -eq 0 ] && [ "$MODE" = write ] && [ -t 0 ]; }
-then
-  exec "$HWDP_LIBEXEC/arrange-tui" "$@"
+# THE INTERACTIVE TOOL IS `hwdp desk`. With no placements and a terminal on
+# stdin there is nothing to read them from, so this says what it takes
+# rather than waiting on the keyboard.
+_usage() {
+  . "$HWDP_LIB/help_lib"
+  help_print "$0" >&2
+  exit 2
+}
+if [ "$MODE" != revert ] && [ $# -eq 0 ] && [ -t 0 ]; then
+  _usage
 fi
 # --revert: put back what is SAVED, after a --preview the person declined.
 if [ "$MODE" = revert ]; then
@@ -106,7 +91,10 @@ if [ $# -gt 0 ]; then
 else
   _pl=$(cat)
 fi
-[ -n "$_pl" ] || { echo "hwdp arrange: no placements given" >&2; exit 2; }
+if [ -z "$_pl" ]; then
+  echo "hwdp arrange: no placements given" >&2
+  _usage
+fi
 
 _id=$(hwdp_id)
 [ -n "$_id" ] || { echo "hwdp arrange: no displays attached" >&2; exit 1; }

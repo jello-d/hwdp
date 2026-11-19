@@ -2,7 +2,7 @@
 # desks.t - every desk by NAME, and a desk edited AWAY from its panels.
 #
 # `hwdp desks` lists the desks the files describe, each with a name made
-# from its hardware or chosen with --name; `hwdp arrange <name>` opens the
+# from its hardware or chosen with --name; `hwdp desk <name>` opens the
 # tool on one; and the two writers it saves through work with no panel of
 # that desk attached: `hwdp surfaces` under HWDP_DESK, `hwdp profile --write`.
 # Headless throughout: an empty DRM tree and no compositor, which is exactly
@@ -273,17 +273,19 @@ run surfaces --check >/dev/null || fail "--check away from the desk"
 DESK=
 pass "surfaces read, written whole and validated with the desk away"
 
-# --- hwdp arrange <name> ----------------------------------------------------
-run arrange nowhere </dev/null 2>"$T/err" && fail "an unknown desk opened" || :
+# --- hwdp desk <name> -------------------------------------------------------
+run desk nowhere </dev/null 2>"$T/err" && fail "an unknown desk opened" || :
 grep -q 'no desk named `nowhere`' "$T/err" || fail "unknown: $(cat "$T/err")"
-run arrange u2715h+p2721q </dev/null 2>"$T/err" \
+run desk u2715h+p2721q </dev/null 2>"$T/err" \
   && fail "the tool ran with no terminal" || :
 grep -q 'needs a terminal' "$T/err" \
   || fail "a known desk did not reach the tool: $(cat "$T/err")"
-pass "hwdp arrange <name> opens that desk; an unknown one is refused"
+run desk a b </dev/null 2>"$T/err" && fail "two desks were taken" || :
+grep -q 'usage: hwdp desk' "$T/err" || fail "two desks: $(cat "$T/err")"
+pass "hwdp desk <name> opens that desk; an unknown one is refused"
 
 # --- the tool on a desk away from it ----------------------------------------
-# The real arrange-tui, its offline adapter driven directly: it loads the desk
+# The real desk-tui, its offline adapter driven directly: it loads the desk
 # from its files (labels, not EDID names), saves a rotation through
 # `hwdp profile --write` and a moved surface through `hwdp surfaces` under
 # HWDP_DESK, and refuses what needs the panels (preview, labels on glass).
@@ -294,7 +296,7 @@ _out=$(env -i PATH="/usr/bin:/bin" HOME="$T/home" XDG_CONFIG_HOME="$T/config" \
   python3 -I - "$HERE" "$P" "$D" 2>&1 <<'PY'
 import importlib.machinery, importlib.util, sys
 here, P, D = sys.argv[1:4]
-ld = importlib.machinery.SourceFileLoader("tui", here + "/libexec/arrange-tui")
+ld = importlib.machinery.SourceFileLoader("tui", here + "/libexec/desk-tui")
 sp = importlib.util.spec_from_loader("tui", ld)
 tui = importlib.util.module_from_spec(sp)
 ld.exec_module(tui)

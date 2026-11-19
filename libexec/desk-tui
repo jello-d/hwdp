@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""hwdp arrange, interactively: the desk tool.
+"""hwdp desk: the desk tool, in a terminal.
 
-`hwdp arrange` with no placements, at a terminal, lands here; `hwdp arrange
-<desk>` too, for a desk by name (`hwdp desks`), which away from its panels is
-loaded from its files and saved back to them without applying. Four tabs over
+`hwdp desk` lands here; `hwdp desk <desk>` too, for a desk by name (`hwdp
+desks`), which away from its panels is loaded from its files and saved back
+to them without applying. Four tabs over
 ONE desk, in the order you work; beside all but the second, a READ-ONLY
 sidebar of every surface NAME and where it is (D the default, N placed N
 times, - not placed at this desk):
@@ -52,7 +52,7 @@ GLOBAL (hwdp surfaces --names); their places are this desk's. A desk with no
 grid of its own starts at 3x3.
 
 THIS FILE ONLY DRAWS. What a key means (the App), the desk as data and every
-call out to hwdp live in lib/hwdp_arrange, for any other view to share. The
+call out to hwdp live in lib/hwdp_desk, for any other view to share. The
 arithmetic is hwdp's:
 sizes come from `hwdp geometry` (a quarter turn just swaps them), re-packing
 after a rotate or a swap is the shell's layout_repack, and saving and
@@ -71,10 +71,10 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("HWDP_LIB") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
-from hwdp_arrange.model import *        # noqa: E402,F401,F403
-from hwdp_arrange.hwdp import *         # noqa: E402,F401,F403
-from hwdp_arrange.words import *        # noqa: E402,F401,F403
-from hwdp_arrange.controller import *   # noqa: E402,F401,F403
+from hwdp_desk.model import *        # noqa: E402,F401,F403
+from hwdp_desk.hwdp import *         # noqa: E402,F401,F403
+from hwdp_desk.words import *        # noqa: E402,F401,F403
+from hwdp_desk.controller import *   # noqa: E402,F401,F403
 
 
 # --- the view: drawing only --------------------------------------------------
@@ -482,8 +482,8 @@ def draw_bar(scr, app, w, state):
         except curses.error:
             pass
     x = 1
-    put(scr, 0, x, "hwdp arrange", bar | curses.A_BOLD)
-    x += len("hwdp arrange") + 3
+    put(scr, 0, x, "hwdp desk", bar | curses.A_BOLD)
+    x += len("hwdp desk") + 3
     for i, t in enumerate(TABS):
         on = i == app.tab
         text = (" %d %s " if COLOR or not on else "[%d %s]") % (i + 1, t)
@@ -587,7 +587,7 @@ def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help"):
         print(__doc__.split("\n\n")[1])
         return 0
-    # `--desk KEY [--name NAME]`: a desk AWAY from its panels (`hwdp arrange
+    # `--desk KEY [--name NAME]`: a desk AWAY from its panels (`hwdp desk
     # <name>` resolves the name and passes both). Nothing else is taken.
     args, key, name = argv[1:], None, None
     if args[:1] == ["--desk"] and len(args) in (2, 4) and \
@@ -595,12 +595,12 @@ def main(argv):
         key = args[1]
         name = args[3] if len(args) == 4 else key
     elif args:
-        print("hwdp arrange: the interactive tool takes no arguments but"
-              " a desk (hwdp arrange <desk>)", file=sys.stderr)
+        print("hwdp desk: the tool takes no arguments but a desk"
+              " (hwdp desk <desk>)", file=sys.stderr)
         return 2
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print("hwdp arrange: the interactive tool needs a terminal; give"
-              " placements to script it", file=sys.stderr)
+        print("hwdp desk: the tool needs a terminal; hwdp arrange takes"
+              " placements to script a layout", file=sys.stderr)
         return 2
     os.environ.setdefault("ESCDELAY", "25")
     # The locale first: curses draws the box glyphs only under it, and only
@@ -613,7 +613,7 @@ def main(argv):
         hw = OfflineHwdp(key, name)
         outs = hw.geometry()
         if not outs:
-            print("hwdp arrange: %s has no panels on record" % name,
+            print("hwdp desk: %s has no panels on record" % name,
                   file=sys.stderr)
             return 2
         app = App(Desk(outs, hw.repack), hw)
