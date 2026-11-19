@@ -4,6 +4,8 @@
 #   hwdp gdesk           the desk attached now
 #   hwdp gdesk <desk>    a NAMED desk (`hwdp desks`), attached or not; away
 #                        from it, saving writes its files without applying
+#   hwdp gdesk --app-id  the window's Wayland app_id, the stable key for an
+#                        integrator's window rule (the title names the desk)
 #
 # The same tool as `hwdp desk`, on the same code (lib/hwdp_desk): the layout
 # drawn to scale and dragged with the pointer, the surface names, the virtual
@@ -18,6 +20,8 @@ set -eu
 
 case "${1:-}" in
   -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+  --app-id) [ $# -eq 1 ] || { echo "usage: hwdp gdesk --app-id" >&2; exit 2; }
+            exec "$HWDP_LIBEXEC/desk-gtk" --app-id ;;
 esac
 [ $# -le 1 ] || { echo "usage: hwdp gdesk [<desk>]" >&2; exit 2; }
 [ $# -eq 1 ] || exec "$HWDP_LIBEXEC/desk-gtk"

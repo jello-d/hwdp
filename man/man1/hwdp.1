@@ -336,7 +336,7 @@ so a stray Esc never writes or discards anything. It needs python3
 (curses), and saves through
 .BR "hwdp arrange" .
 .TP
-.BR "hwdp gdesk" " [" \fIdesk\fR ]
+.BR "hwdp gdesk" " [" \fIdesk\fR " | " \-\-app\-id ]
 The same desk tool in a window (GTK 4 and libadwaita), on the same code, so
 the two cannot disagree about a desk or how it is saved. PHYSICAL draws the
 layout to scale: a click (or Tab) HIGHLIGHTS a monitor, an outline, and
@@ -363,6 +363,12 @@ terminal tool asks (keep a preview, quit unsaved, delete a name, join two
 placed halves) is a dialog, and the name form and pickers are windows
 with fields. REVIEW is the map as it will be saved. It needs a Wayland
 session (exit 3) and python3-gi with GTK 4 and libadwaita (exit 4).
+.B \-\-app\-id
+prints the window's Wayland app_id,
+.IR io.github.jello_d.hwdp.gdesk ,
+and needs neither: it is a STABLE contract, the key an integrator's window
+rule matches on (to keep the tool sticky and on top, say). The title names
+the desk and is no key.
 .TP
 .BR "hwdp desks" " [" \-\-name
 .IR "desk new" "] [" \-\-resolve

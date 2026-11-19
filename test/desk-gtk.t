@@ -331,6 +331,15 @@ PY
 case $_out in *OK) ;; *) fail "frame: $_out" ;; esac
 pass "the frames: the desk fitted, a click finds its output, spot and half"
 
+# --- the app_id: the key an integrator's window rule matches on -----------
+_id=$(env -i PATH=/usr/bin:/bin sh "$HERE/bin/hwdp" gdesk --app-id) \
+  || fail "hwdp gdesk --app-id failed with no session"
+[ "$_id" = io.github.jello_d.hwdp.gdesk ] \
+  || fail "the app_id changed (a published contract): $_id"
+env -i PATH=/usr/bin:/bin sh "$HERE/bin/hwdp" gdesk --app-id x \
+  >/dev/null 2>&1 && fail "--app-id took an argument"
+pass "hwdp gdesk --app-id prints the window's app_id, with no session"
+
 # --- the real window, in a headless sway of its own -------------------------
 command -v sway >/dev/null 2>&1 || { pass "window not run (no sway)"; exit 0; }
 python3 -c 'import gi; gi.require_version("Gtk", "4.0")
@@ -681,3 +690,59 @@ PY
 case $_out in *OK) ;; *) fail "window, names and grid: $_out" ;; esac
 pass "the window: names added and deleted, a grid placed by click, drop and"\
 " picker, cut and joined, a wallpaper, saved"
+
+# --- the REAL tool's window carries that app_id, read from the compositor --
+# The whole path a person takes (bin/hwdp, cmd/gdesk, desk-gtk) against the
+# headless sway's own output, sandboxed; killed before it can save anything.
+# TWICE: with no session bus, and with one of its own. GTK takes the
+# application's id only once it has registered on the bus, and the program's
+# name otherwise, which was `desk-gtk`: a rule keyed on the contract would
+# have stopped matching wherever the bus was missing.
+# It sets _seen rather than printing it: called as $(...), its subshell
+# would run the harness's exit trap on the way out and remove $T.
+_app_id_seen() {   # [wrapper...]: _seen = the app_id of the first window
+  ( exec "$@" env -i PATH=/usr/bin:/bin HOME="$T/home" \
+      XDG_RUNTIME_DIR="$T/run" XDG_CONFIG_HOME="$T/home/.config" \
+      XDG_STATE_HOME="$T/home/.state" XDG_CACHE_HOME="$T/home/.cache" \
+      KANSHI_PROFILES="$T/no-profiles" HWDP_HOOK_ROOT="$T/no-hooks" \
+      HWDP_MACHINE_HOOKS="$T/no-hooks" HWDP_MACHINE_PROVIDERS="$T/no-machine" \
+      HWDP_PROVIDER_ROOT="$T/no-user" WAYLAND_DISPLAY="$_wl" \
+      GSK_RENDERER=cairo GDK_BACKEND=wayland \
+      DBUS_SESSION_BUS_ADDRESS="${_bus:-disabled:}" \
+      sh "$HERE/bin/hwdp" gdesk >"$T/gdesk.log" 2>&1 ) &
+  _gd=$!
+  harness_cleanup "kill $_gd $_sway 2>/dev/null"
+  _i=0 _seen=
+  while [ "$_i" -lt 75 ]; do
+    _seen=$(swaymsg -s "$T/run/sway.sock" -t get_tree 2>/dev/null \
+      | python3 -c '
+import json, sys
+def walk(n):
+    if n.get("app_id"):
+        print(n["app_id"])
+    for c in n.get("nodes", []) + n.get("floating_nodes", []):
+        walk(c)
+walk(json.load(sys.stdin))' 2>/dev/null) || _seen=
+    [ -n "$_seen" ] && break
+    _i=$((_i + 1))
+    sleep 0.2
+  done
+  kill "$_gd" 2>/dev/null || :
+  _j=0
+  while kill -0 "$_gd" 2>/dev/null && [ "$_j" -lt 25 ]; do
+    _j=$((_j + 1)); sleep 0.2
+  done
+}
+_bus=
+_app_id_seen
+[ "$_seen" = "$_id" ] || fail "with no session bus the window's app_id is \
+'$_seen', not the published '$_id': $(tail -3 "$T/gdesk.log")"
+if command -v dbus-run-session >/dev/null 2>&1; then
+  _app_id_seen dbus-run-session --
+  [ "$_seen" = "$_id" ] || fail "with a session bus the window's app_id is \
+'$_seen', not the published '$_id': $(tail -3 "$T/gdesk.log")"
+  pass "the real hwdp gdesk window carries the published app_id, bus or none"
+else
+  pass "the real window carries the published app_id with no bus (no"\
+" dbus-run-session here to try one)"
+fi

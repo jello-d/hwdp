@@ -74,6 +74,10 @@ try:
 except ImportError:
     cairo = None
 
+# THE WINDOW'S app_id IS A PUBLISHED CONTRACT: an integrator's window rule
+# (sticky, always on top) matches on it, and the title is no key, since it
+# names the desk. Changing it silently breaks every such rule, so it does
+# not change; `hwdp gdesk --app-id` prints it for a rule to be made from.
 APP_ID = "io.github.jello_d.hwdp.gdesk"
 TABS = ("physical", "surfaces", "virtual", "review")    # app.tab's order
 MARGIN = 32         # widget pixels around a drawing
@@ -1249,6 +1253,9 @@ def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help"):
         print(__doc__.split("\n\n")[1])
         return 0
+    if argv[1:] == ["--app-id"]:
+        print(APP_ID)           # needs no GTK and no session: a rule's key
+        return 0
     if GTK_WHY:
         print("hwdp gdesk: needs python3-gi with GTK 4 and libadwaita"
               " (%s); hwdp desk works in a terminal" % GTK_WHY,
@@ -1262,6 +1269,12 @@ def main(argv):
     if not app:
         print("hwdp gdesk: " + why, file=sys.stderr)
         return rc
+    # The app_id must not depend on D-Bus: GTK takes the application's id
+    # only once it has REGISTERED on the session bus, and otherwise the
+    # program's name, which was `desk-gtk` (measured: no bus, no rule
+    # match). The name IS the id, so both paths give the contract.
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("hwdp gdesk")
     gapp = Adw.Application(application_id=APP_ID,
                            flags=Gio.ApplicationFlags.NON_UNIQUE)
     gapp.connect("activate", lambda g: Window(g, app).win.present())
