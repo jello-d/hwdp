@@ -451,7 +451,25 @@ EOF
     || fail "one output: a slice per cell: $(cat "$_m1")"
   PATH="$T/bin:$PATH" "$WS" -o "$T/one" "$T/src.png" >/dev/null 2>&1 \
     && fail "the single-image mode must still refuse one output"
+  # A layout handed in (a desk being edited) is cut for instead, and the
+  # live one is never asked for.
+  : > "$T/geoms"
+  # Its trailing newline matters: a blank line once read as a 0mm panel.
+  _lay="AA-1 1000 1000 normal 1 0 0 400 400 landscape 300 300
+BB-2 1000 1000 normal 1 400 0 400 400 landscape 300 300
+"
+  _ml=$(WALLPAPER_SLICER_LAYOUT=$_lay \
+      PATH="$T/bin:$PATH" "$WS" -d "$T/walls" -o "$T/lout" \
+      -M "$T/walls.map") || fail "map mode failed on a layout handed in"
+  [ "$(grep -c . "$T/geoms")" -eq 0 ] \
+    || fail "with WALLPAPER_SLICER_LAYOUT set the live layout was read"
+  [ "$(grep -c ' AA-1 /\| BB-2 /' "$_ml")" -eq 4 ] \
+    || fail "the cut is not for the layout handed in: $(cat "$_ml")"
+  _px=$("$_img" identify -format '%w' "$(awk '$3 == "AA-1" { print $4; exit }' \
+    "$_ml")" 2>/dev/null)
+  [ "$_px" = 400 ] || fail "a slice is cut at the layout's size: $_px"
   pass "map mode: one layout read, tiled, cached, probed, renamed, one panel"
+  pass "map mode cuts for WALLPAPER_SLICER_LAYOUT, never asking the session"
 fi
 
 _missing=

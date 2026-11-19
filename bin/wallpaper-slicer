@@ -57,6 +57,9 @@
 #       slice is already cached for the layout as it is, else exit 3. How a
 #       caller decides between the slices now and a cut in the background.
 #       fit's padding colour is WALLPAPER_SLICER_BG (default black)
+#       WALLPAPER_SLICER_LAYOUT, `hwdp geometry` lines, is cut for INSTEAD of
+#       the live layout: how a desk being edited (`hwdp gdesk`, unsaved, or
+#       not even attached) is previewed by the same cut the session gets
 #       WALLPAPER_SLICER_TOOL pins the backend (magick|convert|vips)
 #
 # Callers slicing DIFFERENT sources must pass distinct -o dirs; slices are named
@@ -329,7 +332,14 @@ make_slice() {
 _self=$(readlink -f "$0" 2>/dev/null) || _self=$0
 HWDP_LIB=${HWDP_LIB:-$(dirname "$(dirname "$_self")")/lib}
 read_geometry() {
-  _g=$(hwdp geometry 2>/dev/null) || return 0
+  if [ -n "${WALLPAPER_SLICER_LAYOUT:-}" ]; then
+    # Blank lines dropped: a trailing newline (which `$(hwdp geometry)`
+    # never has) read as a panel of 0mm, and everything fell back to
+    # logical space and cut nothing, in silence.
+    _g=$(printf '%s\n' "$WALLPAPER_SLICER_LAYOUT" | awk 'NF')
+  else
+    _g=$(hwdp geometry 2>/dev/null) || return 0
+  fi
   [ -n "$_g" ] || return 0
   # A panel with no size: logical space for all, since the two cannot mix.
   if printf '%s\n' "$_g" | awk '$11 + 0 <= 0 || $12 + 0 <= 0 { b = 1 }
