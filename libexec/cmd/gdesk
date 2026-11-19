@@ -14,7 +14,8 @@
 # through the scripted commands (`hwdp arrange`, `hwdp profile --write`,
 # `hwdp surfaces --write`), so it can never write what they would refuse.
 # Needs a Wayland session (exit 3) and python3-gi with GTK 4 and libadwaita
-# (exit 4).
+# (exit 4). ONE DESK TOOL AT A TIME, this or `hwdp desk`: with one open it
+# exits 5 and says which (two editors on a desk would save over each other).
 # (end of --help)
 set -eu
 

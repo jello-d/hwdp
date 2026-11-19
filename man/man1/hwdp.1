@@ -335,6 +335,9 @@ nothing in progress asks the same, but there Enter answers keep editing,
 so a stray Esc never writes or discards anything. It needs python3
 (curses), and saves through
 .BR "hwdp arrange" .
+One desk tool at a time, this or
+.BR "hwdp gdesk" :
+with one open it exits 5 and says which.
 .TP
 .BR "hwdp gdesk" " [" \fIdesk\fR " | " \-\-app\-id ]
 The same desk tool in a window (GTK 4 and libadwaita), on the same code, so
@@ -365,6 +368,10 @@ a name, join two
 placed halves) is a dialog, and the name form and pickers are windows
 with fields. REVIEW is the map as it will be saved. It needs a Wayland
 session (exit 3) and python3-gi with GTK 4 and libadwaita (exit 4).
+ONE DESK TOOL AT A TIME, this or
+.BR "hwdp desk" :
+with one open, it exits 5 and says which, since two editors on one desk
+would each save over the other.
 .B \-\-app\-id
 prints the window's Wayland app_id,
 .IR io.github.jello_d.hwdp.gdesk ,

@@ -351,6 +351,41 @@ env -i PATH=/usr/bin:/bin sh "$HERE/bin/hwdp" gdesk --app-id x \
   >/dev/null 2>&1 && fail "--app-id took an argument"
 pass "hwdp gdesk --app-id prints the window's app_id, with no session"
 
+# --- one desk tool at a time, of either kind ---------------------------------
+mkdir -p "$T/lockrun"
+_out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/lockrun" \
+  python3 -I - "$HERE" "$T" 2>&1 <<'PY'
+import os, subprocess, sys, time
+exec(open(sys.argv[2] + "/common.py").read())
+env = dict(os.environ, WAYLAND_DISPLAY="wayland-nowhere")
+def tool(cmd):
+    p = subprocess.run(["sh", here + "/bin/hwdp", cmd], env=env,
+                       stdin=subprocess.DEVNULL, capture_output=True,
+                       text=True, timeout=30)
+    return p.returncode, p.stderr
+fd, why = hwdp.desk_lock("the test")
+check("the first takes the lock", fd is not None, why)
+for cmd in ("gdesk", "desk"):
+    rc, err = tool(cmd)
+    check("with one open, hwdp %s refuses, exit 5, saying which" % cmd,
+          rc == 5 and "already open (the test, pid %d)" % os.getpid()
+          in err, (rc, err))
+kid = subprocess.Popen(["sleep", "3"])        # started while it is held
+os.close(fd)
+fd, why = hwdp.desk_lock("again")
+check("let go, it is free, though a child it started still runs",
+      fd is not None and kid.poll() is None, why)
+os.close(fd)
+kid.kill()
+rc, err = tool("desk")
+check("free, a tool gets past it (to the terminal it needs)",
+      rc == 2 and "needs a terminal" in err, (rc, err))
+print("FAILS:" + "|".join(fails) if fails else "OK")
+PY
+)
+case $_out in *OK) ;; *) fail "lock: $_out" ;; esac
+pass "one desk tool at a time: the second refuses (exit 5), naming the first"
+
 # --- the real window, in a headless sway of its own -------------------------
 command -v sway >/dev/null 2>&1 || { pass "window not run (no sway)"; exit 0; }
 python3 -c 'import gi; gi.require_version("Gtk", "4.0")

@@ -568,6 +568,10 @@ def main(argv):
         print("hwdp desk: the tool takes no arguments but a desk"
               " (hwdp desk <desk>)", file=sys.stderr)
         return 2
+    held, why = desk_lock("hwdp desk")
+    if held is None:
+        print("hwdp desk: " + why, file=sys.stderr)
+        return 5
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print("hwdp desk: the tool needs a terminal; hwdp arrange takes"
               " placements to script a layout", file=sys.stderr)

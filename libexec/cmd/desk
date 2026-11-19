@@ -10,7 +10,8 @@
 # and a review of what will be saved. Its keys are under `hwdp desk` in
 # hwdp(1). Everything it saves goes through the scripted commands (`hwdp
 # arrange`, `hwdp profile --write`, `hwdp surfaces --write`), so it can never
-# write what they would refuse.
+# write what they would refuse. ONE DESK TOOL AT A TIME, this or `hwdp
+# gdesk`: with one open it exits 5 and says which.
 # (end of --help)
 set -eu
 

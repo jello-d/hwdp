@@ -1,4 +1,5 @@
 """hwdp desk: every call out to hwdp, and the offline stand-in for it."""
+import fcntl
 import os
 import re
 import shutil
@@ -16,6 +17,30 @@ def here():
         root = os.path.dirname(root)
     return (os.environ.get("HWDP_LIBEXEC", os.path.join(root, "libexec")),
             os.environ.get("HWDP_LIB", os.path.join(root, "lib")))
+
+
+def desk_lock(what):
+    """ONE DESK TOOL AT A TIME, of either kind (`hwdp desk`, `hwdp gdesk`):
+    two editors on one desk would each save over the other. Held for the
+    process's life and let go by the kernel however it ends, so a crash
+    leaves nothing stale; never inherited, so nothing it starts holds it.
+    (fd, "") holding it, or (None, why) when another has it, WHAT naming
+    this one for the next to say."""
+    run = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "hwdp")
+    os.makedirs(run, exist_ok=True)
+    fd = os.open(os.path.join(run, "desk.lock"),
+                 os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        held = os.read(fd, 200).decode(errors="replace").split(None, 1)
+        os.close(fd)
+        return None, "the desk tool is already open (%s)" % (
+            "%s, pid %s" % (held[1].strip(), held[0]) if len(held) == 2
+            else "another one")
+    os.ftruncate(fd, 0)
+    os.write(fd, ("%d %s\n" % (os.getpid(), what)).encode())
+    return fd, ""
 
 
 # --- talking to hwdp ---------------------------------------------------------

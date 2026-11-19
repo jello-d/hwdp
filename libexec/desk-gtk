@@ -53,7 +53,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("HWDP_LIB") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
 from hwdp_desk.controller import App, ESC, key_code     # noqa: E402
-from hwdp_desk.hwdp import Hwdp, OfflineHwdp            # noqa: E402
+from hwdp_desk.hwdp import Hwdp, OfflineHwdp, desk_lock # noqa: E402
 from hwdp_desk.model import (                           # noqa: E402
     HALVES, NEAR, REGION_OF, Desk, near_misses, slicer_layout, slicer_name)
 from hwdp_desk.words import (                           # noqa: E402
@@ -1367,6 +1367,10 @@ def main(argv):
         print("hwdp gdesk: needs a Wayland session; hwdp desk works in a"
               " terminal", file=sys.stderr)
         return 3
+    held, why = desk_lock("hwdp gdesk")
+    if held is None:
+        print("hwdp gdesk: " + why, file=sys.stderr)
+        return 5
     app, why, rc = load(argv)
     if not app:
         print("hwdp gdesk: " + why, file=sys.stderr)
