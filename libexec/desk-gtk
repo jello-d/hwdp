@@ -3,7 +3,8 @@
 
 `hwdp gdesk` lands here; `hwdp gdesk <desk>` too, for a desk by name
 (`hwdp desks`), which away from its panels is loaded from its files and
-saved back to them without applying. The same desk tool as `hwdp desk`:
+saved back to them without applying. The same desk tool as `hwdp desk`,
+four tabs over one desk:
 
   PHYSICAL, the layout, drawn to scale
     click         select a monitor          drag  move it: it stays where it
@@ -13,16 +14,28 @@ saved back to them without applying. The same desk tool as `hwdp desk`:
     o             switch it off / back on   i     a label on every monitor
     p             preview live, with a countdown that reverts unless kept
     m, arrows     move mode, as in the terminal (shift+arrow one pixel)
+  SURFACES, the names: each with its label and where it is at this desk
+    a             add one                   e     its label (or double-click)
+    D             delete it (from every desk's list; asked first)
+  VIRTUAL, the grid: a miniature of the desk in every workspace cell
+    click         select a spot (a panel, or half of one, in a cell)
+    drag a name   from the list beside the grid onto a spot: placed there
+    Enter         pick the name for the spot (or double-click it)
+    g             cut the panel in this cell: whole, top-bottom, left-right
+    x             clear the spot            f / F  the default / none
+    b             the cell's wallpaper      + - ] [  columns and rows
   REVIEW, the map as it will be saved, and what is missing from it
   everywhere
+    1 - 4         the tabs
     Ctrl+S or s   save, and keep editing
     Esc           back out of what is in progress (undo a move or drag, drop
                   the mark); with nothing in progress, the quit prompt
     q or closing  quit; with unsaved changes it asks first
 
-THIS FILE ONLY DRAWS. What a key or a drag means (the App), the desk as data
-and every call out to hwdp live in lib/hwdp_desk, shared with the terminal
-tool, so the two cannot disagree about what a desk is or how it is saved.
+THIS FILE ONLY DRAWS. What a key, a click or a drag means (the App), the
+desk as data, the words both views say and every call out to hwdp live in
+lib/hwdp_desk, shared with the terminal tool, so the two cannot disagree
+about what a desk is or how it is saved.
 """
 import os
 import sys
@@ -31,30 +44,39 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("HWDP_LIB") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
-from hwdp_desk.controller import App, ESC, key_code   # noqa: E402
-from hwdp_desk.hwdp import Hwdp, OfflineHwdp          # noqa: E402
-from hwdp_desk.model import NEAR, Desk, near_misses   # noqa: E402
-from hwdp_desk.words import error_lines, review_lines  # noqa: E402
+from hwdp_desk.controller import App, ESC, key_code     # noqa: E402
+from hwdp_desk.hwdp import Hwdp, OfflineHwdp            # noqa: E402
+from hwdp_desk.model import (                           # noqa: E402
+    HALVES, NEAR, REGION_OF, Desk, near_misses)
+from hwdp_desk.words import (                           # noqa: E402
+    cell_words, covered, delname_words, error_lines, label_of, mark_of,
+    pick_words, review_lines, selection_words, unsplit_words, where_words)
 
 try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+    from gi.repository import (Adw, Gdk, Gio, GLib, GObject, Gtk, Pango,
+                               PangoCairo)
     GTK_WHY = ""
 except (ImportError, ValueError) as e:      # said by main, not here
     GTK_WHY = str(e)
 
 APP_ID = "io.github.jello_d.hwdp.gdesk"
-MARGIN = 32         # widget pixels around the drawing
+TABS = ("physical", "surfaces", "virtual", "review")    # app.tab's order
+MARGIN = 32         # widget pixels around a drawing
 TRAY = 56           # the strip under it for the monitors switched off
 REACH = 12          # widget pixels within which a drag pulls in to align
 SLOP = 4            # widget pixels a press may wander and still be a click
+CELL_GAP = 10       # between the virtual tab's cells
+CELL_HEAD = 22      # a cell's own line: where it is, its wallpaper
+ENTER = 10
 TICK_MS = 100
+FRACTION = {r: f for f, r in REGION_OF.items()}         # region -> x y w h
 
 
-# --- the frame: logical pixels to widget pixels ------------------------------
-# Pure, so a test reads it without a display.
+# --- the frames: logical pixels to widget pixels -----------------------------
+# Pure, so a test reads them without a display.
 
 def frame(outs, w, h, room=None):
     """(scale, ox, oy, minx, miny) fitting the outputs that are on into a
@@ -95,12 +117,74 @@ def tray_boxes(outs, w, h):
     return found
 
 
+def inside(px, py, r):
+    return r[0] <= px <= r[0] + r[2] and r[1] <= py <= r[1] + r[3]
+
+
 def hit(outs, fr, w, h, px, py):
     """The index of the output under widget point (PX, PY), or None."""
     rects = [(i, box(o, fr)) for i, o in enumerate(outs) if o.on]
-    for i, (x, y, bw, bh) in rects + tray_boxes(outs, w, h):
-        if x <= px <= x + bw and y <= py <= y + bh:
+    for i, r in rects + tray_boxes(outs, w, h):
+        if inside(px, py, r):
             return i
+    return None
+
+
+def vframe(app, w, h):
+    """The virtual tab's frame: every cell the same size, each holding the
+    desk at one scale, as a dict (cw, ch: a cell's pitch; s: the scale;
+    minx, miny, bw, bh: the desk's logical bounds)."""
+    on = app.desk.on()
+    gw, gh = app.grid
+    minx, miny = min(o.x for o in on), min(o.y for o in on)
+    bw = max(o.x + o.w for o in on) - minx
+    bh = max(o.y + o.h for o in on) - miny
+    cw, ch = (w - 2 * MARGIN) / gw, (h - 2 * MARGIN) / gh
+    iw = max(1, cw - CELL_GAP - 12)
+    ih = max(1, ch - CELL_GAP - CELL_HEAD - 8)
+    return {"cw": cw, "ch": ch, "s": min(iw / bw, ih / bh), "minx": minx,
+            "miny": miny, "bw": bw, "bh": bh}
+
+
+def cell_rect(vf, cx, cy):
+    return (MARGIN + cx * vf["cw"], MARGIN + cy * vf["ch"],
+            vf["cw"] - CELL_GAP, vf["ch"] - CELL_GAP)
+
+
+def vbox(vf, cx, cy, o):
+    """Output O's rectangle in cell (cx, cy), in widget pixels."""
+    x, y, w, h = cell_rect(vf, cx, cy)
+    s = vf["s"]
+    ox = x + (w - vf["bw"] * s) / 2
+    oy = y + CELL_HEAD + (h - CELL_HEAD - vf["bh"] * s) / 2
+    return (ox + (o.x - vf["minx"]) * s, oy + (o.y - vf["miny"]) * s,
+            o.w * s, o.h * s)
+
+
+def part(region, r):
+    """REGION's rectangle inside rectangle R."""
+    fx, fy, fw, fh = FRACTION[region]
+    return (r[0] + fx * r[2], r[1] + fy * r[3], fw * r[2], fh * r[3])
+
+
+def vhit(app, w, h, px, py):
+    """(cx, cy, output, region) under widget point (PX, PY) in the virtual
+    tab: the half of a panel when it is cut in that cell, the whole panel
+    when not, (cx, cy, None, None) between panels; None outside every
+    cell."""
+    vf = vframe(app, w, h)
+    for cy in range(app.grid[1]):
+        for cx in range(app.grid[0]):
+            if not inside(px, py, cell_rect(vf, cx, cy)):
+                continue
+            for o in app.desk.on():
+                b = vbox(vf, cx, cy, o)
+                if not inside(px, py, b):
+                    continue
+                for rg in HALVES[app.split_at(o, cx, cy)]:
+                    if inside(px, py, part(rg, b)):
+                        return cx, cy, o, rg
+            return cx, cy, None, None
     return None
 
 
@@ -117,14 +201,14 @@ def banner_text(desk):
     return ""
 
 
-# --- the drawing -------------------------------------------------------------
+# --- drawing -----------------------------------------------------------------
 
 def rgba(c, alpha=None):
     return (c.red, c.green, c.blue, c.alpha if alpha is None else alpha)
 
 
 def rounded(cr, x, y, w, h, r):
-    r = min(r, w / 2, h / 2)
+    r = max(0, min(r, w / 2, h / 2))
     cr.new_sub_path()
     cr.arc(x + w - r, y + r, r, -1.5708, 0)
     cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
@@ -133,14 +217,18 @@ def rounded(cr, x, y, w, h, r):
     cr.close_path()
 
 
+def layout(cr, s, size, bold):
+    lay = PangoCairo.create_layout(cr)
+    lay.set_font_description(Pango.FontDescription.from_string(
+        "Sans %s%d" % ("Bold " if bold else "", size)))
+    lay.set_text(s, -1)
+    return lay
+
+
 def text(cr, s, x, y, w, size, bold, colour):
     """S centred in width W at Y; returns the height it took (0 when it
     does not fit, and then draws nothing)."""
-    lay = PangoCairo.create_layout(cr)
-    fd = Pango.FontDescription.from_string(
-        "Sans %s%d" % ("Bold " if bold else "", size))
-    lay.set_font_description(fd)
-    lay.set_text(s, -1)
+    lay = layout(cr, s, size, bold)
     tw, th = lay.get_pixel_size()
     if tw > w - 8:
         return 0
@@ -148,6 +236,27 @@ def text(cr, s, x, y, w, size, bold, colour):
     cr.move_to(x + (w - tw) / 2, y)
     PangoCairo.show_layout(cr, lay)
     return th
+
+
+def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5):
+    """S in rectangle R at the largest of SIZES that fits it whole, else at
+    the smallest cut with an ellipsis (the line under the drawing says it
+    in full). ALIGN places it across: 0 left, 0.5 centred, 1 right."""
+    x, y, w, h = r
+    for size in sizes:
+        lay = layout(cr, s, size, bold)
+        tw, th = lay.get_pixel_size()
+        if tw <= w - 6 and th <= h:
+            break
+    else:
+        lay.set_width(int(max(1, w - 6) * Pango.SCALE))
+        lay.set_ellipsize(Pango.EllipsizeMode.END)
+        tw, th = lay.get_pixel_size()
+        if th > h or w < 12:
+            return
+    cr.set_source_rgba(*colour)
+    cr.move_to(x + 3 + (w - 6 - tw) * align, y + (h - th) / 2)
+    PangoCairo.show_layout(cr, lay)
 
 
 def draw_output(cr, app, i, rect, fg, accent):
@@ -177,6 +286,83 @@ def draw_output(cr, app, i, rect, fg, accent):
         took = text(cr, s, x, ty, w, size, bold, rgba(fg, 0.9))
         ty += took + 2
 
+
+def draw_cut(cr, sp, b, fg):
+    """A panel cut in a cell: a dashed line between its halves."""
+    cr.set_dash([3, 3])
+    cr.set_line_width(1)
+    cr.set_source_rgba(*rgba(fg, 0.5))
+    r = part(HALVES[sp][0], b)
+    if sp == "top-bottom":
+        cr.move_to(b[0], r[1] + r[3])
+        cr.line_to(b[0] + b[2], r[1] + r[3])
+    else:
+        cr.move_to(r[0] + r[2], b[1])
+        cr.line_to(r[0] + r[2], b[1] + b[3])
+    cr.stroke()
+    cr.set_dash([])
+
+
+def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent):
+    """One panel in one cell: its surfaces in their parts, the cut, the
+    default where nothing claims it, and LIT (a region) the selection."""
+    rounded(cr, b[0], b[1], b[2], b[3], 3)
+    cr.set_source_rgba(*rgba(fg, 0.07))
+    cr.fill_preserve()
+    cr.set_line_width(1)
+    cr.set_source_rgba(*rgba(fg, 0.35))
+    cr.stroke()
+    sp = app.split_at(o, cx, cy)
+    if sp:
+        draw_cut(cr, sp, b, fg)
+    for x in app.surfaces:
+        if x.conn != o.conn or (x.cx, x.cy) != (cx, cy):
+            continue
+        r = part(x.region, b)
+        rounded(cr, r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4, 3)
+        cr.set_source_rgba(*rgba(accent, 0.5 if x.region == lit else 0.22))
+        cr.fill()
+        fit(cr, label_of(app, x.name), r, rgba(fg, 0.95))
+    claimed, whole = covered(app, o, cx, cy)
+    d = app.default
+    if not whole and d and d.conn == o.conn and d.region not in claimed:
+        fit(cr, "(%s)" % label_of(app, d.name), part(d.region, b),
+            rgba(fg, 0.45), bold=False)
+    if lit:
+        r = part(lit, b)
+        rounded(cr, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, 3)
+        cr.set_line_width(2.5)
+        cr.set_source_rgba(*rgba(accent))
+        cr.stroke()
+
+
+def draw_cell(cr, app, vf, cx, cy, fg, accent):
+    cur = [cx, cy] == app.vcell
+    x, y, w, h = cell_rect(vf, cx, cy)
+    rounded(cr, x, y, w, h, 8)
+    cr.set_source_rgba(*rgba(fg, 0.03))
+    cr.fill_preserve()
+    cr.set_line_width(2 if cur else 1)
+    cr.set_source_rgba(*(rgba(accent) if cur else rgba(fg, 0.18)))
+    cr.stroke()
+    head = (x + 4, y + 2, w - 8, CELL_HEAD - 2)
+    fit(cr, "%d,%d" % (cx, cy), head, rgba(fg, 0.6), sizes=(9,), align=0)
+    wall = app.walls.get((cx, cy))
+    if wall:
+        fit(cr, wall, (x + w / 3, y + 2, w * 2 / 3 - 4, CELL_HEAD - 2),
+            rgba(fg, 0.5), bold=False, sizes=(8,), align=1)
+    sel_o, sel_r = app.vspot()
+    for o in app.desk.on():
+        draw_panel(cr, app, o, cx, cy, vbox(vf, cx, cy, o),
+                   sel_r if cur and o is sel_o else None, fg, accent)
+
+
+def colours(area):
+    return area.get_color(), \
+        Adw.StyleManager.get_default().get_accent_color_rgba()
+
+
+# --- the physical tab --------------------------------------------------------
 
 class DeskView:
     """The PHYSICAL drawing: every output to scale, dragged with the
@@ -233,8 +419,7 @@ class DeskView:
 
     def _draw(self, area, cr, w, h):
         app = self.win.app
-        fg = area.get_color()
-        accent = Adw.StyleManager.get_default().get_accent_color_rgba()
+        fg, accent = colours(area)
         fr = self.fr()
         for i, o in enumerate(app.desk.outs):
             if o.on:
@@ -243,13 +428,209 @@ class DeskView:
             draw_output(cr, app, i, rect, fg, accent)
 
 
+# --- the surfaces tab: the names ---------------------------------------------
+
+class NamesPage:
+    """Every name, its label and where it is at this desk; the App's
+    selected one selected. Rebuilt only when what it shows changes."""
+
+    def __init__(self, win):
+        self.win, self.shown, self.quiet = win, None, False
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.list.add_css_class("boxed-list")
+        self.list.set_placeholder(Gtk.Label(
+            label="No names yet: Add makes one", margin_top=24,
+            margin_bottom=24))
+        self.list.connect("row-selected", self.on_selected)
+        self.list.connect("row-activated",
+                          lambda *_: self.win.press(ord("e")))
+        clamp = Adw.Clamp(child=self.list, maximum_size=760, margin_top=24,
+                          margin_bottom=24, margin_start=12, margin_end=12,
+                          valign=Gtk.Align.START)
+        self.widget = Gtk.ScrolledWindow(child=clamp, vexpand=True)
+
+    def on_selected(self, lb, row):
+        if row is not None and not self.quiet:
+            self.win.app.side = row.get_index()
+            self.win.sync()
+
+    def sync(self):
+        app = self.win.app
+        now = [(n, lab, mark_of(app, n)[0], where_words(app, n))
+               for n, lab in app.names]
+        self.quiet = True
+        if now != self.shown:
+            self.shown = now
+            self.list.remove_all()
+            for n, lab, mk, at in now:
+                row = Adw.ActionRow(title=lab, subtitle="%s · %s" % (n, at),
+                                    use_markup=False, activatable=True)
+                row.add_prefix(Gtk.Label(label=mk, width_chars=2))
+                self.list.append(row)
+        row = self.list.get_row_at_index(app.side)
+        if row is not None and self.list.get_selected_row() is not row:
+            self.list.select_row(row)
+        self.quiet = False
+
+
+# --- the virtual tab: the grid, and the names to drag onto it ----------------
+
+class GridPage:
+    """The grid of desk miniatures, the names beside it to drag onto a
+    spot, and the selection in full under it."""
+
+    def __init__(self, win):
+        self.win, self.shown = win, None
+        self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
+        self.area.set_draw_func(self._draw)
+        click = Gtk.GestureClick()
+        click.connect("pressed", self.on_press)
+        self.area.add_controller(click)
+        drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.COPY)
+        drop.connect("motion", self.on_motion)
+        drop.connect("drop", self.on_drop)
+        self.area.add_controller(drop)
+        self.names = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.names.add_css_class("navigation-sidebar")
+        self.names.connect("row-activated", self.on_name)
+        side = Gtk.ScrolledWindow(child=self.names, width_request=200,
+                                  hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.sel = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.sel.add_css_class("heading")
+        self.cell = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        self.cell.add_css_class("dim-label")
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                      margin_bottom=8, margin_start=MARGIN, hexpand=True)
+        col.append(self.area)
+        col.append(self.sel)
+        col.append(self.cell)
+        self.widget = Gtk.Box()
+        self.widget.append(col)
+        self.widget.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        self.widget.append(side)
+
+    def at(self, x, y):
+        return vhit(self.win.app, self.area.get_width(),
+                    self.area.get_height(), x, y)
+
+    def on_press(self, gesture, n, x, y):
+        spot = self.at(x, y)
+        if spot is None or self.win.alert or self.win.app.busy:
+            return
+        self.win.app.select_spot(*spot)
+        if n == 2 and spot[2] is not None:
+            self.win.press(ENTER)       # the picker, as Enter opens it
+        self.win.sync()
+
+    def on_motion(self, target, x, y):
+        spot = self.at(x, y)
+        if spot is None or spot[2] is None:
+            return 0
+        self.win.app.select_spot(*spot)
+        self.win.sync()
+        return Gdk.DragAction.COPY
+
+    def on_drop(self, target, name, x, y):
+        spot = self.at(x, y)
+        if spot is None or spot[2] is None or self.win.alert:
+            return False
+        self.win.app.select_spot(*spot)
+        self.win.app.place(name)
+        self.win.sync()
+        return True
+
+    def on_name(self, lb, row):
+        """A name activated in the list goes on the selected spot."""
+        self.win.app.place(self.win.app.names[row.get_index()][0])
+        self.win.sync()
+
+    def _row(self, n, lab, mk, used):
+        row = Gtk.Box(spacing=8, margin_top=4, margin_bottom=4)
+        row.append(Gtk.Label(label=mk, width_chars=2))
+        name = Gtk.Label(label=lab, xalign=0, hexpand=True,
+                         ellipsize=Pango.EllipsizeMode.END)
+        if not used:
+            name.add_css_class("dim-label")
+        row.append(name)
+        src = Gtk.DragSource(actions=Gdk.DragAction.COPY)
+        src.connect("prepare",
+                    lambda *_: Gdk.ContentProvider.new_for_value(n))
+        row.add_controller(src)
+        row.set_tooltip_text("%s: drag it onto a spot" % n)
+        return row
+
+    def sync(self):
+        app = self.win.app
+        now = [(n, lab) + mark_of(app, n) for n, lab in app.names]
+        if now != self.shown:
+            self.shown = now
+            self.names.remove_all()
+            for item in now:
+                self.names.append(self._row(*item))
+        self.sel.set_text(selection_words(app))
+        self.cell.set_text(cell_words(app))
+        self.area.queue_draw()
+
+    def _draw(self, area, cr, w, h):
+        app = self.win.app
+        fg, accent = colours(area)
+        vf = vframe(app, w, h)
+        for cy in range(app.grid[1]):
+            for cx in range(app.grid[0]):
+                draw_cell(cr, app, vf, cx, cy, fg, accent)
+
+
 # --- the window --------------------------------------------------------------
 
 def button(label, icon, tip, call):
     b = Gtk.Button(tooltip_text=tip, focusable=False)
-    b.set_child(Adw.ButtonContent(label=label, icon_name=icon))
+    if label:
+        b.set_child(Adw.ButtonContent(label=label, icon_name=icon))
+    else:
+        b.set_icon_name(icon)
     b.connect("clicked", lambda _b: call())
     return b
+
+
+def tab_buttons(keyed, ident):
+    """Each tab's own buttons, every one pressing the terminal tool's key
+    for it (KEYED makes such a button)."""
+    sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+    return {
+        "physical": [
+            keyed("Rotate", "object-rotate-right-symbolic",
+                  "A quarter turn (r)", ord("r")),
+            keyed("Swap", "media-playlist-shuffle-symbolic",
+                  "Mark, then swap with another (w)", ord("w")),
+            keyed("On / off", "system-shutdown-symbolic",
+                  "Switch it off or back on (o)", ord("o")),
+            ident],
+        "surfaces": [
+            keyed("Add", "list-add-symbolic", "A new name (a)", ord("a")),
+            keyed("Label", "document-edit-symbolic", "Its label (e)",
+                  ord("e")),
+            keyed("Delete", "user-trash-symbolic",
+                  "From every desk's list, asked first (D)", ord("D"))],
+        "virtual": [
+            keyed("Place", "list-add-symbolic",
+                  "Pick the name for this spot (Enter)", ENTER),
+            keyed("Split", "view-dual-symbolic",
+                  "Cut the panel in this cell (g)", ord("g")),
+            keyed("Clear", "edit-clear-symbolic", "Clear the spot (x)",
+                  ord("x")),
+            keyed("Default", "starred-symbolic",
+                  "Pick the default for this spot (f)", ord("f")),
+            keyed(None, "non-starred-symbolic", "No default (F)", ord("F")),
+            keyed("Wallpaper", "image-x-generic-symbolic",
+                  "This cell's wallpaper (b)", ord("b")),
+            sep,
+            keyed(None, "list-remove-symbolic", "A column fewer (-)",
+                  ord("-")),
+            Gtk.Label(label="columns"),
+            keyed(None, "list-add-symbolic", "A column more (+)", ord("+")),
+            keyed(None, "list-remove-symbolic", "A row fewer ([)", ord("[")),
+            Gtk.Label(label="rows"),
+            keyed(None, "list-add-symbolic", "A row more (])", ord("]"))]}
 
 
 class Window:
@@ -258,28 +639,33 @@ class Window:
 
     def __init__(self, gapp, app):
         self.app = app
-        self.alert = None           # (kind, the dialog) while one is up
+        self.alert = None       # (kind, its dialog, refresh) while one is up
         self.win = Adw.ApplicationWindow(application=gapp,
-                                         default_width=1040,
-                                         default_height=680)
+                                         default_width=1200,
+                                         default_height=760)
         self.win.set_title(getattr(app.hw, "name", None) and
                            "%s: hwdp gdesk" % app.hw.name or "hwdp gdesk")
         self.stack = Adw.ViewStack()
         self.view = DeskView(self)
-        self.stack.add_titled_with_icon(self.view.area, "physical",
-                                        "Physical", "video-display-symbolic")
+        self.names = NamesPage(self)
+        self.grid = GridPage(self)
         self.review = Gtk.TextView(editable=False, monospace=True,
                                    cursor_visible=False, left_margin=24,
                                    top_margin=16)
-        sw = Gtk.ScrolledWindow(child=self.review, vexpand=True)
-        self.stack.add_titled_with_icon(sw, "review", "Review",
-                                        "view-list-symbolic")
-        self.stack.connect("notify::visible-child", lambda *_: self.sync())
+        for page, name, title, icon in (
+                (self.view.area, "physical", "Physical",
+                 "video-display-symbolic"),
+                (self.names.widget, "surfaces", "Surfaces", "tag-symbolic"),
+                (self.grid.widget, "virtual", "Virtual",
+                 "view-grid-symbolic"),
+                (Gtk.ScrolledWindow(child=self.review, vexpand=True),
+                 "review", "Review", "view-list-symbolic")):
+            self.stack.add_titled_with_icon(page, name, title, icon)
+        self.stack.connect("notify::visible-child-name", self.on_tab)
         self.banner = Adw.Banner()
         tv = Adw.ToolbarView(content=self.stack)
-        head = Adw.HeaderBar(title_widget=Adw.ViewSwitcher(
-            stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
-        tv.add_top_bar(head)
+        tv.add_top_bar(Adw.HeaderBar(title_widget=Adw.ViewSwitcher(
+            stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)))
         tv.add_top_bar(self.banner)
         tv.add_bottom_bar(self._bar())
         self.win.set_content(tv)
@@ -292,22 +678,22 @@ class Window:
         self.sync()
 
     def _bar(self):
-        bar = Gtk.ActionBar()
-        k = self.press
-        self.edits = [
-            button("Rotate", "object-rotate-right-symbolic",
-                   "A quarter turn (r)", lambda: k(ord("r"))),
-            button("Swap", "media-playlist-shuffle-symbolic",
-                   "Mark, then swap with another (w)", lambda: k(ord("w"))),
-            button("On / off", "system-shutdown-symbolic",
-                   "Switch it off or back on (o)", lambda: k(ord("o")))]
-        for b in self.edits:
-            bar.pack_start(b)
+        """The buttons under the drawing: this tab's own, then save."""
+        def keyed(label, icon, tip, code):
+            return button(label, icon, tip, lambda: self.press(code))
         self.ident = Gtk.ToggleButton(icon_name="find-location-symbolic",
                                       tooltip_text="A label on every "
                                       "monitor (i)", focusable=False)
         self.ident.connect("toggled", self.on_ident)
-        bar.pack_start(self.ident)
+        groups = tab_buttons(keyed, self.ident)
+        bar = Gtk.ActionBar()
+        self.groups = {}
+        for tab, items in groups.items():
+            g = Gtk.Box(spacing=4)
+            for b in items:
+                g.append(b)
+            bar.pack_start(g)
+            self.groups[tab] = g
         self.status = Gtk.Label(ellipsize=Pango.EllipsizeMode.END,
                                 hexpand=True, xalign=0.5)
         self.spinner = Adw.Spinner(visible=False)
@@ -315,22 +701,28 @@ class Window:
         mid.append(self.spinner)
         mid.append(self.status)
         bar.set_center_widget(mid)
-        self.save = button("Save", "document-save-symbolic",
-                           "Save, and keep editing (Ctrl+S)",
-                           lambda: k(ord("s")))
-        self.save.add_css_class("suggested-action")
-        self.preview = button("Preview", "view-reveal-symbolic",
-                              "Apply it live; it reverts unless kept (p)",
-                              lambda: k(ord("p")))
-        bar.pack_end(self.save)
+        save = keyed("Save", "document-save-symbolic",
+                     "Save, and keep editing (Ctrl+S)", ord("s"))
+        save.add_css_class("suggested-action")
+        self.preview = keyed("Preview", "view-reveal-symbolic",
+                             "Apply it live; it reverts unless kept (p)",
+                             ord("p"))
+        bar.pack_end(save)
         bar.pack_end(self.preview)
-        self.edits += [self.preview, self.save]
+        self.edits = [b for g in groups.values() for b in g
+                      if isinstance(b, Gtk.Button)] + [self.preview, save]
         return bar
 
     # --- input: everything reaches the App as the terminal's key codes --
     def press(self, code):
         self.app.key(code, time.monotonic())
         self.sync()
+
+    def on_tab(self, stack, _param):
+        tab = TABS.index(stack.get_visible_child_name())
+        if tab != self.app.tab:
+            self.app.tab, self.app.msg = tab, ""
+            self.sync()
 
     def on_key(self, ctrl, keyval, keycode, state):
         if self.alert:
@@ -345,11 +737,11 @@ class Window:
             return False
         code = key_code(name, char,
                         bool(state & Gdk.ModifierType.SHIFT_MASK))
-        if code is None or char.isdigit():
+        if code is None:
             return False
-        if self.stack.get_visible_child_name() != "physical" and \
-                code not in (ord("s"), ord("q"), ESC):
-            return False
+        if TABS[self.app.tab] == "review" and not (
+                code in (ord("s"), ord("q"), ESC) or char.isdigit()):
+            return False            # the review scrolls by itself
         self.press(code)
         return True
 
@@ -386,39 +778,64 @@ class Window:
             b.set_sensitive(not busy)
         if self.ident.get_active() != app.ident:
             self.ident.set_active(app.ident)
-        warn = banner_text(app.desk)
+        tab = TABS[app.tab]
+        if self.stack.get_visible_child_name() != tab:
+            self.stack.set_visible_child_name(tab)
+        for name, g in self.groups.items():
+            g.set_visible(name == tab)
+        self.preview.set_visible(tab == "physical")
+        warn = banner_text(app.desk) if tab == "physical" else ""
         self.banner.set_title(warn)
         self.banner.set_revealed(bool(warn))
-        if self.stack.get_visible_child_name() == "review":
-            text = "\n".join(review_lines(app))
+        self.sync_page(tab)
+        self.sync_alert()
+
+    def sync_page(self, tab):
+        if tab == "physical":
+            self.view.area.queue_draw()
+        elif tab == "surfaces":
+            self.names.sync()
+        elif tab == "virtual":
+            self.grid.sync()
+        else:
+            text = "\n".join(review_lines(self.app))
             buf = self.review.get_buffer()
             if buf.get_text(buf.get_start_iter(), buf.get_end_iter(),
                             False) != text:
                 buf.set_text(text)
-        self.view.area.queue_draw()
-        self.sync_alert()
 
     def sync_alert(self):
         kind = self.app.dialog[0] if self.app.dialog else None
         if self.alert and self.alert[0] != kind:
             shown, self.alert = self.alert[1], None
             shown.force_close()
-        if kind and not self.alert and kind in ALERTS:
-            d = ALERTS[kind](self.app)
-            d.connect("response", self.on_response)
-            self.alert = (kind, d)
+        if kind and not self.alert and kind in DIALOGS:
+            d, refresh = DIALOGS[kind](self)
+            self.alert = (kind, d, refresh)
             d.present(self.win)
-        if self.alert and self.alert[0] == "keep":
-            self.alert[1].set_body(keep_body(self.app))
+        if self.alert and self.alert[2]:
+            self.alert[2]()
 
     def on_response(self, d, rid):
+        """An alert answered: its answer is the terminal tool's key."""
         if not self.alert or self.alert[1] is not d:
             return                  # closed by sync, not by a person
         self.alert = None
         self.press(RESPONSES[rid])
 
+    def on_closed(self, d):
+        """A form closed by a person (Esc, Cancel): the App's Esc."""
+        if not self.alert or self.alert[1] is not d:
+            return
+        self.alert = None
+        self.press(ESC)
 
-# --- the dialogs: one for each of the App's that this window can raise -------
+
+# --- the dialogs: one for each of the App's ----------------------------------
+# Each builder takes the window and returns (the dialog, a refresh or
+# None). An ALERT answers with a response, mapped to the terminal tool's key
+# for it; a FORM (fields, a list) calls the App and closes when the App's
+# dialog does.
 
 def keep_body(app):
     left = max(0, int(app.dialog[1] - time.monotonic() + 0.999))
@@ -426,7 +843,7 @@ def keep_body(app):
         left, "" if left == 1 else "s")
 
 
-def alert(heading, body, responses, default, close):
+def alert(win, heading, body, responses, default, close):
     d = Adw.AlertDialog(heading=heading, body=body)
     for rid, label, look in responses:
         d.add_response(rid, label)
@@ -434,35 +851,169 @@ def alert(heading, body, responses, default, close):
             d.set_response_appearance(rid, look)
     d.set_default_response(default)
     d.set_close_response(close)
+    d.connect("response", win.on_response)
     return d
 
 
-def keep_alert(app):
-    return alert("Keep this layout?", keep_body(app),
-                 [("revert", "Revert", Adw.ResponseAppearance.DESTRUCTIVE),
-                  ("keep", "Keep", Adw.ResponseAppearance.SUGGESTED)],
-                 "keep", "revert")
+def keep_alert(win):
+    d = alert(win, "Keep this layout?", keep_body(win.app),
+              [("revert", "Revert", Adw.ResponseAppearance.DESTRUCTIVE),
+               ("keep", "Keep", Adw.ResponseAppearance.SUGGESTED)],
+              "keep", "revert")
+    return d, lambda: d.set_body(keep_body(win.app))
 
 
-def quit_alert(app):
-    return alert("Save the changes?", "This desk has changes not saved.",
+def quit_alert(win):
+    return alert(win, "Save the changes?", "This desk has changes not saved.",
                  [("cancel", "Keep editing", None),
                   ("discard", "Discard", Adw.ResponseAppearance.DESTRUCTIVE),
                   ("save", "Save", Adw.ResponseAppearance.SUGGESTED)],
-                 "save" if app.dialog[1] == ord("s") else "cancel",
-                 "cancel")
+                 "save" if win.app.dialog[1] == ord("s") else "cancel",
+                 "cancel"), None
 
 
-def error_alert(app):
-    d = app.dialog[1]
+def error_alert(win):
+    d = win.app.dialog[1]
     said = error_lines(dict(d), 100, 10 ** 6)[2:-2]
-    return alert(d["title"], "\n".join(said),
-                 [("close", "Close", None)], "close", "close")
+    return alert(win, d["title"], "\n".join(said),
+                 [("close", "Close", None)], "close", "close"), None
 
 
-ALERTS = {"keep": keep_alert, "quit": quit_alert, "error": error_alert}
+def delname_alert(win):
+    head, said = delname_words(win.app)
+    return alert(win, head, "\n".join(said),
+                 [("cancel", "Keep it", None),
+                  ("delete", "Delete", Adw.ResponseAppearance.DESTRUCTIVE)],
+                 "cancel", "cancel"), None
+
+
+def unsplit_alert(win):
+    head, said = unsplit_words(win.app)
+    return alert(win, head, "\n".join(said),
+                 [("cancel", "Keep the split", None),
+                  ("join", "Join", Adw.ResponseAppearance.DESTRUCTIVE)],
+                 "cancel", "cancel"), None
+
+
+def form_dialog(win, title, act, body, width=440, height=-1):
+    """A dialog with Cancel and ACT (a button) in its header over BODY;
+    closing it any way but ACT is the App's Esc."""
+    d = Adw.Dialog(title=title, content_width=width, content_height=height)
+    head = Adw.HeaderBar(show_start_title_buttons=False,
+                         show_end_title_buttons=False)
+    cancel = Gtk.Button(label="Cancel")
+    cancel.connect("clicked", lambda _b: d.close())
+    head.pack_start(cancel)
+    if act:
+        act.add_css_class("suggested-action")
+        head.pack_end(act)
+    tv = Adw.ToolbarView(content=body)
+    tv.add_top_bar(head)
+    d.set_child(tv)
+    d.connect("closed", win.on_closed)
+    return d
+
+
+def name_form(win):
+    """A new name, or the selected one's label: two fields, the App's
+    rules, and its refusal shown under them until it is right."""
+    app, f = win.app, win.app.form
+    edit = f["edit"] is not None
+    name = Adw.EntryRow(title="Name", text=f["name"], sensitive=not edit)
+    label = Adw.EntryRow(title="Label", text=f["label"])
+    group = Adw.PreferencesGroup(
+        description="A name is letters, digits, - and _, fixed once made."
+        " The label is what a workspace name shows (blank: the name).")
+    group.add(name)
+    group.add(label)
+    err = Gtk.Label(wrap=True, xalign=0)
+    err.add_css_class("error")
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                   margin_top=12, margin_bottom=18, margin_start=18,
+                   margin_end=18)
+    body.append(group)
+    body.append(err)
+    ok = Gtk.Button(label="Keep" if edit else "Add")
+
+    def submit(*_):
+        app.form_submit(name.get_text(), label.get_text())
+        win.sync()
+    ok.connect("clicked", submit)
+    name.connect("entry-activated", submit)
+    label.connect("entry-activated", submit)
+    d = form_dialog(win, "Label %s" % f["name"] if edit else
+                    "A new surface name", ok, body)
+    d.set_focus(label if edit else name)
+    d.fields, d.ok = (name, label), ok      # for a test to fill in
+    return d, lambda: err.set_text(app.form["err"] if app.form else "")
+
+
+def pick_rows(app, kind, rows, st):
+    """Fill ROWS with what the picker shows now; the App's choice
+    selected. Returns how many."""
+    shown = app.pick_list() if kind == "pick" else app.wpick_list()
+    rows.remove_all()
+    for item in shown:
+        if kind == "pick":
+            r = Adw.ActionRow(title=item[1], subtitle=item[0],
+                              use_markup=False, activatable=True)
+        else:
+            r = Adw.ActionRow(title=item, use_markup=False,
+                              activatable=True)
+        rows.append(r)
+    r = rows.get_row_at_index(min(st["sel"], max(0, len(shown) - 1)))
+    if r is not None:
+        rows.select_row(r)
+    return len(shown)
+
+
+def pick_form(win, kind):
+    """The name picker (pick) or the wallpaper picker (wpick): a filter and
+    the list it leaves; choosing a row is the App's Enter on it."""
+    app = win.app
+    st = app.pick if kind == "pick" else app.wpick
+    search = Gtk.SearchEntry(text=st["filter"], margin_start=12,
+                             margin_end=12, margin_top=6)
+    rows = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+    rows.add_css_class("boxed-list")
+    rows.set_placeholder(Gtk.Label(label="Nothing matches", margin_top=12,
+                                   margin_bottom=12))
+
+    def changed(_e):
+        st["filter"], st["sel"] = search.get_text(), 0
+        pick_rows(app, kind, rows, st)
+
+    def choose(_lb, row):
+        st["sel"] = row.get_index()
+        win.press(ENTER)
+
+    def first(_e):
+        if rows.get_row_at_index(0) is not None:
+            choose(None, rows.get_row_at_index(0))
+    search.connect("search-changed", changed)
+    search.connect("activate", first)
+    rows.connect("row-activated", choose)
+    pick_rows(app, kind, rows, st)
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    body.append(search)
+    body.append(Gtk.ScrolledWindow(child=Adw.Clamp(
+        child=rows, margin_start=12, margin_end=12, margin_bottom=12),
+        vexpand=True))
+    title = pick_words(app) if kind == "pick" else \
+        "Wallpaper of cell %d,%d" % tuple(app.vcell)
+    d = form_dialog(win, title, None, body, width=480, height=520)
+    d.set_focus(search)
+    d.search, d.rows = search, rows         # for a test to drive
+    return d, None
+
+
+DIALOGS = {"keep": keep_alert, "quit": quit_alert, "error": error_alert,
+           "delname": delname_alert, "unsplit": unsplit_alert,
+           "name": name_form, "pick": lambda w: pick_form(w, "pick"),
+           "wpick": lambda w: pick_form(w, "wpick")}
 RESPONSES = {"keep": ord("y"), "revert": ESC, "cancel": ESC,
-             "discard": ord("d"), "save": ord("s"), "close": 10}
+             "discard": ord("d"), "save": ord("s"), "close": ENTER,
+             "delete": ord("y"), "join": ord("y")}
 
 
 # --- the program -------------------------------------------------------------

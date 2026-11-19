@@ -506,6 +506,27 @@ class App:
             self.msg = "%s added; place it in the virtual tab" % f["name"]
         self.form, self.dialog = None, None
 
+    def form_submit(self, name, label):
+        """The name form, filled in whole (a view with entry fields): the
+        same rules as typing it, but a character typing would have refused
+        is SAID, never dropped. The form stays up, saying why, until it is
+        right or cancelled."""
+        f = self.form
+        if f["edit"] is None:
+            bad = sorted({c for c in name if not (c.isascii() and (
+                c.isalnum() or c in "_-"))})
+            if bad:
+                f["err"] = "a name is letters, digits, - and _ (not %s)" % \
+                    " ".join(bad)
+                return
+            f["name"] = name
+        bad = sorted({c for c in label if not 32 <= ord(c) < 127})
+        if bad:
+            f["err"] = "a label is plain ASCII (not %s)" % " ".join(bad)
+            return
+        f["label"] = label
+        self._form_done()
+
     def _name_gone(self):
         """Delete the selected name, and its places at THIS desk with it.
         Another desk placing it makes the save refuse, naming that desk."""
@@ -551,6 +572,27 @@ class App:
         on = self.desk.on()
         self.vpanel = on.index(o)
         self.vhalf = HALVES[self.split_at(o, *self.vcell)].index(rg)
+
+    def select_spot(self, cx, cy, o, region):
+        """Select output O's REGION in cell (cx, cy), as the arrows and Tab
+        would (a view's click). A region the cell's cut does not have
+        selects the panel's first stop there; no O selects the cell alone,
+        keeping the panel."""
+        on = self.desk.on()
+        if (o is not None and o not in on) or not (
+                0 <= cx < self.grid[0] and 0 <= cy < self.grid[1]):
+            return
+        self.vcell = [cx, cy]
+        if o is None:
+            return
+        self.vpanel = on.index(o)
+        hs = HALVES[self.split_at(o, cx, cy)]
+        self.vhalf = hs.index(region) if region in hs else 0
+
+    def place(self, name):
+        """Put NAME on the selected spot (a view's drop): what the picker
+        does with its choice."""
+        self._vplace(name)
 
     def at_spot(self):
         """The surfaces that overlap the selected spot."""

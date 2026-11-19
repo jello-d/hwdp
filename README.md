@@ -26,7 +26,8 @@ hwdp desk       the interactive desk tool: the layout (rotate, swap, move,
                 preview with a revert countdown, labels on every monitor),
                 the surface names, the grid and its wallpapers
 hwdp gdesk      the desk tool in a window (GTK 4, libadwaita): the layout
-                drawn to scale and dragged with the pointer
+                drawn to scale and dragged with the pointer, the names,
+                and the grid with names dragged onto it
 hwdp surfaces   this desk's named surfaces (panel, half, cell), resolved
 hwdp map        draw this desk in text: outputs, surfaces, problems
 hwdp desks      every known desk by name (made from its hardware, or

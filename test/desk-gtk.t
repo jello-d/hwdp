@@ -50,10 +50,22 @@ class FakeHw:
         return []
     def grid(self):
         return None
+    namesv = [["comms", "Comms"]]
     def names(self):
-        return []
+        return [list(n) for n in self.namesv]
     def wallpapers(self):
         return {}
+    def wallpaper_images(self):
+        return ["aurora.jpg", "night sky.png"]
+    def write_names(self, names):
+        self.calls.append(("names", [list(n) for n in names]))
+        return 0, ""
+    def write_desk(self, grid, surfaces, default, splits=()):
+        self.calls.append(("desk", grid, sorted(x.key() for x in surfaces)))
+        return 0, ""
+    def write_wallpapers(self, walls):
+        self.calls.append(("walls", dict(walls)))
+        return 0, ""
     def apply(self):
         self.calls.append(("apply",))
         return 0, ""
@@ -191,11 +203,58 @@ check("a near miss is said in the terminal tool's words",
 l.x += 30
 check("a desk that does not meet is said so",
       gui.banner_text(d) == "the monitors do not meet edge to edge")
+
+# The virtual tab's frame: a spot found by where it is drawn.
+d, (e, p, l), hw = desk()
+a = controller.App(d, hw)
+vf = gui.vframe(a, 1200, 700)
+b = gui.vbox(vf, 1, 0, l)
+check("a click on a panel in a cell is that panel, whole",
+      gui.vhit(a, 1200, 700, b[0] + b[2] / 2, b[1] + b[3] / 2)
+      == (1, 0, l, "full"))
+a.splits[("DP-2", 1, 0)] = "top-bottom"
+check("cut in that cell, the upper part is its top",
+      gui.vhit(a, 1200, 700, b[0] + 5, b[1] + 5) == (1, 0, l, "top"))
+check("and the lower part its bottom",
+      gui.vhit(a, 1200, 700, b[0] + 5, b[1] + b[3] - 5)
+      == (1, 0, l, "bottom"))
+c = gui.cell_rect(vf, 2, 2)
+check("a click in a cell between panels is the cell alone",
+      gui.vhit(a, 1200, 700, c[0] + 2, c[1] + 2) == (2, 2, None, None))
+check("a click outside every cell is nothing",
+      gui.vhit(a, 1200, 700, 1, 1) is None)
+inner = all(gui.vbox(vf, cx, cy, o)[0] >= gui.cell_rect(vf, cx, cy)[0]
+            and gui.vbox(vf, cx, cy, o)[0] + gui.vbox(vf, cx, cy, o)[2]
+            <= gui.cell_rect(vf, cx, cy)[0] + gui.cell_rect(vf, cx, cy)[2]
+            for cx in range(3) for cy in range(3) for o in d.on())
+check("every miniature sits inside its own cell", inner)
+
+# The name form, filled in whole: refused characters are said.
+a._name_add(0)
+a.form_submit("mail!", "Mail")
+check("a name with a character typing refuses is refused, and says it",
+      a.dialog and "not !" in a.form["err"], a.form)
+a.form_submit("mail", "Mäil")
+check("a label that is not plain ASCII is refused, and says it",
+      a.dialog and "not ä" in a.form["err"], a.form)
+a.form_submit("mail", "")
+check("a good name is added, its label the name when blank",
+      not a.dialog and ["mail", "mail"] in a.names, a.names)
+a.select_spot(1, 0, l, "bottom")
+check("select_spot takes a cell, a panel and a half",
+      a.vcell == [1, 0] and a.vspot() == (l, "bottom"), a.vspot())
+a.select_spot(2, 2, None, None)
+check("with no panel it takes the cell alone",
+      a.vcell == [2, 2] and a.vspot()[0] is l)
+a.place("mail")
+check("place puts a name on the selected spot",
+      [x.key() for x in a.surfaces] ==
+      [model.Surface("mail", "DP-2", "full", 2, 2).key()], a.surfaces)
 print("FAILS:" + "|".join(fails) if fails else "OK")
 PY
 )
 case $_out in *OK) ;; *) fail "frame: $_out" ;; esac
-pass "the frame fits the desk, a click finds its output, the tray the rest"
+pass "the frames: the desk fitted, a click finds its output, spot and half"
 
 # --- the real window, in a headless sway of its own -------------------------
 command -v sway >/dev/null 2>&1 || { pass "window not run (no sway)"; exit 0; }
@@ -313,3 +372,172 @@ PY
 )
 case $_out in *OK) ;; *) fail "window: $_out" ;; esac
 pass "the window: drag, keys, keep and error dialogs, the quit prompt"
+
+# --- the window: names, the grid, and every dialog they raise --------------
+_out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/run" \
+  WAYLAND_DISPLAY="$_wl" GSK_RENDERER=cairo GDK_BACKEND=wayland \
+  timeout 60 python3 -I - "$HERE" "$T" 2>&1 <<'PY'
+import sys, time, cairo
+exec(open(sys.argv[2] + "/common.py").read())
+from gi.repository import Adw, Gdk, Gio, GLib
+
+def drawn(label, fn, area, w, h):
+    """Draw a tab into an image: an exception in the drawing fails."""
+    try:
+        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h))
+        fn(area, cr, w, h)
+    except Exception as ex:
+        fails.append("%s: drawing raised %r" % (label, ex))
+
+def key(w, keyval):
+    return w.on_key(None, keyval, 0, 0)
+
+def surfaces_tab(w, a, hw):
+    key(w, Gdk.KEY_2)
+    check("2 is the surfaces tab", w.stack.get_visible_child_name()
+          == "surfaces" and a.tab == 1, a.tab)
+    key(w, Gdk.KEY_a)
+    yield
+    check("a opens the name form", w.alert and w.alert[0] == "name")
+    d = w.alert[1]
+    d.fields[0].set_text("mail!")
+    d.ok.emit("clicked")
+    yield
+    check("a refused name keeps the form up, saying why",
+          w.alert and w.alert[1] is d and "not !" in a.form["err"])
+    d.fields[0].set_text("mail")
+    d.fields[1].set_text("Mail")
+    d.ok.emit("clicked")
+    yield
+    check("a good one closes it and joins the list",
+          not w.alert and ["mail", "Mail"] in a.names
+          and w.names.list.get_row_at_index(1) is not None, a.names)
+    a.side = 1
+    key(w, Gdk.KEY_e)
+    yield
+    check("e opens the form on the selected name, its name fixed",
+          w.alert and w.alert[0] == "name"
+          and not w.alert[1].fields[0].get_sensitive())
+    w.alert[1].close()
+    yield
+    yield
+    check("closing the form is the App's Esc: nothing left open",
+          not w.alert and a.dialog is None and a.form is None,
+          (a.dialog, a.form))
+
+def virtual_tab(w, a, hw, outs):
+    e, p, l = outs
+    key(w, Gdk.KEY_3)
+    g = w.grid
+    g.area.set_size_request(900, 600)
+    while g.area.get_width() == 0:
+        yield
+    W, H = g.area.get_width(), g.area.get_height()
+    b = gui.vbox(gui.vframe(a, W, H), 1, 0, l)
+    mid = (b[0] + b[2] / 2, b[1] + b[3] / 2)
+    g.on_press(None, 1, *mid)
+    check("a click selects that spot", a.vcell == [1, 0]
+          and a.vspot() == (l, "full"), (a.vcell, a.vspot()))
+    check("dropping a name on a spot places it there",
+          g.on_drop(None, "comms", *mid) and
+          [x.key() for x in a.surfaces] ==
+          [model.Surface("comms", "DP-2", "full", 1, 0).key()], a.surfaces)
+    key(w, Gdk.KEY_g)
+    check("g cuts the panel, and what was whole goes to the top",
+          a.surfaces[0].region == "top", a.surfaces[0].region)
+    g.on_press(None, 1, b[0] + 5, b[1] + b[3] - 5)
+    check("a click on the lower half selects the bottom",
+          a.vspot() == (l, "bottom"), a.vspot())
+    key(w, Gdk.KEY_Return)
+    yield
+    check("Enter opens the picker", w.alert and w.alert[0] == "pick")
+    d = w.alert[1]
+    d.search.set_text("mai")
+    yield
+    yield
+    r = d.rows.get_row_at_index(0)
+    check("typing filters the picker", r is not None and
+          d.rows.get_row_at_index(1) is None and r.get_title() == "Mail")
+    d.rows.emit("row-activated", r)
+    yield
+    check("choosing a row places it, and closes the picker",
+          not w.alert and any(x.name == "mail" and x.region == "bottom"
+                              for x in a.surfaces), a.surfaces)
+    key(w, Gdk.KEY_g)
+    key(w, Gdk.KEY_g)
+    yield
+    check("joining two placed halves asks first",
+          w.alert and w.alert[0] == "unsplit")
+    w.alert[1].emit("response", "join")
+    yield
+    check("Join unplaces both", not w.alert and not a.surfaces, a.surfaces)
+    key(w, Gdk.KEY_b)
+    yield
+    check("b opens the wallpaper picker, the default first",
+          w.alert and w.alert[0] == "wpick" and
+          w.alert[1].rows.get_row_at_index(0).get_title() == "(default)")
+    d = w.alert[1]
+    d.rows.emit("row-activated", d.rows.get_row_at_index(2))
+    yield
+    check("choosing an image sets the cell's wallpaper",
+          a.walls == {(1, 0): "night sky.png"}, a.walls)
+    key(w, Gdk.KEY_plus)
+    check("+ adds a column", a.grid == (4, 3), a.grid)
+    g.on_drop(None, "comms", *mid)
+    drawn("virtual", g._draw, g.area, 900, 600)
+    drawn("physical", w.view._draw, w.view.area, 900, 600)
+
+def delete_and_save(w, a, hw):
+    key(w, Gdk.KEY_2)
+    a.side = 1
+    key(w, Gdk.KEY_D)
+    yield
+    check("D asks before a name goes", w.alert and w.alert[0] == "delname"
+          and "mail" in w.alert[1].get_heading())
+    w.alert[1].emit("response", "delete")
+    yield
+    check("Delete takes it from the list", a.names == [["comms", "Comms"]],
+          a.names)
+    key(w, Gdk.KEY_s)
+    yield
+    said = [c[0] for c in hw.calls]
+    check("a save writes the desk and the wallpapers",
+          "desk" in said and "walls" in said, said)
+    check("a saved window closes without asking", not w.on_close(None))
+    yield
+
+def drive(w, a, hw, outs):
+    for step in (surfaces_tab(w, a, hw), virtual_tab(w, a, hw, outs),
+                 delete_and_save(w, a, hw)):
+        yield from step
+
+def activate(g):
+    d, outs, hw = desk()
+    a = controller.App(d, hw)
+    a.spawn = sync
+    w = gui.Window(g, a)
+    w.win.present()
+    steps = drive(w, a, hw, outs)
+    def tick():
+        try:
+            next(steps)
+            return GLib.SOURCE_CONTINUE
+        except StopIteration:
+            g.quit()
+            return GLib.SOURCE_REMOVE
+        except Exception as ex:
+            fails.append("drive raised %r" % ex)
+            g.quit()
+            return GLib.SOURCE_REMOVE
+    GLib.timeout_add(150, tick)
+
+g = Adw.Application(application_id="io.github.jello_d.hwdp.gdesk.test2",
+                    flags=Gio.ApplicationFlags.NON_UNIQUE)
+g.connect("activate", activate)
+g.run([])
+print("FAILS:" + "|".join(fails) if fails else "OK")
+PY
+)
+case $_out in *OK) ;; *) fail "window, names and grid: $_out" ;; esac
+pass "the window: names added and deleted, a grid placed by click, drop and"\
+" picker, cut and joined, a wallpaper, saved"

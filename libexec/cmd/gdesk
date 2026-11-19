@@ -6,9 +6,9 @@
 #                        from it, saving writes its files without applying
 #
 # The same tool as `hwdp desk`, on the same code (lib/hwdp_desk): the layout
-# drawn to scale and dragged with the pointer, and a review of what will be
-# saved; the surface names and the virtual grid are still `hwdp desk`'s.
-# Its keys are the terminal tool's (hwdp(1)). Everything it saves goes
+# drawn to scale and dragged with the pointer, the surface names, the virtual
+# grid with names dragged onto it, and a review of what will be saved. Its
+# keys are the terminal tool's (hwdp(1)). Everything it saves goes
 # through the scripted commands (`hwdp arrange`, `hwdp profile --write`,
 # `hwdp surfaces --write`), so it can never write what they would refuse.
 # Needs a Wayland session (exit 3) and python3-gi with GTK 4 and libadwaita

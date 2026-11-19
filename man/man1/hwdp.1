@@ -340,13 +340,17 @@ layout to scale: click selects a monitor, and DRAGGING moves it, always to
 where it touches another without overlapping, pulled in to any alignment
 (flush, start, centre, end) within a few pixels of the pointer; Esc mid-drag
 undoes it. Its keys are the terminal tool's, and the buttons under the
-drawing do the same (rotate, swap, on/off, labels, preview, save). The
-preview's countdown, the quit prompt and a failed save's reasons are
-dialogs. REVIEW is the map as it will be saved. The names and the virtual
-grid are edited in
-.B hwdp desk
-for now. It needs a Wayland session (exit 3) and python3-gi with GTK 4 and
-libadwaita (exit 4).
+drawing do the same (rotate, swap, on/off, labels, preview, save).
+SURFACES lists the names with their labels and where each is; Add, Label
+and Delete edit them. VIRTUAL draws the desk in every cell of the grid:
+click selects a spot (a panel, or half of one), a name DRAGGED from the
+list beside the grid onto a spot is placed there, and double-click or
+Enter opens the picker; the buttons cut, clear, set the default and the
+cell's wallpaper, and grow or shrink the grid. Every question the
+terminal tool asks (keep a preview, quit unsaved, delete a name, join two
+placed halves) is a dialog, and the name form and pickers are windows
+with fields. REVIEW is the map as it will be saved. It needs a Wayland
+session (exit 3) and python3-gi with GTK 4 and libadwaita (exit 4).
 .TP
 .BR "hwdp desks" " [" \-\-name
 .IR "desk new" "] [" \-\-resolve
