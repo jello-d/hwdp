@@ -60,7 +60,7 @@ class FakeHw:
     def wallpapers(self):
         return {}
     def wallpaper_images(self):
-        return ["aurora.png", "night sky.png"]
+        return sorted(os.listdir(WALLS), key=str.lower)
     def wallpaper_dir(self):
         return WALLS
     def slice_preview(self, walls, layout, outdir):
@@ -104,6 +104,17 @@ def make_walls():
             cr.rectangle(i * 400, 0, 400, 400)
             cr.fill()
         img.write_to_png(os.path.join(WALLS, name))
+
+def make_many(n=40):
+    """N full-size JPEGs after those (zz-*), a picker's worth, to see
+    every row get its picture."""
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+    pb = GdkPixbuf.Pixbuf.new(GdkPixbuf.Colorspace.RGB, False, 8, 1920, 1200)
+    for i in range(n):
+        pb.fill(0x204060ff + (i << 24))
+        pb.savev(os.path.join(WALLS, "zz-%02d.jpg" % i), "jpeg", [], [])
 PY
 
 # --- the pointer, and the toolkit's keys: the shared core --------------------
@@ -496,6 +507,22 @@ check("each slice is its panel's size in the layout handed in",
       sizes == want, (sizes, want))
 check("no wallpapers is nothing to cut",
       real.slice_preview({}, lay, sys.argv[2] + "/cache/p") == ({}, ""))
+# A SHARED copy (/opt/hwdp) has no bin/wallpaper-slicer: the slicer is
+# user-only, so it is found on PATH there.
+shared = hwdp.Hwdp()
+shared.libexec = sys.argv[2] + "/opt/libexec"
+shared.lib = real.lib
+os.makedirs(shared.libexec, exist_ok=True)
+os.environ["PATH"] = here + "/bin:" + os.environ["PATH"]
+found, why = shared.slice_preview({(0, 0): "aurora.png"}, lay,
+                                  sys.argv[2] + "/cache/q")
+check("a shared copy with no slicer beside it finds the one on PATH",
+      len(found) == 3, (found, why))
+os.environ["PATH"] = "/usr/bin:/bin"
+check("with none anywhere it says so, not an errno",
+      shared.slice_preview({(0, 0): "aurora.png"}, lay,
+                           sys.argv[2] + "/cache/q")
+      == ({}, "wallpaper-slicer is not installed"))
 print("FAILS:" + "|".join(fails) if fails else "OK")
 PY
 )
@@ -512,6 +539,7 @@ _out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/run" \
 import sys, time, cairo
 exec(open(sys.argv[2] + "/common.py").read())
 make_walls()
+make_many()
 from gi.repository import Adw, Gdk, Gio, GLib
 
 def drawn(label, fn, area, w, h):
@@ -617,6 +645,29 @@ def virtual_tab(w, a, hw, outs):
         yield
     check("an image's row shows its thumbnail",
           pic.get_paintable() is not None)
+    pics = []
+    i = 1
+    while d.rows.get_row_at_index(i) is not None:
+        pics.append(d.rows.get_row_at_index(i).picture)
+        i += 1
+    for _ in range(150):
+        if all(x.get_paintable() is not None for x in pics):
+            break
+        yield
+    bad = [x.get_tooltip_text() for x in pics
+           if x.get_paintable() is None or x.get_tooltip_text()]
+    check("EVERY row of a full picker gets its picture (%d)" % len(pics),
+          len(pics) == 42 and not bad, (len(pics), bad[:3]))
+    if CUTTER:
+        d.rows.select_row(d.rows.get_row_at_index(2))
+        for _ in range(100):
+            if d.preview.cut:
+                break
+            yield
+        check("the picker shows the highlighted image cut across the desk",
+              set(d.preview.cut) == {(1, 0, "eDP-1"), (1, 0, "DP-1"),
+                                     (1, 0, "DP-2")} and not a.walls,
+              (sorted(d.preview.cut), d.preview.why, a.walls))
     d.rows.emit("row-activated", d.rows.get_row_at_index(2))
     yield
     check("choosing an image sets the cell's wallpaper",

@@ -1,6 +1,7 @@
 """hwdp desk: every call out to hwdp, and the offline stand-in for it."""
 import os
 import re
+import shutil
 import subprocess
 import threading
 
@@ -178,8 +179,9 @@ class Hwdp:
         with open(cut, "w") as fh:
             fh.writelines("%d %d %s\n" % (x, y, f)
                           for (x, y), f in sorted(walls.items()))
-        slicer = os.path.join(os.path.dirname(self.libexec), "bin",
-                              "wallpaper-slicer")
+        slicer = self.slicer()
+        if not slicer:
+            return {}, "wallpaper-slicer is not installed"
         env = dict(os.environ, HWDP_LIB=self.lib,
                    WALLPAPER_SLICER_LAYOUT=layout)
         try:
@@ -206,6 +208,16 @@ class Hwdp:
         return found, ("not cut: " + ", ".join(uncut) +
                        (" (%s)" % p.stderr.strip() if p.stderr.strip()
                         else "")) if uncut else ""
+
+    def slicer(self):
+        """The package's own wallpaper-slicer beside this tree (a checkout,
+        a payload), else the one on PATH: it is USER-ONLY, so a shared copy
+        (/opt/hwdp) has no bin/wallpaper-slicer, and looking only beside
+        the tree found nothing there (measured, the deployed gdesk)."""
+        own = os.path.join(os.path.dirname(self.libexec), "bin",
+                           "wallpaper-slicer")
+        return own if os.access(own, os.X_OK) else \
+            shutil.which("wallpaper-slicer")
 
     def write_wallpapers(self, walls):
         rc, _, why = self._surf("--write-wallpapers", stdin="".join(

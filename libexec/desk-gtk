@@ -44,6 +44,7 @@ lib/hwdp_desk, shared with the terminal tool, so the two cannot disagree
 about what a desk is or how it is saved.
 """
 import os
+import queue
 import sys
 import threading
 import time
@@ -91,6 +92,7 @@ TICK_MS = 100
 PREVIEW_SPAN = 960  # the whole desk this many pixels across, for slices
 PREVIEW_WAIT = 400  # ms of no change before a preview is cut
 THUMB = (128, 72)   # the picker's thumbnails
+SLICE_ALPHA = 0.5   # a cell's wallpaper, faint, so the names stand out
 FRACTION = {r: f for f, r in REGION_OF.items()}         # region -> x y w h
 
 
@@ -285,7 +287,7 @@ def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5,
     PangoCairo.show_layout(cr, lay)
 
 
-def paint(cr, img, b):
+def paint(cr, img, b, alpha=SLICE_ALPHA):
     """Slice IMG stretched into box B: a slice is the output's logical
     rectangle already, so this only scales it."""
     cr.save()
@@ -294,7 +296,7 @@ def paint(cr, img, b):
     cr.translate(b[0], b[1])
     cr.scale(b[2] / img.get_width(), b[3] / img.get_height())
     cr.set_source_surface(img, 0, 0)
-    cr.paint()
+    cr.paint_with_alpha(alpha)
     cr.restore()
 
 
@@ -358,8 +360,8 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
     cr.set_line_width(1)
     cr.set_source_rgba(*rgba(fg, 0.35))
     cr.stroke()
-    back = (0, 0, 0, 0.6) if img is not None else None
-    ink = (1, 1, 1, 0.95) if img is not None else rgba(fg, 0.95)
+    back = (0, 0, 0, 0.35) if img is not None else None
+    ink = rgba(fg, 0.95)
     sp = app.split_at(o, cx, cy)
     if sp:
         draw_cut(cr, sp, b, fg)
@@ -414,23 +416,24 @@ def colours(area):
 # --- the wallpapers: the cells' slices, and the picker's thumbnails ----------
 
 class Slices:
-    """The virtual tab's wallpapers: the desk AS EDITED, small, cut by
-    wallpaper-slicer the way the session's are (WALLPAPER_SLICER_LAYOUT),
-    in the background, into a cache of the tool's own. Cut again once the
-    layout or the wallpapers have held still for PREVIEW_WAIT."""
+    """Wallpapers on the desk AS EDITED, small, cut by wallpaper-slicer the
+    way the session's are (WALLPAPER_SLICER_LAYOUT), in the background,
+    into a cache of the tool's own (NAME, one per user of it). WALLS says
+    what to cut ({cell: file}), LANDED is called when a cut arrives. Cut
+    again once the layout and WALLS have held still for WAIT ms."""
 
-    def __init__(self, win):
+    def __init__(self, win, walls, landed, name, wait=PREVIEW_WAIT):
         self.win, self.cut, self.why = win, {}, ""
+        self.walls, self.landed, self.wait = walls, landed, wait
         self.want = self.timer = None
         self.running = False
         self.outdir = os.path.join(
             os.environ.get("XDG_CACHE_HOME") or
-            os.path.expanduser("~/.cache"), "hwdp", "gdesk-slices")
+            os.path.expanduser("~/.cache"), "hwdp", name)
 
     def key(self):
-        app = self.win.app
-        return (tuple(slicer_layout(app.desk, PREVIEW_SPAN)),
-                tuple(sorted(app.walls.items())))
+        return (tuple(slicer_layout(self.win.app.desk, PREVIEW_SPAN)),
+                tuple(sorted(self.walls().items())))
 
     def refresh(self):
         k = self.key()
@@ -439,7 +442,7 @@ class Slices:
         self.want = k
         if self.timer:
             GLib.source_remove(self.timer)
-        self.timer = GLib.timeout_add(PREVIEW_WAIT, self._start)
+        self.timer = GLib.timeout_add(self.wait, self._start)
 
     def _start(self):
         self.timer = None
@@ -469,8 +472,7 @@ class Slices:
         self.running = False
         if k == self.want:
             self.cut, self.why = imgs, why
-            self.win.grid.area.queue_draw()
-            self.win.grid.caption()
+            self.landed()
         else:
             self._start()           # it changed while that cut ran
         return GLib.SOURCE_REMOVE
@@ -478,21 +480,48 @@ class Slices:
 
 class Thumbs:
     """The picker's thumbnails, decoded off the main thread and kept for
-    the session; a row gets its picture when it lands."""
+    the session; a row gets its picture when it lands.
+
+    A FEW decoders working through the rows IN ORDER, so the visible
+    ones come first. Measured on 82 real wallpapers: a thread per image
+    showed nothing for 1.6s (all of them competing) and one at a time took
+    11s for the list; neither loses an image. One that fails shows an icon
+    saying so, its reason in the tooltip, never a blank square."""
+    WORKERS = 3
 
     def __init__(self):
         self.done, self.waiting = {}, {}
+        self.todo = queue.Queue()
+        self.workers = []
 
     def into(self, path, picture):
         if path in self.done:
-            picture.set_paintable(self.done[path])
+            self._show(picture, *self.done[path])
             return
         if path in self.waiting:
             self.waiting[path].append(picture)
             return
         self.waiting[path] = [picture]
-        threading.Thread(target=self._load, args=(path,),
-                         daemon=True).start()
+        self.todo.put(path)
+        while len(self.workers) < self.WORKERS:
+            t = threading.Thread(target=self._run, daemon=True)
+            t.start()
+            self.workers.append(t)
+
+    def _run(self):
+        while True:
+            self._load(self.todo.get())
+
+    @staticmethod
+    def _show(picture, tex, why):
+        if tex is None:
+            tex = Gtk.IconTheme.get_for_display(
+                picture.get_display()).lookup_icon(
+                "image-missing-symbolic", None, 48, 1,
+                Gtk.TextDirection.NONE, 0)
+            picture.set_content_fit(Gtk.ContentFit.SCALE_DOWN)
+            picture.set_tooltip_text("no thumbnail: %s" % why)
+        picture.set_paintable(tex)
 
     def _load(self, path):
         """Decoded at twice THUMB (crisp on a scaled panel) and cropped to
@@ -501,20 +530,23 @@ class Thumbs:
         tw, th = THUMB[0] * 2, THUMB[1] * 2
         try:
             info, w, h = GdkPixbuf.Pixbuf.get_file_info(path)
+            if info is None or w <= 0 or h <= 0:
+                raise TypeError("not an image this box can read")
             k = max(tw / w, th / h)
             pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(
                 path, max(tw, round(w * k)), max(th, round(h * k)), False)
-            pb = pb.new_subpixbuf((pb.get_width() - tw) // 2,
-                                  (pb.get_height() - th) // 2, tw, th)
-        except (GLib.Error, TypeError, ZeroDivisionError):
-            pb = None
-        GLib.idle_add(self._landed, path, pb)
+            pb, why = pb.new_subpixbuf((pb.get_width() - tw) // 2,
+                                       (pb.get_height() - th) // 2,
+                                       tw, th), ""
+        except (GLib.Error, TypeError, ZeroDivisionError) as e:
+            pb, why = None, str(e) or "unreadable"
+        GLib.idle_add(self._landed, path, pb, why)
 
-    def _landed(self, path, pb):
+    def _landed(self, path, pb, why):
         tex = Gdk.Texture.new_for_pixbuf(pb) if pb else None
-        self.done[path] = tex
+        self.done[path] = (tex, why)
         for pic in self.waiting.pop(path, []):
-            pic.set_paintable(tex)
+            self._show(pic, tex, why)
         return GLib.SOURCE_REMOVE
 
 
@@ -661,7 +693,8 @@ class GridPage:
 
     def __init__(self, win):
         self.win, self.shown = win, None
-        self.slices = Slices(win)
+        self.slices = Slices(win, lambda: win.app.walls, self._landed,
+                             "gdesk-slices")
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
         self.area.set_draw_func(self._draw)
         click = Gtk.GestureClick()
@@ -751,6 +784,10 @@ class GridPage:
         self.caption()
         self.slices.refresh()
         self.area.queue_draw()
+
+    def _landed(self):
+        self.area.queue_draw()
+        self.caption()
 
     def caption(self):
         app = self.win.app
@@ -1173,6 +1210,40 @@ def pick_rows(win, kind, rows, st):
     return len(shown)
 
 
+def wall_preview(win, chosen):
+    """The wallpaper picker's strip: the whole desk with the highlighted
+    image cut across it, CHOSEN() naming it (None for the default), cut
+    as the session would and drawn at full strength."""
+    cell = tuple(win.app.vcell)
+    area = Gtk.DrawingArea(content_height=170, margin_start=12,
+                           margin_end=12, margin_top=6)
+    sl = Slices(win, lambda: {cell: chosen()} if chosen() else {},
+                area.queue_draw, "gdesk-pick", wait=150)
+
+    def draw(_a, cr, w, h):
+        on = win.app.desk.on()
+        fg, _accent = colours(area)
+        minx, miny = min(o.x for o in on), min(o.y for o in on)
+        bw = max(o.x + o.w for o in on) - minx
+        bh = max(o.y + o.h for o in on) - miny
+        k = min((w - 16) / bw, (h - 16) / bh)
+        fr = (k, (w - bw * k) / 2, (h - bh * k) / 2, minx, miny)
+        for o in on:
+            b = box(o, fr)
+            img = sl.cut.get(cell + (slicer_name(o),))
+            if img is not None:
+                paint(cr, img, b, 1.0)
+            rounded(cr, b[0], b[1], b[2], b[3], 3)
+            cr.set_line_width(1)
+            cr.set_source_rgba(*rgba(fg, 0.5))
+            cr.stroke()
+        if not chosen():
+            fit(cr, "each panel keeps the desk's own", (0, 0, w, h),
+                rgba(fg, 0.6), bold=False)
+    area.set_draw_func(draw)
+    return area, sl
+
+
 def pick_form(win, kind):
     """The name picker (pick) or the wallpaper picker (wpick): a filter and
     the list it leaves; choosing a row is the App's Enter on it."""
@@ -1193,6 +1264,12 @@ def pick_form(win, kind):
         st["sel"] = row.get_index()
         win.press(ENTER)
 
+    def highlighted():
+        r = rows.get_selected_row()
+        name = r.get_title() if r is not None else None
+        return name if kind == "wpick" and name in app.wpick["images"] \
+            else None
+
     def first(_e):
         if rows.get_row_at_index(0) is not None:
             choose(None, rows.get_row_at_index(0))
@@ -1201,15 +1278,23 @@ def pick_form(win, kind):
     rows.connect("row-activated", choose)
     pick_rows(win, kind, rows, st)
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    preview = None
+    if kind == "wpick" and cairo is not None:
+        strip, preview = wall_preview(win, highlighted)
+        rows.connect("row-selected", lambda *_: preview.refresh())
+        body.append(strip)
     body.append(search)
     body.append(Gtk.ScrolledWindow(child=Adw.Clamp(
         child=rows, margin_start=12, margin_end=12, margin_bottom=12),
         vexpand=True))
     title = pick_words(app) if kind == "pick" else \
         "Wallpaper of cell %d,%d" % tuple(app.vcell)
-    d = form_dialog(win, title, None, body, width=520, height=600)
+    d = form_dialog(win, title, None, body, width=560,
+                    height=760 if kind == "wpick" else 600)
     d.set_focus(search)
-    d.search, d.rows = search, rows         # for a test to drive
+    d.search, d.rows, d.preview = search, rows, preview  # for a test
+    if preview is not None:
+        preview.refresh()
     return d, None
 
 
