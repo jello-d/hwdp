@@ -317,7 +317,13 @@ clears it,
 .BR + " and " \-
 add and remove a column,
 .BR ] " and " [
-a row (removing refuses while it holds a surface).
+a row (removing refuses while it holds a surface); shift+arrows MOVE the
+selected cell's column left or right, or its row up or down, trading places
+with its neighbour, and
+.B t
+turns the grid (columns become rows). Everything a cell holds moves with it:
+its surfaces, its cuts and the wallpaper it shows, a default one becoming
+the desk's own where it lands unless that place's default is the same.
 REVIEW is the map as it will be saved, cell by cell, with what is missing
 from it: gaps with no default, names not placed here.
 .B s
@@ -452,7 +458,7 @@ with HWDP_SAVED set to the profile, and refreshes a running session's kanshi
 config, which carries every desk.
 .TP
 .B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-wallpapers|\-\-raw|\
-\-\-check|\-\-write]
+\-\-default\-wallpapers|\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each (eight fields, FROZEN: a consumer refuses any other count):
 .IP
@@ -519,6 +525,14 @@ prints
 .I "X Y FILE"
 for the cells inside the grid (one outside is kept, not used), nothing when
 the desk sets none, and every other cell keeps its default.
+.B \-\-default\-wallpapers
+prints that default,
+.IR "X Y FILE" ,
+as the INTEGRATOR says, since hwdp knows no image of its own: the first
+.I wallpapers
+provider (see ENVIRONMENT) to answer, handed the desk's shape (a desk edited
+away from it, its own); nothing when none does. The desk tools show and cut
+it in the cells a desk leaves to it.
 .B \-\-write\-wallpapers
 replaces them from
 .I "X Y FILE"
@@ -734,8 +748,8 @@ User display-change hooks run by `hwdp watch'.
 .I ~/.config/kanshi/{profiles,auto-scale}
 Layout templates and the sticky per-panel scale overrides.
 .TP
-.I ~/.config/hwdp/providers/{layout,panels}/*
-User display probe providers, tried before the machine and shipped ones.
+.I ~/.config/hwdp/providers/{layout,panels,wallpapers}/*
+User providers, tried before the machine and shipped ones.
 .TP
 .I ~/.config/hwdp/surfaces/<id>.conf
 This desk's named surfaces (see
@@ -747,13 +761,19 @@ one file per display profile id.
 Roots for `hwdp watch's display-change hooks.
 .TP
 .B HWDP_PROVIDER_ROOT ", " HWDP_MACHINE_PROVIDERS
-Roots for display probe providers. Each holds a
-.I layout
-and/or
+Roots for providers. Each holds a
+.IR layout ,
 .I panels
+and/or
+.I wallpapers
 directory whose executables are tried in filename order; the first to exit 0
 with output wins, and one that cannot answer in this environment exits
-non-zero and is skipped.
+non-zero and is skipped. A
+.I wallpapers
+provider is the integrator's: handed a desk's shape, it prints the default
+wallpaper of each cell as
+.IR "X Y FILE" ;
+hwdp ships none.
 .TP
 .B HWDP_UNMAPPED_SETTLE
 Seconds the connected set must hold still before

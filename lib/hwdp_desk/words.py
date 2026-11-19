@@ -79,7 +79,7 @@ def review_lines(app):
         for cx in range(app.grid[0]):
             out.append("")
             out.append("cell %d,%d  wallpaper %s" % (
-                cx, cy, app.walls.get((cx, cy), DEFAULT_WALL)))
+                cx, cy, wall_words(app, (cx, cy))))
             for o in app.desk.on():
                 here = sorted((x for x in app.surfaces if x.conn == o.conn
                                and (x.cx, x.cy) == (cx, cy)),
@@ -161,11 +161,18 @@ def selection_words(app):
         sel_o.label, sel_o.token(), sel_r)
 
 
+def wall_words(app, cell):
+    """The wallpaper a cell shows, saying when it is the default's."""
+    f, own = app.wall_at(cell)
+    if own:
+        return f
+    return "%s %s" % (DEFAULT_WALL, f) if f else DEFAULT_WALL
+
+
 def cell_words(app):
     """The selected cell's wallpaper, and the desk's default."""
     d = app.default
-    return "wallpaper: %s   default: " % app.walls.get(
-        tuple(app.vcell), DEFAULT_WALL) + (
+    return "wallpaper: %s   default: " % wall_words(app, app.vcell) + (
         "%s, %s of %s" % (full_name(app, d.name), d.region,
                           app.plabel(d.conn)) if d else "none")
 

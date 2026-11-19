@@ -497,3 +497,38 @@ printf '1 1 away.jpg\n' | DESK=$_k ww >/dev/null 2>"$T/err" \
 grep -qx 'wallpaper cell 1 1 away.jpg' "$FD" \
   || fail "the named desk did not get it: $(cat "$FD")"
 pass "wallpapers: written, published in the grid, kept, refused whole, cleared"
+
+# --- the integrator's DEFAULT wallpapers: a provider, handed the shape --------
+ww_any() {   # surfaces with any arguments, as ww runs it (DESK, the env)
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" \
+    WAYLAND_DISPLAY=wayland-test HWDP_MACHINE_PROVIDERS="$T/no-machine" \
+    HWDP_PROVIDER_ROOT="$T/no-user" HWDP_DRM="$T/drm" \
+    XDG_RUNTIME_DIR="$T/run" HWDP_SURFACES="$T/surf" HWDP_DESKS="$T/desks" \
+    ${DESK:+HWDP_DESK="$DESK"} LAPTOP_ON=yes sh "$KA" surfaces "$@"
+}
+# hwdp knows no image of its own. A `wallpapers` provider is handed this
+# desk's SHAPE (the attached one's, or a desk's away from it from its files)
+# and its `X Y FILE` lines are published, anything else dropped.
+mkdir -p "$T/no-user/wallpapers"
+cat > "$T/no-user/wallpapers/50-shape" <<EOF
+#!/bin/sh
+echo "\$1" >> "$T/asked"
+printf '0 0 %s-a.jpg\n1 0 night sky.jpg\nnot a line\n' "\$1"
+EOF
+chmod +x "$T/no-user/wallpapers/50-shape"
+: > "$T/asked"
+_dw=$(run --default-wallpapers) || fail "--default-wallpapers failed"
+[ -n "$(cat "$T/asked")" ] || fail "the provider was never asked"
+[ "$(printf '%s\n' "$_dw" | head -1)" = "0 0 $(head -1 "$T/asked")-a.jpg" ] \
+  || fail "the provider was not handed the shape: $_dw / $(cat "$T/asked")"
+printf '%s\n' "$_dw" | grep -qx '1 0 night sky.jpg' \
+  || fail "a name with a space must stay whole: $_dw"
+printf '%s\n' "$_dw" | grep -q 'not a line' && fail "a bad line published"
+: > "$T/asked"
+_dw=$(DESK=BL ww_any --default-wallpapers) \
+  || fail "--default-wallpapers away from the desk failed"
+[ "$(cat "$T/asked")" = BL ] \
+  || fail "away from the desk the shape must be its own: $(cat "$T/asked")"
+rm -f "$T/no-user/wallpapers/50-shape"
+[ -z "$(run --default-wallpapers)" ] || fail "no provider must be silence"
+pass "default wallpapers: asked of a provider with the desk's shape"

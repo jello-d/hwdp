@@ -172,6 +172,18 @@ class Hwdp:
                 found[(int(f[0]), int(f[1]))] = f[2]
         return found
 
+    def default_wallpapers(self):
+        """{(cx, cy): file}, the wallpaper a cell has when this desk sets
+        none, as the integrator says (`hwdp surfaces --default-wallpapers`);
+        empty when it says nothing."""
+        rc, out, _ = self._surf("--default-wallpapers")
+        found = {}
+        for ln in out.splitlines() if rc == 0 else []:
+            f = ln.split(None, 2)
+            if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+                found[(int(f[0]), int(f[1]))] = f[2]
+        return found
+
     def wallpaper_dir(self):
         """Where the images are: HWDP_WALLPAPER_DIR, else
         ~/Pictures/wallpaper, which is where the integrator points the

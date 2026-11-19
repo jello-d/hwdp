@@ -34,6 +34,10 @@ times, - not placed at this desk):
     f / F         pick the DEFAULT for that spot / no default
     x             clear that spot
     + / -         a column more / fewer     ] / [  a row more / fewer
+    shift+arrows  move the cell's column left or right, or its row up or
+                  down; t turns the grid, columns becoming rows. What a
+                  cell holds goes with it: surfaces, cuts, the wallpaper
+                  it shows
                   (fewer refuses while that column or row holds a surface)
   4 REVIEW, the map as it will be saved, and what is missing from it
   everywhere
@@ -85,7 +89,7 @@ HELP = (
     "  p preview",
     "arrows select  a add  e label  D delete",
     "arrows cell  Tab panel/half  g split  Enter place  f default"
-    "  F no default  x clear  b wallpaper  +/- columns  ]/[ rows",
+    "  F none  x clear  b wallpaper  +/- ]/[ grid  S-arrows move  t turn",
     "arrows / PgUp PgDn scroll")
 HELP_ALL = "1-4 tabs  s save  q quit"
 SIDE_W = 26             # the sidebar's columns, when the screen has them

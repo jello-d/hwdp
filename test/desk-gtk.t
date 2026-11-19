@@ -59,6 +59,9 @@ class FakeHw:
         return [list(n) for n in self.namesv]
     def wallpapers(self):
         return {}
+    defaultsv = {}
+    def default_wallpapers(self):
+        return dict(self.defaultsv)
     def wallpaper_images(self):
         return sorted(os.listdir(WALLS), key=str.lower)
     def wallpaper_dir(self):
@@ -742,14 +745,18 @@ def virtual_tab(w, a, hw, outs):
     check("choosing an image sets the cell's wallpaper",
           a.walls == {(1, 0): "night sky.png"}, a.walls)
     if CUTTER:
+        want = {(c, r, o) for c, r in ((1, 0), (2, 1))
+                for o in ("eDP-1", "DP-1", "DP-2")}
         for _ in range(100):
-            if g.slices.cut:
+            if want <= set(g.slices.cut):
                 break
             yield
-        check("the cell's wallpaper is cut across its panels to show it",
-              set(g.slices.cut) == {(1, 0, "eDP-1"), (1, 0, "DP-1"),
-                                    (1, 0, "DP-2")},
+        check("the cell's wallpaper is cut across its panels to show it,"
+              " and the default's cell too", set(g.slices.cut) == want,
               (sorted(g.slices.cut), g.slices.why))
+    check("the preview cuts the integrator's default where the desk sets"
+          " none", g.shown_walls().get((2, 1)) == "aurora.png"
+          and (1, 0) in g.shown_walls(), g.shown_walls())
     key(w, Gdk.KEY_plus)
     check("+ adds a column", a.grid == (4, 3), a.grid)
     g.on_drop(None, "comms", *mid)
@@ -783,6 +790,7 @@ def drive(w, a, hw, outs):
 
 def activate(g):
     d, outs, hw = desk()
+    hw.defaultsv = {(2, 1): "aurora.png"}
     a = controller.App(d, hw)
     a.spawn = sync
     w = gui.Window(g, a)

@@ -88,6 +88,9 @@ class App:
         self.grid = hw.grid() or NEW_GRID
         self.names = hw.names()
         self.walls = dict(hw.wallpapers())   # {(cx, cy): file}
+        # What a cell shows when the desk sets nothing there: the
+        # integrator's, read only, never saved as the desk's own.
+        self.wall_defaults = dict(hw.default_wallpapers())
         self.wpick = None                    # the wallpaper picker, if up
         self._mark_saved()
 
@@ -626,7 +629,18 @@ class App:
         probe = Surface("", o.conn if o else "", rg, *self.vcell)
         return [x for x in self.surfaces if clashes(probe, x)]
 
+    def wall_at(self, cell):
+        """(file, the desk's own?) the cell shows: its own, else the
+        integrator's default, else (None, False)."""
+        cell = tuple(cell)
+        if cell in self.walls:
+            return self.walls[cell], True
+        return self.wall_defaults.get(cell), False
+
     def _virtual_key(self, k, now):
+        if k in FINE:
+            dx, dy = FINE[k]
+            return self._shift(dx, dy)
         if k in ARROWS:
             dx, dy = ARROWS[k]
             self.vcell = [min(max(self.vcell[0] + dx, 0), self.grid[0] - 1),
@@ -638,6 +652,7 @@ class App:
                ord("b"): self._wpick_open,
                ord("f"): lambda now: self._pick("default"),
                ord("F"): self._vnodefault,
+               ord("t"): lambda now: self._transpose(),
                ord("+"): lambda now: self._regrid(1, 0),
                ord("-"): lambda now: self._regrid(-1, 0),
                ord("]"): lambda now: self._regrid(0, 1),
@@ -840,6 +855,63 @@ class App:
         if gone:
             self.msg += "; dropped the wallpaper of " + ", ".join(
                 "cell %d,%d" % c for c in gone)
+
+    # --- moving workspaces: a column or a row, or the whole grid turned ----
+    # What MOVES with a cell is everything it holds: its surfaces, its cuts,
+    # and the wallpaper it SHOWS (a default one becomes the desk's own where
+    # it lands, unless that place's own default is the same image), so what
+    # is seen is what moves. The desk's default surface has no cell.
+    def _relocate(self, where, grid):
+        """Move every cell C to WHERE(C) (a permutation of the grid), the
+        grid becoming GRID."""
+        if self._blocked():
+            return False
+        for x in self.surfaces:
+            x.cx, x.cy = where((x.cx, x.cy))
+        self.splits = {(c,) + where((cx, cy)): w
+                       for (c, cx, cy), w in self.splits.items()}
+        shown = {}
+        for cx in range(self.grid[0]):
+            for cy in range(self.grid[1]):
+                f, _own = self.wall_at((cx, cy))
+                if f:
+                    shown[where((cx, cy))] = f
+        self.grid = grid
+        self.walls = {c: f for c, f in shown.items()
+                      if self.wall_defaults.get(c) != f}
+        return True
+
+    def _shift(self, dx, dy):
+        """The selected cell's column one place left or right (DX), or its
+        row one up or down (DY): it trades places with its neighbour."""
+        cx, cy = self.vcell
+        if dx:
+            nx = cx + dx
+            if not 0 <= nx < self.grid[0]:
+                return
+            swap = {cx: nx, nx: cx}
+            if self._relocate(lambda c: (swap.get(c[0], c[0]), c[1]),
+                              self.grid):
+                self.vcell = [nx, cy]
+                self.msg = "column %d moved %s" % (
+                    cx, "right" if dx > 0 else "left")
+        else:
+            ny = cy + dy
+            if not 0 <= ny < self.grid[1]:
+                return
+            swap = {cy: ny, ny: cy}
+            if self._relocate(lambda c: (c[0], swap.get(c[1], c[1])),
+                              self.grid):
+                self.vcell = [cx, ny]
+                self.msg = "row %d moved %s" % (cy, "down" if dy > 0 else "up")
+
+    def _transpose(self):
+        """Columns become rows: cell (x, y) goes to (y, x), the grid W x H
+        to H x W."""
+        w, h = self.grid
+        if self._relocate(lambda c: (c[1], c[0]), (h, w)):
+            self.vcell = [self.vcell[1], self.vcell[0]]
+            self.msg = "grid transposed: %dx%d" % (h, w)
 
     def _save_here(self, now):
         if self.dirty():

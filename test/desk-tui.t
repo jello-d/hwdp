@@ -75,6 +75,9 @@ class FakeHw:
     imagesv = ["aurora.jpg", "bubbles.jpg", "night sky.png"]
     def wallpapers(self):
         return dict(self.wallsv)
+    defaultsv = {}
+    def default_wallpapers(self):
+        return dict(self.defaultsv)
     def wallpaper_images(self):
         return list(self.imagesv)
     def write_wallpapers(self, walls):
@@ -813,6 +816,69 @@ stub.libexec = sys.argv[2] + "/stub"
 rc, _, why = stub._surf("--write", stdin="")
 check("Hwdp keeps the whole complaint, reason first",
       rc == 2 and "the REASON" in why and why.endswith("NOT written"), why)
+
+# --- the integrator's DEFAULT wallpapers, and moving workspaces -------------
+def gridapp(defaults, walls, grid=(3, 2)):
+    d, (p, l), hw = desk()
+    hw.gridv, hw.wallsv, hw.defaultsv = list(grid), dict(walls), dict(defaults)
+    hw.namesv = [["comms", "Comms"], ["mail", "Mail"], ["code", "Code"]]
+    hw.surf = ([tui.Surface("comms", "DP-1", "top", 0, 0),
+                tui.Surface("mail", "DP-2", "full", 1, 0),
+                tui.Surface("code", "DP-1", "full", 2, 1)], None, "")
+    hw.splitv = [("DP-1", 0, 0, "top-bottom")]
+    a = tui.App(d, hw)
+    a.spawn, a.tab = sync, 2
+    return a, hw
+a, hw = gridapp({(0, 0): "d00.jpg", (1, 0): "d10.jpg"}, {(1, 0): "own.jpg"})
+check("a cell the desk sets nothing in shows the integrator's default",
+      a.wall_at((0, 0)) == ("d00.jpg", False), a.wall_at((0, 0)))
+check("the desk's own wins over the default",
+      a.wall_at((1, 0)) == ("own.jpg", True), a.wall_at((1, 0)))
+check("and the words say which is the default's",
+      "wallpaper: (default) d00.jpg" in tui.cell_words(a), tui.cell_words(a))
+a.key(curses.KEY_SLEFT, 0)
+check("a column cannot move off the grid's edge",
+      a.surfaces[0].cx == 0 and a.vcell == [0, 0], a.vcell)
+a.key(curses.KEY_SRIGHT, 0)
+cells = {x.name: (x.cx, x.cy) for x in a.surfaces}
+check("shift+Right trades the column with its neighbour, surfaces and all",
+      cells == {"comms": (1, 0), "mail": (0, 0), "code": (2, 1)}, cells)
+check("its cut goes with it", list(a.splits) == [("DP-1", 1, 0)], a.splits)
+check("the wallpaper SHOWN goes with it, a default becoming the desk's own",
+      a.walls == {(0, 0): "own.jpg", (1, 0): "d00.jpg"}, a.walls)
+check("and the selection follows", a.vcell == [1, 0] and "moved right"
+      in a.msg, (a.vcell, a.msg))
+a.key(curses.KEY_SF, 0)
+cells = {x.name: (x.cx, x.cy) for x in a.surfaces}
+check("shift+Down trades the row",
+      cells == {"comms": (1, 1), "mail": (0, 1), "code": (2, 0)}
+      and a.vcell == [1, 1], (cells, a.vcell))
+a, hw = gridapp({}, {(2, 1): "x.jpg"})
+a.vcell = [2, 1]
+a.key(ord("t"), 0)
+cells = {x.name: (x.cx, x.cy) for x in a.surfaces}
+check("t turns the grid: (x, y) to (y, x), W x H to H x W",
+      a.grid == (2, 3) and cells == {"comms": (0, 0), "mail": (0, 1),
+                                     "code": (1, 2)}
+      and a.walls == {(1, 2): "x.jpg"} and a.vcell == [1, 2],
+      (a.grid, cells, a.walls, a.vcell))
+a.key(ord("t"), 0)
+check("and back again", a.grid == (3, 2) and a.walls == {(2, 1): "x.jpg"},
+      (a.grid, a.walls))
+a, hw = gridapp({(0, 0): "same.jpg", (1, 0): "same.jpg"}, {})
+a.key(curses.KEY_SRIGHT, 0)
+check("a default that matches the new place's own default stays a default",
+      a.walls == {}, a.walls)
+a.key(ord("s"), 0)
+wrote = [c for c in hw.calls if c[0] == "write"]
+check("and a move is saved like any change, the surfaces where they went",
+      wrote and ("comms", "DP-1", "top", 1, 0) in wrote[0][2]
+      and not any(c[0] == "walls" for c in hw.calls), hw.calls)
+a, hw = gridapp({}, {})
+a.names_blocked = "broken"
+a.key(curses.KEY_SRIGHT, 0)
+check("a desk whose files cannot be edited moves nothing",
+      a.surfaces[0].cx == 0 and "cannot be edited" in a.msg, a.msg)
 
 print("\n".join(fails) if fails else "ALL-OK")
 PY

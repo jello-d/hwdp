@@ -26,6 +26,11 @@
 #             cells inside its grid only; FILE is relative to the wallpaper
 #             directory (the integrator's), as a wallpaper map writes it.
 #             Nothing when the desk sets none: every cell keeps its default
+#   --default-wallpapers  the wallpaper each cell has when this desk sets
+#             none, `X Y FILE`, as the INTEGRATOR says: hwdp knows no image
+#             of its own, so it asks the `wallpapers` providers
+#             (<root>/wallpapers/*, handed the desk's SHAPE, first to answer
+#             wins, silence abstains). Nothing when none answers
 #   --write-wallpapers  replace this desk's wallpapers from `X Y FILE` lines
 #             on stdin, every other line of the desk file kept as it is
 #             (see write_wallpapers)
@@ -112,6 +117,7 @@ case "${1:-}" in
   --write) MODE='write' ;;
   --write-names) MODE=write-names ;;
   --wallpapers) MODE=wallpapers ;;
+  --default-wallpapers) MODE=default-wallpapers ;;
   --write-wallpapers) MODE=write-wallpapers ;;
   --raw)   MODE=raw ;;
   --splits) MODE=splits ;;
@@ -437,6 +443,20 @@ fi
 if [ "$MODE" = write-wallpapers ]; then
   write_wallpapers
   exit $?
+fi
+if [ "$MODE" = default-wallpapers ]; then
+  # The shape of THIS desk: away from it (HWDP_DESK), from its files.
+  if [ -n "${HWDP_DESK:-}" ]; then
+    . "$HWDP_LIB/desks_lib"
+    _sh=$(desk_kind "$HWDP_DESK") || _sh=
+  else
+    _sh=$(shape) || _sh=
+  fi
+  [ -n "$_sh" ] || exit 0
+  probe_run wallpapers "$_sh" | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ &&
+      NF >= 3 { f = $0; sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, "", f)
+                sub(/[ \t]+$/, "", f); print $1, $2, f }' || :
+  exit 0
 fi
 if [ "$MODE" = wallpapers ]; then
   [ -n "$_file" ] || exit 0

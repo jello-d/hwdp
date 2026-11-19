@@ -26,10 +26,15 @@ four tabs over one desk:
     drag a name   from the list beside the grid onto a spot: placed there
     Enter         pick the name for the spot (or double-click it)
     g             cut the panel in this cell: whole, top-bottom, left-right
+    shift+arrows  move the cell's column left or right, or its row up or
+                  down (it trades places with its neighbour); t turns the
+                  grid, columns becoming rows. Everything a cell holds goes
+                  with it: surfaces, cuts, and the wallpaper it shows
     x             clear the spot            f / F  the default / none
     b             the cell's wallpaper      + - ] [  columns and rows
                   (the picker shows each image; every cell with one shows
-                  it cut across the panels the way the session cuts it)
+                  it cut across the panels the way the session cuts it,
+                  the integrator's default too where the desk sets none)
   REVIEW, the map as it will be saved, and what is missing from it
   everywhere
     1 - 4         the tabs
@@ -415,10 +420,11 @@ def draw_cell(cr, app, vf, cx, cy, fg, accent, cut=None):
     cr.stroke()
     head = (x + 4, y + 2, w - 8, CELL_HEAD - 2)
     fit(cr, "%d,%d" % (cx, cy), head, rgba(fg, 0.6), sizes=(9,), align=0)
-    wall = app.walls.get((cx, cy))
+    wall, own = app.wall_at((cx, cy))
     if wall:
-        fit(cr, wall, (x + w / 3, y + 2, w * 2 / 3 - 4, CELL_HEAD - 2),
-            rgba(fg, 0.5), bold=False, sizes=(8,), align=1)
+        fit(cr, wall if own else "(default) " + wall,
+            (x + w / 3, y + 2, w * 2 / 3 - 4, CELL_HEAD - 2),
+            rgba(fg, 0.5 if own else 0.35), bold=False, sizes=(8,), align=1)
     sel_o, sel_r = app.vspot()
     for o in app.desk.on():
         draw_panel(cr, app, o, cx, cy, vbox(vf, cx, cy, o),
@@ -711,7 +717,7 @@ class GridPage:
 
     def __init__(self, win):
         self.win, self.shown = win, None
-        self.slices = Slices(win, lambda: win.app.walls, self._landed,
+        self.slices = Slices(win, self.shown_walls, self._landed,
                              "gdesk-slices")
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
         self.area.set_draw_func(self._draw)
@@ -807,6 +813,14 @@ class GridPage:
         self.area.queue_draw()
         self.caption()
 
+    def shown_walls(self):
+        """Every cell's wallpaper as the session shows it: the desk's own,
+        else the integrator's default."""
+        app = self.win.app
+        return {(cx, cy): f for cx in range(app.grid[0])
+                for cy in range(app.grid[1])
+                for f in [app.wall_at((cx, cy))[0]] if f}
+
     def caption(self):
         app = self.win.app
         self.sel.set_text(selection_words(app))
@@ -833,6 +847,13 @@ def button(label, icon, tip, call):
         b.set_icon_name(icon)
     b.connect("clicked", lambda _b: call())
     return b
+
+
+def curses_key(name):
+    """The terminal tool's code for a key a button presses (the App takes
+    curses codes; see controller.KEYSYMS)."""
+    import curses
+    return getattr(curses, "KEY_" + name)
 
 
 def tab_buttons(keyed, ident):
@@ -867,6 +888,18 @@ def tab_buttons(keyed, ident):
             keyed("Wallpaper", "image-x-generic-symbolic",
                   "This cell's wallpaper (b)", ord("b")),
             sep,
+            keyed(None, "go-previous-symbolic",
+                  "Move this column left (shift+Left)", curses_key("SLEFT")),
+            keyed(None, "go-next-symbolic",
+                  "Move this column right (shift+Right)",
+                  curses_key("SRIGHT")),
+            keyed(None, "go-up-symbolic", "Move this row up (shift+Up)",
+                  curses_key("SR")),
+            keyed(None, "go-down-symbolic", "Move this row down (shift+Down)",
+                  curses_key("SF")),
+            keyed(None, "object-flip-horizontal-symbolic",
+                  "Turn the grid: columns become rows (t)", ord("t")),
+            Gtk.Separator(orientation=Gtk.Orientation.VERTICAL),
             keyed(None, "list-remove-symbolic", "A column fewer (-)",
                   ord("-")),
             Gtk.Label(label="columns"),
@@ -1200,10 +1233,14 @@ def thumb_row(win, name):
     pic = Gtk.Picture(content_fit=Gtk.ContentFit.COVER,
                       width_request=THUMB[0], height_request=THUMB[1],
                       can_shrink=True, margin_top=4, margin_bottom=4)
+    dflt = app.wall_defaults.get(tuple(app.vcell))
     if name in app.wpick["images"]:
         win.thumbs.into(os.path.join(app.hw.wallpaper_dir(), name), pic)
+    elif dflt:
+        r.set_subtitle("this place's default: %s" % dflt)
+        win.thumbs.into(os.path.join(app.hw.wallpaper_dir(), dflt), pic)
     else:
-        r.set_subtitle("each panel keeps the desk's own")
+        r.set_subtitle("no default known here")
     r.add_prefix(pic)
     r.picture = pic                 # for a test to watch it land
     return r
@@ -1285,8 +1322,10 @@ def pick_form(win, kind):
     def highlighted():
         r = rows.get_selected_row()
         name = r.get_title() if r is not None else None
-        return name if kind == "wpick" and name in app.wpick["images"] \
-            else None
+        if kind != "wpick" or name is None:
+            return None
+        return name if name in app.wpick["images"] else \
+            app.wall_defaults.get(tuple(app.vcell))
 
     def first(_e):
         if rows.get_row_at_index(0) is not None:

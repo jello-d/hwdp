@@ -84,14 +84,15 @@ function lsize(w, h, tx, s,    r) {
 
 # probe_run <class>: print the first answering provider's records. Returns 1
 # with no output when no provider in any root can answer.
-probe_run() {
+probe_run() {   # <class> [args...]: the args go to each provider
   _pc=$1
+  shift
   for _pr in "$HWDP_PROVIDER_ROOT" "$HWDP_MACHINE_PROVIDERS" \
              "${HWDP_LIBEXEC:-}/providers"; do
     [ -n "$_pr" ] && [ -d "$_pr/$_pc" ] || continue
     for _pp in "$_pr/$_pc"/*; do
       [ -f "$_pp" ] && [ -x "$_pp" ] || continue
-      _po=$("$_pp" 2>/dev/null) || continue
+      _po=$("$_pp" "$@" 2>/dev/null) || continue
       [ -n "$_po" ] || continue
       printf '%s\n' "$_po"
       return 0
