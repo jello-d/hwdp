@@ -124,6 +124,59 @@ _cut=$(printf '%s\n' "$_m" | sed -n '1,/^$/p' | grep -c ':')
 rm -f "$T/home/.config/hwdp/desks/$_dk.conf"
 pass "a cut panel is divided even when empty, and the legend names it"
 
+# --- the GRID: the desk in every cell, that cell's surfaces, the default -----
+cat > "$T/home/.config/hwdp/desks/$_dk.conf" <<'EOF'
+grid 3 2
+surface comms "Acme MODEL SN-DP-1" cell 0 0 bottom
+surface mail  "Acme MODEL SN-DP-1" cell 0 0 top
+surface code  "Acme MODEL SN-DP-2" cell 1 0 left
+surface chat  "@builtin" cell 2 1
+default overflow "@builtin" top
+EOF
+printf '%s\n' 'comms Comms' 'mail Mail' 'code Code' 'chat Chat' \
+  'overflow Overflow' > "$T/home/.config/hwdp/surfaces.names"
+_m=$(run --width 78) || fail "map failed with a grid"
+_g=$(printf '%s\n' "$_m" | sed -n '/^GRID/,/^shape/p')
+_has "the grid is drawn, its size said" "$_g" "GRID 3x2"
+for _c in 0,0 1,0 2,0 0,1 1,1 2,1; do
+  _has "cell $_c is drawn" "$_g" "- $_c -"
+done
+# One cell's box: its title line to the blank line after it.
+_cell() { printf '%s\n' "$_g" | awk -v c="- $1 -" '
+  index($0, c) { p = 1; o = index($0, c) - 2 }
+  p && /^$/ { exit }
+  p { print substr($0, o, 38) }'; }
+_has "a cell holds its own surface" "$(_cell 0,0)" "comms"
+_has "both halves of a cut" "$(_cell 0,0)" "mail"
+_cell 1,0 | grep -q 'comms\|mail' && fail "a cell drew another cell's surface:
+$(_cell 1,0)"
+_has "the default shows where a cell leaves its place empty" "$(_cell 1,1)" \
+  "(overflow)"
+_cell 2,1 | grep -q '(overflow)' && fail "the default drawn where a surface
+covers its place: $(_cell 2,1)"
+_has "chat is in its cell" "$(_cell 2,1)" "chat"
+# A cell clipped at the width loses its right edge: every box must close.
+_open=$(printf '%s\n' "$_g" | awk '/^\+- / && !/\+$/' | wc -l)
+[ "$_open" -eq 0 ] || fail "a cell was cut off at the width:
+$_g"
+# The drawing's own lines, as above for the desk (the note under it is prose).
+_long=$(printf '%s\n' "$_g" | awk '/^[+|]/ && length > 78' | wc -l)
+[ "$_long" -eq 0 ] || fail "the grid ran past --width 78"
+_g40=$(run --width 40 | sed -n '/^GRID/,/^shape/p')
+_long=$(printf '%s\n' "$_g40" | awk '/^[+|]/ && length > 40' | wc -l)
+[ "$_long" -eq 0 ] || fail "the grid ran past --width 40"
+_has "narrow, it still draws every cell" "$_g40" "- 2,1 -"
+_open=$(printf '%s\n' "$_g40" | awk '/^\+- / && !/\+$/' | wc -l)
+[ "$_open" -eq 0 ] || fail "narrow, a cell was cut off at the width"
+rm -f "$T/home/.config/hwdp/desks/$_dk.conf" \
+  "$T/home/.config/hwdp/surfaces.names"
+mv "$T/surf/$_id.conf" "$T/surf.keep"     # the earlier section's surfaces
+_m=$(run --width 78)
+mv "$T/surf.keep" "$T/surf/$_id.conf"
+printf '%s\n' "$_m" | grep -q '^GRID' && fail "a desk with no surfaces drew
+a grid: $_m"
+pass "the grid: each cell its own surfaces, the default where it falls"
+
 # --- a BROKEN surfaces file is reported, never half drawn ---------------------
 printf 'surface code "Acme MODEL SN-DP-2" cell 9 9\n' >> "$T/surf/$_id.conf"
 printf 'split "Acme MODEL SN-DP-2" cell 1 1 left-right\n' \

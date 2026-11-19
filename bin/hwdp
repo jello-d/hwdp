@@ -19,7 +19,7 @@
 #   hwdp gdesk      the desk tool in a window (GTK 4, libadwaita)
 #   hwdp profile    this desk's authored profile; --missing: does it need one
 #   hwdp surfaces   this desk's named surfaces, resolved (--check validates)
-#   hwdp map        draw this desk in text: outputs, surfaces, problems
+#   hwdp map        draw this desk in text: outputs, surfaces, grid, problems
 #   hwdp desks      every known desk by name; --name gives one a name
 #   hwdp identify   label every monitor on its glass (--seconds N)
 #   hwdp watch      supervise the layout; fire display-change hooks
