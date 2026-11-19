@@ -25,6 +25,15 @@ class Output:
             self.bw, self.bh = lh, lw
         else:
             self.bw, self.bh = lw, lh
+        self.bmm = (0, 0)       # the UNROTATED millimetres; 0 = unknown
+
+    def set_mm(self, mw, mh):
+        """The millimetres as `hwdp geometry` gives them NOW (already
+        swapped for a quarter turn), kept unrotated like the size."""
+        self.bmm = (mh, mw) if self.transform in ROTATED else (mw, mh)
+
+    def mm(self):
+        return self.bmm[::-1] if self.transform in ROTATED else self.bmm
 
     @property
     def w(self):
@@ -45,6 +54,35 @@ class Output:
     def degrees(self):
         t = self.transform.replace("flipped-", "")
         return "0" if t == "normal" else t
+
+
+def slicer_name(o):
+    """Output O's name in a slicer layout, and so in its manifest: an EDID
+    name has spaces, and the slicer splits its lines on them."""
+    return o.conn.replace(" ", "_")
+
+
+def slicer_layout(desk, width):
+    """The desk AS IT IS NOW (edited, unsaved, maybe not even attached) as
+    `hwdp geometry` lines for wallpaper-slicer's WALLPAPER_SLICER_LAYOUT,
+    scaled so the whole desk is WIDTH pixels across: a preview's slices
+    come out small, cut exactly as the session's are. EDGES are rounded,
+    not sizes, so outputs that touch still touch."""
+    on = desk.on()
+    minx, miny = min(o.x for o in on), min(o.y for o in on)
+    s = width / (max(o.x + o.w for o in on) - minx)
+
+    def px(v, lo):
+        return int(round((v - lo) * s))
+    lines = []
+    for o in on:
+        x0, y0 = px(o.x, minx), px(o.y, miny)
+        w, h = px(o.x + o.w, minx) - x0, px(o.y + o.h, miny) - y0
+        mw, mh = o.mm()
+        lines.append("%s 0 0 %s 1 %d %d %d %d %s %d %d" % (
+            slicer_name(o), o.transform, x0, y0, max(1, w),
+            max(1, h), "portrait" if h > w else "landscape", mw, mh))
+    return lines
 
 
 def span(a1, a2, b1, b2):

@@ -15,8 +15,12 @@ harness_init desk-gtk
 command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
 
 cat > "$T/common.py" <<'PY'
-import curses, importlib.machinery, importlib.util, sys
+import curses, importlib.machinery, importlib.util, os, shutil, sys
 here = sys.argv[1]
+WALLS = sys.argv[2] + "/walls"
+os.environ["HWDP_WALLPAPER_DIR"] = WALLS
+os.environ["XDG_CACHE_HOME"] = sys.argv[2] + "/cache"
+CUTTER = shutil.which("magick") or shutil.which("convert")
 ld = importlib.machinery.SourceFileLoader("gui", here + "/libexec/desk-gtk")
 sp = importlib.util.spec_from_loader("gui", ld)
 gui = importlib.util.module_from_spec(sp)
@@ -56,7 +60,12 @@ class FakeHw:
     def wallpapers(self):
         return {}
     def wallpaper_images(self):
-        return ["aurora.jpg", "night sky.png"]
+        return ["aurora.png", "night sky.png"]
+    def wallpaper_dir(self):
+        return WALLS
+    def slice_preview(self, walls, layout, outdir):
+        self.calls.append(("preview", dict(walls)))
+        return real.slice_preview(walls, layout, outdir)
     def write_names(self, names):
         self.calls.append(("names", [list(n) for n in names]))
         return 0, ""
@@ -80,6 +89,21 @@ def desk():
 
 def sync(work, finish):
     return {"finish": finish, "res": work()}
+
+def make_walls():
+    """Two images for the pickers and the preview: left red, right blue;
+    and a grey one."""
+    import cairo
+    os.makedirs(WALLS, exist_ok=True)
+    for name, paint in (("aurora.png", ((1, 0, 0), (0, 0, 1))),
+                        ("night sky.png", ((0.5, 0.5, 0.5),) * 2)):
+        img = cairo.ImageSurface(cairo.FORMAT_RGB24, 800, 400)
+        cr = cairo.Context(img)
+        for i, rgb in enumerate(paint):
+            cr.set_source_rgb(*rgb)
+            cr.rectangle(i * 400, 0, 400, 400)
+            cr.fill()
+        img.write_to_png(os.path.join(WALLS, name))
 PY
 
 # --- the pointer, and the toolkit's keys: the shared core --------------------
@@ -252,6 +276,34 @@ inner = all(gui.vbox(vf, cx, cy, o)[0] >= gui.cell_rect(vf, cx, cy)[0]
             for cx in range(3) for cy in range(3) for o in d.on())
 check("every miniature sits inside its own cell", inner)
 
+# The slicer's view of the desk as edited: edges kept, millimetres turned.
+o1 = model.Output("A", "normal", 0, 0, 1921, 1081)
+o2 = model.Output("Dell Inc. P2721Q", "90", 1921, 0, 1081, 1921)
+o1.set_mm(600, 340)
+o2.set_mm(340, 600)          # as geometry gives a quarter-turned panel
+f = [ln.split() for ln in model.slicer_layout(model.Desk([o1, o2], None),
+                                               1000)]
+check("a slicer layout has the geometry's twelve fields",
+      all(len(x) == 12 for x in f), f)
+check("a name with spaces is one field, the manifest's name for it",
+      f[1][0] == model.slicer_name(o2) == "Dell_Inc._P2721Q", f[1][0])
+check("touching outputs still touch after the scale",
+      int(f[0][5]) + int(f[0][7]) == int(f[1][5]), f)
+# Three of 1001 at 1000 across: rounding SIZES would leave the third a
+# pixel off the second (333 + 333 = 666, but 2002 scaled is 667).
+tri = model.Desk([model.Output("T%d" % i, "normal", i * 1001, 0, 1001, 500)
+                  for i in range(3)], None)
+t = [ln.split() for ln in model.slicer_layout(tri, 1000)]
+check("every shared edge survives the scale, not just the first",
+      all(int(t[i][5]) + int(t[i][7]) == int(t[i + 1][5]) for i in (0, 1)),
+      t)
+check("the desk is the width asked for",
+      int(f[1][5]) + int(f[1][7]) == 1000, f)
+check("a quarter-turned panel's millimetres are turned too",
+      f[1][10:12] == ["340", "600"], f[1])
+o2.transform = "normal"
+check("and turned back with it", o2.mm() == (600, 340), o2.mm())
+
 # The name form, filled in whole: refused characters are said.
 a._name_add(0)
 a.form_submit("mail!", "Mail")
@@ -409,12 +461,48 @@ PY
 case $_out in *OK) ;; *) fail "window: $_out" ;; esac
 pass "the window: drag, keys, keep and error dialogs, the quit prompt"
 
+# --- the preview's cut: the real slicer, for the desk as edited ------------
+if command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1
+then
+  _out=$(python3 -I - "$HERE" "$T" 2>&1 <<'PY'
+import sys
+exec(open(sys.argv[2] + "/common.py").read())
+make_walls()
+d, (e, p, l), hw = desk()
+for o in d.outs:
+    o.set_mm(600, 340) if o.w > o.h else o.set_mm(340, 600)
+lay = "\n".join(model.slicer_layout(d, 600)) + "\n"
+found, why = real.slice_preview({(0, 0): "aurora.png"}, lay,
+                                sys.argv[2] + "/cache/p")
+check("the cut gives a slice per panel of the cell",
+      set(found) == {(0, 0, "eDP-1"), (0, 0, "DP-1"), (0, 0, "DP-2")},
+      (found, why))
+import cairo
+sizes = {k[2]: (cairo.ImageSurface.create_from_png(v).get_width(),
+                cairo.ImageSurface.create_from_png(v).get_height())
+         for k, v in found.items()}
+want = {x.split()[0]: (int(x.split()[7]), int(x.split()[8]))
+        for x in lay.splitlines()}
+check("each slice is its panel's size in the layout handed in",
+      sizes == want, (sizes, want))
+check("no wallpapers is nothing to cut",
+      real.slice_preview({}, lay, sys.argv[2] + "/cache/p") == ({}, ""))
+print("FAILS:" + "|".join(fails) if fails else "OK")
+PY
+)
+  case $_out in *OK) ;; *) fail "preview cut: $_out" ;; esac
+  pass "the preview: the desk as edited, cut small by the session's slicer"
+else
+  pass "the preview's cut not checked (no image tool here)"
+fi
+
 # --- the window: names, the grid, and every dialog they raise --------------
 _out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/run" \
   WAYLAND_DISPLAY="$_wl" GSK_RENDERER=cairo GDK_BACKEND=wayland \
   timeout 60 python3 -I - "$HERE" "$T" 2>&1 <<'PY'
 import sys, time, cairo
 exec(open(sys.argv[2] + "/common.py").read())
+make_walls()
 from gi.repository import Adw, Gdk, Gio, GLib
 
 def drawn(label, fn, area, w, h):
@@ -513,10 +601,26 @@ def virtual_tab(w, a, hw, outs):
           w.alert and w.alert[0] == "wpick" and
           w.alert[1].rows.get_row_at_index(0).get_title() == "(default)")
     d = w.alert[1]
+    pic = d.rows.get_row_at_index(1).picture
+    for _ in range(60):
+        if pic.get_paintable() is not None:
+            break
+        yield
+    check("an image's row shows its thumbnail",
+          pic.get_paintable() is not None)
     d.rows.emit("row-activated", d.rows.get_row_at_index(2))
     yield
     check("choosing an image sets the cell's wallpaper",
           a.walls == {(1, 0): "night sky.png"}, a.walls)
+    if CUTTER:
+        for _ in range(100):
+            if g.slices.cut:
+                break
+            yield
+        check("the cell's wallpaper is cut across its panels to show it",
+              set(g.slices.cut) == {(1, 0, "eDP-1"), (1, 0, "DP-1"),
+                                    (1, 0, "DP-2")},
+              (sorted(g.slices.cut), g.slices.why))
     key(w, Gdk.KEY_plus)
     check("+ adds a column", a.grid == (4, 3), a.grid)
     g.on_drop(None, "comms", *mid)

@@ -44,8 +44,11 @@ class Hwdp:
         outs = []
         for line in out.splitlines():
             f = line.split()
-            outs.append(Output(f[0], f[3], int(f[5]), int(f[6]),
-                               int(f[7]), int(f[8])))
+            o = Output(f[0], f[3], int(f[5]), int(f[6]), int(f[7]),
+                       int(f[8]))
+            if len(f) >= 12 and f[10].isdigit() and f[11].isdigit():
+                o.set_mm(int(f[10]), int(f[11]))
+            outs.append(o)
         return outs
 
     def repack(self, old, new):
@@ -143,12 +146,17 @@ class Hwdp:
                 found[(int(f[0]), int(f[1]))] = f[2]
         return found
 
+    def wallpaper_dir(self):
+        """Where the images are: HWDP_WALLPAPER_DIR, else
+        ~/Pictures/wallpaper, which is where the integrator points the
+        plugin."""
+        return os.environ.get("HWDP_WALLPAPER_DIR") or os.path.expanduser(
+            "~/Pictures/wallpaper")
+
     def wallpaper_images(self):
         """The images a workspace can take: the files in the wallpaper
-        directory (HWDP_WALLPAPER_DIR, else ~/Pictures/wallpaper, which is
-        where the integrator points the plugin), by name."""
-        d = os.environ.get("HWDP_WALLPAPER_DIR") or os.path.expanduser(
-            "~/Pictures/wallpaper")
+        directory, by name."""
+        d = self.wallpaper_dir()
         try:
             names = os.listdir(d)
         except OSError:
@@ -157,6 +165,47 @@ class Hwdp:
                        and n.lower().endswith(IMAGE_SUFFIXES)
                        and os.path.isfile(os.path.join(d, n))),
                       key=str.lower)
+
+    def slice_preview(self, walls, layout, outdir):
+        """WALLS ({(cx, cy): file}) cut for LAYOUT (`hwdp geometry` lines,
+        see model.slicer_layout) by wallpaper-slicer into OUTDIR, never the
+        session's own cache: {(cx, cy, output): slice path}, and why not
+        when the cut failed."""
+        if not walls:
+            return {}, ""
+        os.makedirs(outdir, exist_ok=True)
+        cut = os.path.join(outdir, "desk.map")
+        with open(cut, "w") as fh:
+            fh.writelines("%d %d %s\n" % (x, y, f)
+                          for (x, y), f in sorted(walls.items()))
+        slicer = os.path.join(os.path.dirname(self.libexec), "bin",
+                              "wallpaper-slicer")
+        env = dict(os.environ, HWDP_LIB=self.lib,
+                   WALLPAPER_SLICER_LAYOUT=layout)
+        try:
+            p = subprocess.run([slicer, "-M", cut, "-d",
+                                self.wallpaper_dir(), "-o", outdir],
+                               capture_output=True, text=True, env=env,
+                               timeout=120, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {}, str(e)
+        man = p.stdout.strip().splitlines()
+        if p.returncode != 0 or not man or not os.path.isfile(man[-1]):
+            return {}, p.stderr.strip() or "exit %d" % p.returncode
+        found = {}
+        with open(man[-1]) as fh:
+            for ln in fh:
+                f = ln.split(None, 3)
+                if len(f) == 4 and f[3].startswith("/") and \
+                        f[0].isdigit() and f[1].isdigit():
+                    found[(int(f[0]), int(f[1]), f[2])] = f[3].rstrip("\n")
+        # A cell the slicer could not cut is its plain line, not an error,
+        # so say which, rather than hand back less in silence.
+        uncut = sorted(f for (x, y), f in walls.items()
+                       if not any(k[:2] == (x, y) for k in found))
+        return found, ("not cut: " + ", ".join(uncut) +
+                       (" (%s)" % p.stderr.strip() if p.stderr.strip()
+                        else "")) if uncut else ""
 
     def write_wallpapers(self, walls):
         rc, _, why = self._surf("--write-wallpapers", stdin="".join(

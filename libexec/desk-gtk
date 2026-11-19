@@ -28,6 +28,8 @@ four tabs over one desk:
     g             cut the panel in this cell: whole, top-bottom, left-right
     x             clear the spot            f / F  the default / none
     b             the cell's wallpaper      + - ] [  columns and rows
+                  (the picker shows each image; every cell with one shows
+                  it cut across the panels the way the session cuts it)
   REVIEW, the map as it will be saved, and what is missing from it
   everywhere
     1 - 4         the tabs
@@ -43,6 +45,7 @@ about what a desk is or how it is saved.
 """
 import os
 import sys
+import threading
 import time
 
 sys.dont_write_bytecode = True
@@ -51,7 +54,7 @@ sys.path.insert(0, os.environ.get("HWDP_LIB") or os.path.join(
 from hwdp_desk.controller import App, ESC, key_code     # noqa: E402
 from hwdp_desk.hwdp import Hwdp, OfflineHwdp            # noqa: E402
 from hwdp_desk.model import (                           # noqa: E402
-    HALVES, NEAR, REGION_OF, Desk, near_misses)
+    HALVES, NEAR, REGION_OF, Desk, near_misses, slicer_layout, slicer_name)
 from hwdp_desk.words import (                           # noqa: E402
     cell_words, covered, delname_words, error_lines, label_of, mark_of,
     pick_words, review_lines, selection_words, unsplit_words, where_words)
@@ -60,11 +63,16 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import (Adw, Gdk, Gio, GLib, GObject, Gtk, Pango,
-                               PangoCairo)
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import (Adw, Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk,
+                               Pango, PangoCairo)
     GTK_WHY = ""
 except (ImportError, ValueError) as e:      # said by main, not here
     GTK_WHY = str(e)
+try:
+    import cairo            # the preview's slices; without it, none drawn
+except ImportError:
+    cairo = None
 
 APP_ID = "io.github.jello_d.hwdp.gdesk"
 TABS = ("physical", "surfaces", "virtual", "review")    # app.tab's order
@@ -76,6 +84,9 @@ CELL_GAP = 10       # between the virtual tab's cells
 CELL_HEAD = 22      # a cell's own line: where it is, its wallpaper
 ENTER = 10
 TICK_MS = 100
+PREVIEW_SPAN = 960  # the whole desk this many pixels across, for slices
+PREVIEW_WAIT = 400  # ms of no change before a preview is cut
+THUMB = (128, 72)   # the picker's thumbnails
 FRACTION = {r: f for f, r in REGION_OF.items()}         # region -> x y w h
 
 
@@ -242,10 +253,12 @@ def text(cr, s, x, y, w, size, bold, colour):
     return th
 
 
-def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5):
+def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5,
+        back=None):
     """S in rectangle R at the largest of SIZES that fits it whole, else at
     the smallest cut with an ellipsis (the line under the drawing says it
-    in full). ALIGN places it across: 0 left, 0.5 centred, 1 right."""
+    in full). ALIGN places it across: 0 left, 0.5 centred, 1 right. BACK,
+    a colour, is a backing behind it (over a picture)."""
     x, y, w, h = r
     for size in sizes:
         lay = layout(cr, s, size, bold)
@@ -258,9 +271,27 @@ def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5):
         tw, th = lay.get_pixel_size()
         if th > h or w < 12:
             return
+    tx, ty = x + 3 + (w - 6 - tw) * align, y + (h - th) / 2
+    if back:
+        rounded(cr, tx - 4, ty - 1, tw + 8, th + 2, 4)
+        cr.set_source_rgba(*back)
+        cr.fill()
     cr.set_source_rgba(*colour)
-    cr.move_to(x + 3 + (w - 6 - tw) * align, y + (h - th) / 2)
+    cr.move_to(tx, ty)
     PangoCairo.show_layout(cr, lay)
+
+
+def paint(cr, img, b):
+    """Slice IMG stretched into box B: a slice is the output's logical
+    rectangle already, so this only scales it."""
+    cr.save()
+    rounded(cr, b[0], b[1], b[2], b[3], 3)
+    cr.clip()
+    cr.translate(b[0], b[1])
+    cr.scale(b[2] / img.get_width(), b[3] / img.get_height())
+    cr.set_source_surface(img, 0, 0)
+    cr.paint()
+    cr.restore()
 
 
 def draw_output(cr, app, i, rect, fg, accent):
@@ -311,15 +342,20 @@ def draw_cut(cr, sp, b, fg):
     cr.set_dash([])
 
 
-def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent):
-    """One panel in one cell: its surfaces in their parts, the cut, the
-    default where nothing claims it, and LIT (a region) the selection."""
+def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
+    """One panel in one cell: its slice of the cell's wallpaper (IMG), its
+    surfaces in their parts, the cut, the default where nothing claims it,
+    and LIT (a region) the selection."""
+    if img is not None:
+        paint(cr, img, b)
     rounded(cr, b[0], b[1], b[2], b[3], 3)
-    cr.set_source_rgba(*rgba(fg, 0.07))
+    cr.set_source_rgba(*rgba(fg, 0.0 if img is not None else 0.07))
     cr.fill_preserve()
     cr.set_line_width(1)
     cr.set_source_rgba(*rgba(fg, 0.35))
     cr.stroke()
+    back = (0, 0, 0, 0.6) if img is not None else None
+    ink = (1, 1, 1, 0.95) if img is not None else rgba(fg, 0.95)
     sp = app.split_at(o, cx, cy)
     if sp:
         draw_cut(cr, sp, b, fg)
@@ -330,12 +366,12 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent):
         rounded(cr, r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4, 3)
         cr.set_source_rgba(*rgba(accent, 0.5 if x.region == lit else 0.22))
         cr.fill()
-        fit(cr, label_of(app, x.name), r, rgba(fg, 0.95))
+        fit(cr, label_of(app, x.name), r, ink, back=back)
     claimed, whole = covered(app, o, cx, cy)
     d = app.default
     if not whole and d and d.conn == o.conn and d.region not in claimed:
         fit(cr, "(%s)" % label_of(app, d.name), part(d.region, b),
-            rgba(fg, 0.45), bold=False)
+            ink if back else rgba(fg, 0.45), bold=False, back=back)
     if lit:
         r = part(lit, b)
         rounded(cr, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, 3)
@@ -344,7 +380,7 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent):
         cr.stroke()
 
 
-def draw_cell(cr, app, vf, cx, cy, fg, accent):
+def draw_cell(cr, app, vf, cx, cy, fg, accent, cut=None):
     cur = [cx, cy] == app.vcell
     x, y, w, h = cell_rect(vf, cx, cy)
     rounded(cr, x, y, w, h, 8)
@@ -362,12 +398,120 @@ def draw_cell(cr, app, vf, cx, cy, fg, accent):
     sel_o, sel_r = app.vspot()
     for o in app.desk.on():
         draw_panel(cr, app, o, cx, cy, vbox(vf, cx, cy, o),
-                   sel_r if cur and o is sel_o else None, fg, accent)
+                   sel_r if cur and o is sel_o else None, fg, accent,
+                   (cut or {}).get((cx, cy, slicer_name(o))))
 
 
 def colours(area):
     return area.get_color(), \
         Adw.StyleManager.get_default().get_accent_color_rgba()
+
+
+# --- the wallpapers: the cells' slices, and the picker's thumbnails ----------
+
+class Slices:
+    """The virtual tab's wallpapers: the desk AS EDITED, small, cut by
+    wallpaper-slicer the way the session's are (WALLPAPER_SLICER_LAYOUT),
+    in the background, into a cache of the tool's own. Cut again once the
+    layout or the wallpapers have held still for PREVIEW_WAIT."""
+
+    def __init__(self, win):
+        self.win, self.cut, self.why = win, {}, ""
+        self.want = self.timer = None
+        self.running = False
+        self.outdir = os.path.join(
+            os.environ.get("XDG_CACHE_HOME") or
+            os.path.expanduser("~/.cache"), "hwdp", "gdesk-slices")
+
+    def key(self):
+        app = self.win.app
+        return (tuple(slicer_layout(app.desk, PREVIEW_SPAN)),
+                tuple(sorted(app.walls.items())))
+
+    def refresh(self):
+        k = self.key()
+        if k == self.want or cairo is None:
+            return
+        self.want = k
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer = GLib.timeout_add(PREVIEW_WAIT, self._start)
+
+    def _start(self):
+        self.timer = None
+        if not self.running:
+            self.running = True
+            threading.Thread(target=self._work, args=(self.want,),
+                             daemon=True).start()
+        return GLib.SOURCE_REMOVE
+
+    def _work(self, k):
+        # Whatever happens here is SAID: a worker that died in silence
+        # would leave the preview running forever and never cut again.
+        try:
+            found, why = self.win.app.hw.slice_preview(
+                dict(k[1]), "\n".join(k[0]) + "\n", self.outdir)
+        except Exception as e:
+            found, why = {}, "the cut raised %r" % e
+        imgs = {}
+        for spot, path in found.items():
+            try:
+                imgs[spot] = cairo.ImageSurface.create_from_png(path)
+            except (cairo.Error, OSError) as e:
+                why = why or "%s: %s" % (path, e)
+        GLib.idle_add(self._landed, k, imgs, why)
+
+    def _landed(self, k, imgs, why):
+        self.running = False
+        if k == self.want:
+            self.cut, self.why = imgs, why
+            self.win.grid.area.queue_draw()
+            self.win.grid.caption()
+        else:
+            self._start()           # it changed while that cut ran
+        return GLib.SOURCE_REMOVE
+
+
+class Thumbs:
+    """The picker's thumbnails, decoded off the main thread and kept for
+    the session; a row gets its picture when it lands."""
+
+    def __init__(self):
+        self.done, self.waiting = {}, {}
+
+    def into(self, path, picture):
+        if path in self.done:
+            picture.set_paintable(self.done[path])
+            return
+        if path in self.waiting:
+            self.waiting[path].append(picture)
+            return
+        self.waiting[path] = [picture]
+        threading.Thread(target=self._load, args=(path,),
+                         daemon=True).start()
+
+    def _load(self, path):
+        """Decoded at twice THUMB (crisp on a scaled panel) and cropped to
+        exactly that, covering it, so every row's picture is one size
+        whatever the image's own shape."""
+        tw, th = THUMB[0] * 2, THUMB[1] * 2
+        try:
+            info, w, h = GdkPixbuf.Pixbuf.get_file_info(path)
+            k = max(tw / w, th / h)
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                path, max(tw, round(w * k)), max(th, round(h * k)), False)
+            pb = pb.new_subpixbuf((pb.get_width() - tw) // 2,
+                                  (pb.get_height() - th) // 2, tw, th)
+        except (GLib.Error, TypeError, ZeroDivisionError):
+            pb = None
+        GLib.idle_add(self._landed, path, pb)
+
+    def _landed(self, path, pb):
+        tex = Gdk.Texture.new_for_pixbuf(pb) if pb else None
+        self.done[path] = tex
+        for pic in self.waiting.pop(path, []):
+            pic.set_paintable(tex)
+        return GLib.SOURCE_REMOVE
 
 
 # --- the physical tab --------------------------------------------------------
@@ -513,6 +657,7 @@ class GridPage:
 
     def __init__(self, win):
         self.win, self.shown = win, None
+        self.slices = Slices(win)
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
         self.area.set_draw_func(self._draw)
         click = Gtk.GestureClick()
@@ -599,9 +744,16 @@ class GridPage:
             self.names.remove_all()
             for item in now:
                 self.names.append(self._row(*item))
-        self.sel.set_text(selection_words(app))
-        self.cell.set_text(cell_words(app))
+        self.caption()
+        self.slices.refresh()
         self.area.queue_draw()
+
+    def caption(self):
+        app = self.win.app
+        self.sel.set_text(selection_words(app))
+        why = self.slices.why
+        self.cell.set_text(cell_words(app) + (
+            "   (no preview: %s)" % why.splitlines()[-1] if why else ""))
 
     def _draw(self, area, cr, w, h):
         app = self.win.app
@@ -609,7 +761,7 @@ class GridPage:
         vf = vframe(app, w, h)
         for cy in range(app.grid[1]):
             for cx in range(app.grid[0]):
-                draw_cell(cr, app, vf, cx, cy, fg, accent)
+                draw_cell(cr, app, vf, cx, cy, fg, accent, self.slices.cut)
 
 
 # --- the window --------------------------------------------------------------
@@ -672,6 +824,7 @@ class Window:
     def __init__(self, gapp, app):
         self.app = app
         self.alert = None       # (kind, its dialog, refresh) while one is up
+        self.thumbs = Thumbs()
         self.win = Adw.ApplicationWindow(application=gapp,
                                          default_width=1200,
                                          default_height=760)
@@ -980,9 +1133,27 @@ def name_form(win):
     return d, lambda: err.set_text(app.form["err"] if app.form else "")
 
 
-def pick_rows(app, kind, rows, st):
+def thumb_row(win, name):
+    """A wallpaper picker row: the image's thumbnail, then its name; the
+    default has no image to show."""
+    app = win.app
+    r = Adw.ActionRow(title=name, use_markup=False, activatable=True)
+    pic = Gtk.Picture(content_fit=Gtk.ContentFit.COVER,
+                      width_request=THUMB[0], height_request=THUMB[1],
+                      can_shrink=True, margin_top=4, margin_bottom=4)
+    if name in app.wpick["images"]:
+        win.thumbs.into(os.path.join(app.hw.wallpaper_dir(), name), pic)
+    else:
+        r.set_subtitle("each panel keeps the desk's own")
+    r.add_prefix(pic)
+    r.picture = pic                 # for a test to watch it land
+    return r
+
+
+def pick_rows(win, kind, rows, st):
     """Fill ROWS with what the picker shows now; the App's choice
     selected. Returns how many."""
+    app = win.app
     shown = app.pick_list() if kind == "pick" else app.wpick_list()
     rows.remove_all()
     for item in shown:
@@ -990,8 +1161,7 @@ def pick_rows(app, kind, rows, st):
             r = Adw.ActionRow(title=item[1], subtitle=item[0],
                               use_markup=False, activatable=True)
         else:
-            r = Adw.ActionRow(title=item, use_markup=False,
-                              activatable=True)
+            r = thumb_row(win, item)
         rows.append(r)
     r = rows.get_row_at_index(min(st["sel"], max(0, len(shown) - 1)))
     if r is not None:
@@ -1013,7 +1183,7 @@ def pick_form(win, kind):
 
     def changed(_e):
         st["filter"], st["sel"] = search.get_text(), 0
-        pick_rows(app, kind, rows, st)
+        pick_rows(win, kind, rows, st)
 
     def choose(_lb, row):
         st["sel"] = row.get_index()
@@ -1025,7 +1195,7 @@ def pick_form(win, kind):
     search.connect("search-changed", changed)
     search.connect("activate", first)
     rows.connect("row-activated", choose)
-    pick_rows(app, kind, rows, st)
+    pick_rows(win, kind, rows, st)
     body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     body.append(search)
     body.append(Gtk.ScrolledWindow(child=Adw.Clamp(
@@ -1033,7 +1203,7 @@ def pick_form(win, kind):
         vexpand=True))
     title = pick_words(app) if kind == "pick" else \
         "Wallpaper of cell %d,%d" % tuple(app.vcell)
-    d = form_dialog(win, title, None, body, width=480, height=520)
+    d = form_dialog(win, title, None, body, width=520, height=600)
     d.set_focus(search)
     d.search, d.rows = search, rows         # for a test to drive
     return d, None
