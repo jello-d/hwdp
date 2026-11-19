@@ -93,6 +93,7 @@ PREVIEW_SPAN = 960  # the whole desk this many pixels across, for slices
 PREVIEW_WAIT = 400  # ms of no change before a preview is cut
 THUMB = (128, 72)   # the picker's thumbnails
 SLICE_ALPHA = 0.5   # a cell's wallpaper, faint, so the names stand out
+LIT_ALPHA = 0.75    # ... and the selected spot's part of it, stronger
 FRACTION = {r: f for f, r in REGION_OF.items()}         # region -> x y w h
 
 
@@ -287,12 +288,16 @@ def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5,
     PangoCairo.show_layout(cr, lay)
 
 
-def paint(cr, img, b, alpha=SLICE_ALPHA):
+def paint(cr, img, b, alpha=SLICE_ALPHA, only=None):
     """Slice IMG stretched into box B: a slice is the output's logical
-    rectangle already, so this only scales it."""
+    rectangle already, so this only scales it. ONLY, a rectangle, paints
+    just that part of it."""
     cr.save()
     rounded(cr, b[0], b[1], b[2], b[3], 3)
     cr.clip()
+    if only:
+        cr.rectangle(*only)
+        cr.clip()
     cr.translate(b[0], b[1])
     cr.scale(b[2] / img.get_width(), b[3] / img.get_height())
     cr.set_source_surface(img, 0, 0)
@@ -351,9 +356,19 @@ def draw_cut(cr, sp, b, fg):
 def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
     """One panel in one cell: its slice of the cell's wallpaper (IMG), its
     surfaces in their parts, the cut, the default where nothing claims it,
-    and LIT (a region) the selection."""
+    and LIT (a region) the selection.
+
+    WITH A WALLPAPER the picture carries it all, on the plain background:
+    faint (SLICE_ALPHA), surfaces untinted so no colour sits on it, and the
+    selected spot's part stronger (LIT_ALPHA) with a thin outline, which a
+    dark or even picture needs to show the spot at all. Without one the
+    accent tints say which parts are placed and which is selected."""
     if img is not None:
         paint(cr, img, b)
+        if lit:
+            # Over the faint pass: 1 - (1 - a)(1 - x) = LIT_ALPHA.
+            paint(cr, img, b, 1 - (1 - LIT_ALPHA) / (1 - SLICE_ALPHA),
+                  part(lit, b))
     rounded(cr, b[0], b[1], b[2], b[3], 3)
     cr.set_source_rgba(*rgba(fg, 0.0 if img is not None else 0.07))
     cr.fill_preserve()
@@ -369,9 +384,11 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
         if x.conn != o.conn or (x.cx, x.cy) != (cx, cy):
             continue
         r = part(x.region, b)
-        rounded(cr, r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4, 3)
-        cr.set_source_rgba(*rgba(accent, 0.5 if x.region == lit else 0.22))
-        cr.fill()
+        if img is None:
+            rounded(cr, r[0] + 2, r[1] + 2, r[2] - 4, r[3] - 4, 3)
+            cr.set_source_rgba(*rgba(accent,
+                                     0.5 if x.region == lit else 0.22))
+            cr.fill()
         fit(cr, label_of(app, x.name), r, ink, back=back)
     claimed, whole = covered(app, o, cx, cy)
     d = app.default
@@ -381,7 +398,7 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
     if lit:
         r = part(lit, b)
         rounded(cr, r[0] + 1, r[1] + 1, r[2] - 2, r[3] - 2, 3)
-        cr.set_line_width(2.5)
+        cr.set_line_width(1.5 if img is not None else 2.5)
         cr.set_source_rgba(*rgba(accent))
         cr.stroke()
 

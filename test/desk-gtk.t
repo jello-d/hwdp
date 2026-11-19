@@ -553,6 +553,40 @@ def drawn(label, fn, area, w, h):
 def key(w, keyval):
     return w.on_key(None, keyval, 0, 0)
 
+def faint_and_lit():
+    """One panel cut top-bottom over black, a WHITE slice: comms placed on
+    the top half (no tint over a picture, so grey), the bottom selected
+    (stronger). Read back away from the label and the outline."""
+    d, (e, p, l), hw = desk()
+    a = controller.App(d, hw)
+    a.splits[("DP-2", 0, 0)] = "top-bottom"
+    a.surfaces = [model.Surface("comms", "DP-2", "top", 0, 0)]
+    img = cairo.ImageSurface(cairo.FORMAT_RGB24, 50, 50)
+    c = cairo.Context(img)
+    c.set_source_rgb(1, 1, 1)
+    c.paint()
+    out = cairo.ImageSurface(cairo.FORMAT_ARGB32, 200, 100)
+    cr = cairo.Context(out)
+    cr.set_source_rgb(0, 0, 0)
+    cr.paint()
+    fg, accent = Gdk.RGBA(), Gdk.RGBA()
+    fg.parse("white")
+    accent.parse("#9141ac")
+    gui.draw_panel(cr, a, l, 0, 0, (0, 0, 200, 100), "bottom", fg, accent,
+                   img)
+    out.flush()
+    px = out.get_data()
+
+    def rgb(x, y):
+        i = y * out.get_stride() + x * 4
+        return px[i + 2], px[i + 1], px[i]          # BGRA in memory
+    top, bottom = rgb(12, 12), rgb(12, 88)
+    check("over a picture a placed surface has no tint: grey, about half",
+          top[0] == top[1] == top[2] and abs(top[0] - 128) <= 3, top)
+    check("and the selected spot shows it stronger, about three quarters",
+          bottom[0] == bottom[1] == bottom[2]
+          and abs(bottom[0] - 191) <= 3, bottom)
+
 def surfaces_tab(w, a, hw):
     key(w, Gdk.KEY_2)
     check("2 is the surfaces tab", w.stack.get_visible_child_name()
@@ -707,6 +741,7 @@ def delete_and_save(w, a, hw):
     yield
 
 def drive(w, a, hw, outs):
+    faint_and_lit()
     for step in (surfaces_tab(w, a, hw), virtual_tab(w, a, hw, outs),
                  delete_and_save(w, a, hw)):
         yield from step
