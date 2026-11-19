@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""hwdp gdesk: the desk tool, in a window (GTK 4 and libadwaita).
+
+`hwdp gdesk` lands here; `hwdp gdesk <desk>` too, for a desk by name
+(`hwdp desks`), which away from its panels is loaded from its files and
+saved back to them without applying. The same desk tool as `hwdp desk`:
+
+  PHYSICAL, the layout, drawn to scale
+    click         select a monitor          drag  move it: it stays where it
+                                                  touches another, and pulls
+                                                  in to any alignment nearby
+    r             rotate it a quarter turn  w     swap (mark, then swap)
+    o             switch it off / back on   i     a label on every monitor
+    p             preview live, with a countdown that reverts unless kept
+    m, arrows     move mode, as in the terminal (shift+arrow one pixel)
+  REVIEW, the map as it will be saved, and what is missing from it
+  everywhere
+    Ctrl+S or s   save, and keep editing
+    Esc           back out of what is in progress (undo a move or drag, drop
+                  the mark); with nothing in progress, the quit prompt
+    q or closing  quit; with unsaved changes it asks first
+
+THIS FILE ONLY DRAWS. What a key or a drag means (the App), the desk as data
+and every call out to hwdp live in lib/hwdp_desk, shared with the terminal
+tool, so the two cannot disagree about what a desk is or how it is saved.
+"""
+import os
+import sys
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("HWDP_LIB") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
+from hwdp_desk.controller import App, ESC, key_code   # noqa: E402
+from hwdp_desk.hwdp import Hwdp, OfflineHwdp          # noqa: E402
+from hwdp_desk.model import NEAR, Desk, near_misses   # noqa: E402
+from hwdp_desk.words import error_lines, review_lines  # noqa: E402
+
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+    GTK_WHY = ""
+except (ImportError, ValueError) as e:      # said by main, not here
+    GTK_WHY = str(e)
+
+APP_ID = "io.github.jello_d.hwdp.gdesk"
+MARGIN = 32         # widget pixels around the drawing
+TRAY = 56           # the strip under it for the monitors switched off
+REACH = 12          # widget pixels within which a drag pulls in to align
+SLOP = 4            # widget pixels a press may wander and still be a click
+TICK_MS = 100
+
+
+# --- the frame: logical pixels to widget pixels ------------------------------
+# Pure, so a test reads it without a display.
+
+def frame(outs, w, h, room=None):
+    """(scale, ox, oy, minx, miny) fitting the outputs that are on into a
+    W x H widget, with room under them for the ones that are off. With
+    ROOM, an output being dragged: fit the others with its size spare on
+    every side, which is everywhere a drop can land (it always touches one
+    of them), so it never leaves the drawing."""
+    on = [o for o in outs if o.on and o is not room] or outs
+    pw, ph = (room.w, room.h) if room else (0, 0)
+    minx, miny = min(o.x for o in on) - pw, min(o.y for o in on) - ph
+    bw = max(o.x + o.w for o in on) + pw - minx
+    bh = max(o.y + o.h for o in on) + ph - miny
+    tray = TRAY if any(not o.on for o in outs) else 0
+    aw, ah = max(1, w - 2 * MARGIN), max(1, h - 2 * MARGIN - tray)
+    scale = min(aw / bw, ah / bh)
+    ox = MARGIN + (aw - bw * scale) / 2
+    oy = MARGIN + (ah - bh * scale) / 2
+    return scale, ox, oy, minx, miny
+
+
+def box(o, fr):
+    """Output O's rectangle in widget pixels, (x, y, w, h)."""
+    scale, ox, oy, minx, miny = fr
+    return (ox + (o.x - minx) * scale, oy + (o.y - miny) * scale,
+            o.w * scale, o.h * scale)
+
+
+def tray_boxes(outs, w, h):
+    """[(index, (x, y, w, h))] for the outputs that are off, in a row along
+    the bottom of a W x H widget."""
+    off = [i for i, o in enumerate(outs) if not o.on]
+    bw, gap = 120, 12
+    x = (w - len(off) * bw - (len(off) - 1) * gap) / 2
+    found = []
+    for i in off:
+        found.append((i, (x, h - MARGIN / 2 - TRAY + 8, bw, TRAY - 16)))
+        x += bw + gap
+    return found
+
+
+def hit(outs, fr, w, h, px, py):
+    """The index of the output under widget point (PX, PY), or None."""
+    rects = [(i, box(o, fr)) for i, o in enumerate(outs) if o.on]
+    for i, (x, y, bw, bh) in rects + tray_boxes(outs, w, h):
+        if x <= px <= x + bw and y <= py <= y + bh:
+            return i
+    return None
+
+
+def banner_text(desk):
+    """The one warning the drawing carries, in the terminal tool's words,
+    or "" when the desk is sound."""
+    if desk.faults():
+        return "the monitors do not meet edge to edge"
+    gaps = near_misses(desk, NEAR)
+    if gaps:
+        return "  ".join("%dpx gap between %s and %s" % (g, a, b)
+                         for a, b, g in gaps) + \
+            " (the pointer cannot cross it)"
+    return ""
+
+
+# --- the drawing -------------------------------------------------------------
+
+def rgba(c, alpha=None):
+    return (c.red, c.green, c.blue, c.alpha if alpha is None else alpha)
+
+
+def rounded(cr, x, y, w, h, r):
+    r = min(r, w / 2, h / 2)
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -1.5708, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
+    cr.arc(x + r, y + h - r, r, 1.5708, 3.1416)
+    cr.arc(x + r, y + r, r, 3.1416, 4.7124)
+    cr.close_path()
+
+
+def text(cr, s, x, y, w, size, bold, colour):
+    """S centred in width W at Y; returns the height it took (0 when it
+    does not fit, and then draws nothing)."""
+    lay = PangoCairo.create_layout(cr)
+    fd = Pango.FontDescription.from_string(
+        "Sans %s%d" % ("Bold " if bold else "", size))
+    lay.set_font_description(fd)
+    lay.set_text(s, -1)
+    tw, th = lay.get_pixel_size()
+    if tw > w - 8:
+        return 0
+    cr.set_source_rgba(*colour)
+    cr.move_to(x + (w - tw) / 2, y)
+    PangoCairo.show_layout(cr, lay)
+    return th
+
+
+def draw_output(cr, app, i, rect, fg, accent):
+    o = app.desk.outs[i]
+    x, y, w, h = rect
+    sel, moving = i == app.sel, app.moving and app.moving[0] is o
+    fill = rgba(accent, 0.55 if moving else 0.30) if sel else \
+        rgba(fg, 0.07 if o.on else 0.03)
+    rounded(cr, x + 2, y + 2, w - 4, h - 4, 8)
+    cr.set_source_rgba(*fill)
+    cr.fill_preserve()
+    cr.set_line_width(3 if sel else 1.5)
+    if app.mark is o:
+        cr.set_dash([8, 5])
+        cr.set_source_rgba(*rgba(accent))
+    else:
+        cr.set_dash([] if o.on else [4, 4])
+        cr.set_source_rgba(*(rgba(accent) if sel else rgba(fg, 0.5)))
+    cr.stroke()
+    cr.set_dash([])
+    lines = [(o.label, 13, True)]
+    if o.on:
+        lines += [("%d×%d" % (o.w, o.h), 10, False),
+                  ("%s  %s°" % (o.token(), o.degrees()), 9, False)]
+    ty = y + max(8, h / 2 - 9 * len(lines))
+    for s, size, bold in lines:
+        took = text(cr, s, x, ty, w, size, bold, rgba(fg, 0.9))
+        ty += took + 2
+
+
+class DeskView:
+    """The PHYSICAL drawing: every output to scale, dragged with the
+    pointer. The App decides; this only maps pixels to logical pixels."""
+
+    def __init__(self, win):
+        self.win = win
+        self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
+        self.area.set_draw_func(self._draw)
+        self.frozen = None      # the frame held still while dragging
+        self.start = None       # the grabbed output's (x, y) at the grab
+        self.moved = False      # past SLOP: a drag, not a click
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self.on_begin)
+        drag.connect("drag-update", self.on_update)
+        drag.connect("drag-end", self.on_end)
+        self.area.add_controller(drag)
+
+    def fr(self):
+        if self.moved:
+            return self.frozen
+        return frame(self.win.app.desk.outs, self.area.get_width(),
+                     self.area.get_height())
+
+    def on_begin(self, gesture, px, py):
+        app = self.win.app
+        i = hit(app.desk.outs, self.fr(), self.area.get_width(),
+                self.area.get_height(), px, py)
+        if i is None or not app.grab(i):
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+            self.win.sync()
+            return
+        self.frozen = frame(app.desk.outs, self.area.get_width(),
+                            self.area.get_height(), room=app.cur)
+        self.start, self.moved = (app.cur.x, app.cur.y), False
+        self.win.sync()
+
+    def on_update(self, gesture, dx, dy):
+        if not self.start or (not self.moved and
+                              dx * dx + dy * dy < SLOP * SLOP):
+            return
+        self.moved = True
+        scale = self.frozen[0]
+        self.win.app.drag_to(self.start[0] + dx / scale,
+                             self.start[1] + dy / scale, REACH / scale)
+        self.win.sync()
+
+    def on_end(self, gesture, dx, dy):
+        if self.start:
+            self.win.app.drop()
+        self.frozen = self.start = None
+        self.moved = False
+        self.win.sync()
+
+    def _draw(self, area, cr, w, h):
+        app = self.win.app
+        fg = area.get_color()
+        accent = Adw.StyleManager.get_default().get_accent_color_rgba()
+        fr = self.fr()
+        for i, o in enumerate(app.desk.outs):
+            if o.on:
+                draw_output(cr, app, i, box(o, fr), fg, accent)
+        for i, rect in tray_boxes(app.desk.outs, w, h):
+            draw_output(cr, app, i, rect, fg, accent)
+
+
+# --- the window --------------------------------------------------------------
+
+def button(label, icon, tip, call):
+    b = Gtk.Button(tooltip_text=tip, focusable=False)
+    b.set_child(Adw.ButtonContent(label=label, icon_name=icon))
+    b.connect("clicked", lambda _b: call())
+    return b
+
+
+class Window:
+    """The desk tool's window over one App. Every change goes through the
+    App; sync() then makes the window say what the App now holds."""
+
+    def __init__(self, gapp, app):
+        self.app = app
+        self.alert = None           # (kind, the dialog) while one is up
+        self.win = Adw.ApplicationWindow(application=gapp,
+                                         default_width=1040,
+                                         default_height=680)
+        self.win.set_title(getattr(app.hw, "name", None) and
+                           "%s: hwdp gdesk" % app.hw.name or "hwdp gdesk")
+        self.stack = Adw.ViewStack()
+        self.view = DeskView(self)
+        self.stack.add_titled_with_icon(self.view.area, "physical",
+                                        "Physical", "video-display-symbolic")
+        self.review = Gtk.TextView(editable=False, monospace=True,
+                                   cursor_visible=False, left_margin=24,
+                                   top_margin=16)
+        sw = Gtk.ScrolledWindow(child=self.review, vexpand=True)
+        self.stack.add_titled_with_icon(sw, "review", "Review",
+                                        "view-list-symbolic")
+        self.stack.connect("notify::visible-child", lambda *_: self.sync())
+        self.banner = Adw.Banner()
+        tv = Adw.ToolbarView(content=self.stack)
+        head = Adw.HeaderBar(title_widget=Adw.ViewSwitcher(
+            stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE))
+        tv.add_top_bar(head)
+        tv.add_top_bar(self.banner)
+        tv.add_bottom_bar(self._bar())
+        self.win.set_content(tv)
+        keys = Gtk.EventControllerKey(
+            propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self.on_key)
+        self.win.add_controller(keys)
+        self.win.connect("close-request", self.on_close)
+        GLib.timeout_add(TICK_MS, self.tick)
+        self.sync()
+
+    def _bar(self):
+        bar = Gtk.ActionBar()
+        k = self.press
+        self.edits = [
+            button("Rotate", "object-rotate-right-symbolic",
+                   "A quarter turn (r)", lambda: k(ord("r"))),
+            button("Swap", "media-playlist-shuffle-symbolic",
+                   "Mark, then swap with another (w)", lambda: k(ord("w"))),
+            button("On / off", "system-shutdown-symbolic",
+                   "Switch it off or back on (o)", lambda: k(ord("o")))]
+        for b in self.edits:
+            bar.pack_start(b)
+        self.ident = Gtk.ToggleButton(icon_name="find-location-symbolic",
+                                      tooltip_text="A label on every "
+                                      "monitor (i)", focusable=False)
+        self.ident.connect("toggled", self.on_ident)
+        bar.pack_start(self.ident)
+        self.status = Gtk.Label(ellipsize=Pango.EllipsizeMode.END,
+                                hexpand=True, xalign=0.5)
+        self.spinner = Adw.Spinner(visible=False)
+        mid = Gtk.Box(spacing=8, halign=Gtk.Align.CENTER, hexpand=True)
+        mid.append(self.spinner)
+        mid.append(self.status)
+        bar.set_center_widget(mid)
+        self.save = button("Save", "document-save-symbolic",
+                           "Save, and keep editing (Ctrl+S)",
+                           lambda: k(ord("s")))
+        self.save.add_css_class("suggested-action")
+        self.preview = button("Preview", "view-reveal-symbolic",
+                              "Apply it live; it reverts unless kept (p)",
+                              lambda: k(ord("p")))
+        bar.pack_end(self.save)
+        bar.pack_end(self.preview)
+        self.edits += [self.preview, self.save]
+        return bar
+
+    # --- input: everything reaches the App as the terminal's key codes --
+    def press(self, code):
+        self.app.key(code, time.monotonic())
+        self.sync()
+
+    def on_key(self, ctrl, keyval, keycode, state):
+        if self.alert:
+            return False            # the dialog has the keyboard
+        name = Gdk.keyval_name(keyval) or ""
+        uc = Gdk.keyval_to_unicode(keyval)
+        char = chr(uc) if uc else ""
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            if name.lower() == "s":
+                self.press(ord("s"))
+                return True
+            return False
+        code = key_code(name, char,
+                        bool(state & Gdk.ModifierType.SHIFT_MASK))
+        if code is None or char.isdigit():
+            return False
+        if self.stack.get_visible_child_name() != "physical" and \
+                code not in (ord("s"), ord("q"), ESC):
+            return False
+        self.press(code)
+        return True
+
+    def on_ident(self, b):
+        if b.get_active() != self.app.ident:
+            self.press(ord("i"))
+
+    def on_close(self, _win):
+        if self.app.done:
+            return False
+        self.app.key(ord("q"), time.monotonic())
+        if self.app.done:
+            return False
+        self.sync()
+        return True
+
+    def tick(self):
+        self.app.tick(time.monotonic())
+        self.sync()
+        return GLib.SOURCE_CONTINUE
+
+    # --- output: the window says what the App holds ---------------------
+    def sync(self):
+        app = self.app
+        if app.done:
+            self.win.close()
+            return
+        busy = bool(app.busy)
+        self.spinner.set_visible(busy)
+        self.status.set_text(" ".join(x for x in (app.busy[0], app.busy[2])
+                                      if x) if busy else app.msg or
+                             getattr(app, "where", ""))
+        for b in self.edits:
+            b.set_sensitive(not busy)
+        if self.ident.get_active() != app.ident:
+            self.ident.set_active(app.ident)
+        warn = banner_text(app.desk)
+        self.banner.set_title(warn)
+        self.banner.set_revealed(bool(warn))
+        if self.stack.get_visible_child_name() == "review":
+            text = "\n".join(review_lines(app))
+            buf = self.review.get_buffer()
+            if buf.get_text(buf.get_start_iter(), buf.get_end_iter(),
+                            False) != text:
+                buf.set_text(text)
+        self.view.area.queue_draw()
+        self.sync_alert()
+
+    def sync_alert(self):
+        kind = self.app.dialog[0] if self.app.dialog else None
+        if self.alert and self.alert[0] != kind:
+            shown, self.alert = self.alert[1], None
+            shown.force_close()
+        if kind and not self.alert and kind in ALERTS:
+            d = ALERTS[kind](self.app)
+            d.connect("response", self.on_response)
+            self.alert = (kind, d)
+            d.present(self.win)
+        if self.alert and self.alert[0] == "keep":
+            self.alert[1].set_body(keep_body(self.app))
+
+    def on_response(self, d, rid):
+        if not self.alert or self.alert[1] is not d:
+            return                  # closed by sync, not by a person
+        self.alert = None
+        self.press(RESPONSES[rid])
+
+
+# --- the dialogs: one for each of the App's that this window can raise -------
+
+def keep_body(app):
+    left = max(0, int(app.dialog[1] - time.monotonic() + 0.999))
+    return "It reverts in %d second%s unless kept." % (
+        left, "" if left == 1 else "s")
+
+
+def alert(heading, body, responses, default, close):
+    d = Adw.AlertDialog(heading=heading, body=body)
+    for rid, label, look in responses:
+        d.add_response(rid, label)
+        if look:
+            d.set_response_appearance(rid, look)
+    d.set_default_response(default)
+    d.set_close_response(close)
+    return d
+
+
+def keep_alert(app):
+    return alert("Keep this layout?", keep_body(app),
+                 [("revert", "Revert", Adw.ResponseAppearance.DESTRUCTIVE),
+                  ("keep", "Keep", Adw.ResponseAppearance.SUGGESTED)],
+                 "keep", "revert")
+
+
+def quit_alert(app):
+    return alert("Save the changes?", "This desk has changes not saved.",
+                 [("cancel", "Keep editing", None),
+                  ("discard", "Discard", Adw.ResponseAppearance.DESTRUCTIVE),
+                  ("save", "Save", Adw.ResponseAppearance.SUGGESTED)],
+                 "save" if app.dialog[1] == ord("s") else "cancel",
+                 "cancel")
+
+
+def error_alert(app):
+    d = app.dialog[1]
+    said = error_lines(dict(d), 100, 10 ** 6)[2:-2]
+    return alert(d["title"], "\n".join(said),
+                 [("close", "Close", None)], "close", "close")
+
+
+ALERTS = {"keep": keep_alert, "quit": quit_alert, "error": error_alert}
+RESPONSES = {"keep": ord("y"), "revert": ESC, "cancel": ESC,
+             "discard": ord("d"), "save": ord("s"), "close": 10}
+
+
+# --- the program -------------------------------------------------------------
+
+def load(argv):
+    """The App over the desk ARGV names (`--desk KEY [--name NAME]`, as
+    `hwdp gdesk <name>` passes), or over the attached one; or a reason
+    it cannot start, and its exit status."""
+    args, key, name = argv[1:], None, None
+    if args[:1] == ["--desk"] and len(args) in (2, 4) and \
+            (len(args) == 2 or args[2] == "--name"):
+        key = args[1]
+        name = args[3] if len(args) == 4 else key
+    elif args:
+        return None, "the tool takes no arguments but a desk" \
+            " (hwdp gdesk <desk>)", 2
+    if key:
+        hw = OfflineHwdp(key, name)
+        outs = hw.geometry()
+        if not outs:
+            return None, "%s has no panels on record" % name, 2
+        app = App(Desk(outs, hw.repack), hw)
+        hw.desk = app.desk
+        app.where = "%s: not attached, saving edits its files" % name
+        return app, "", 0
+    hw = Hwdp()
+    return App(Desk(hw.geometry(), hw.repack), hw), "", 0
+
+
+def main(argv):
+    if len(argv) > 1 and argv[1] in ("-h", "--help"):
+        print(__doc__.split("\n\n")[1])
+        return 0
+    if GTK_WHY:
+        print("hwdp gdesk: needs python3-gi with GTK 4 and libadwaita"
+              " (%s); hwdp desk works in a terminal" % GTK_WHY,
+              file=sys.stderr)
+        return 4
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        print("hwdp gdesk: needs a Wayland session; hwdp desk works in a"
+              " terminal", file=sys.stderr)
+        return 3
+    app, why, rc = load(argv)
+    if not app:
+        print("hwdp gdesk: " + why, file=sys.stderr)
+        return rc
+    gapp = Adw.Application(application_id=APP_ID,
+                           flags=Gio.ApplicationFlags.NON_UNIQUE)
+    gapp.connect("activate", lambda g: Window(g, app).win.present())
+    try:
+        return gapp.run([argv[0]])
+    finally:
+        app.hw.identify(False)  # the labels go however this ends
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

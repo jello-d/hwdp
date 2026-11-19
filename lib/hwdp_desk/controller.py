@@ -4,7 +4,7 @@ import threading
 
 from .model import (
     HALVES, NEW_GRID, PREVIEW_SECONDS, SPLITS, SPLIT_OF, STEP, Surface,
-    clashes, contacts, nearest_valid, step)
+    clashes, contacts, drag_spot, nearest_valid, step)
 from .words import DEFAULT_WALL, brief
 
 
@@ -20,6 +20,31 @@ FINE = {curses.KEY_SLEFT: (-1, 0), curses.KEY_SRIGHT: (1, 0),
         ord("K"): (0, -1), ord("J"): (0, 1)}
 ESC = 27
 ENTER = (10, 13, curses.KEY_ENTER)
+
+# The same keys as a toolkit names them (X keysym names, which GTK reports),
+# so a graphical view hands App.key exactly what the terminal does and one
+# controller means one set of keys. A printable key is its character.
+KEYSYMS = {"Left": curses.KEY_LEFT, "Right": curses.KEY_RIGHT,
+           "Up": curses.KEY_UP, "Down": curses.KEY_DOWN,
+           "shift+Left": curses.KEY_SLEFT, "shift+Right": curses.KEY_SRIGHT,
+           "shift+Up": curses.KEY_SR, "shift+Down": curses.KEY_SF,
+           "Tab": 9, "ISO_Left_Tab": curses.KEY_BTAB,
+           "shift+Tab": curses.KEY_BTAB, "Return": 10, "KP_Enter": 10,
+           "Escape": ESC, "BackSpace": curses.KEY_BACKSPACE,
+           "Page_Down": curses.KEY_NPAGE, "Page_Up": curses.KEY_PPAGE,
+           "space": ord(" ")}
+
+
+def key_code(name, char, shift=False):
+    """The App.key code for a key a toolkit reports by NAME (its keysym)
+    and CHAR (what it types, or ""), else None."""
+    if shift and "shift+" + name in KEYSYMS:
+        return KEYSYMS["shift+" + name]
+    if name in KEYSYMS:
+        return KEYSYMS[name]
+    if len(char) == 1 and char.isprintable():
+        return ord(char)
+    return None
 
 
 class App:
@@ -209,6 +234,43 @@ class App:
         self.msg = "%s %d,%d  %s" % (
             o.conn, o.x, o.y,
             contacts(o, [n for n in self.desk.on() if n is not o]))
+
+    # --- the pointer: a monitor grabbed, dragged and dropped -------------
+    # A drag is move mode driven by a pointer: Esc mid-drag undoes it as it
+    # undoes a move, and the monitor is only ever where it touches another.
+    def grab(self, i):
+        """Select output I and start dragging it; False if it cannot move
+        (it is off, or a dialog or a save has the screen)."""
+        if self.busy or self.dialog:
+            return False
+        self.sel, o = i, self.desk.outs[i]
+        if not o.on:
+            return False
+        self.moving = (o, o.x, o.y)
+        return True
+
+    def drag_to(self, x, y, reach):
+        """The grabbed output follows (X, Y), its top-left in logical
+        pixels, wherever it can touch another; alignments within REACH
+        pull it in. NOT normalised until the drop, so the drawing's frame
+        holds still under the pointer."""
+        if not self.moving:
+            return
+        o = self.moving[0]
+        spot = drag_spot(self.desk, o, round(x), round(y), reach)
+        if spot:
+            o.x, o.y = spot
+        self.msg = "%s %d,%d  %s" % (
+            o.label, o.x, o.y,
+            contacts(o, [n for n in self.desk.on() if n is not o]))
+
+    def drop(self):
+        if not self.moving:
+            return
+        o, x, y = self.moving
+        self.moving = None
+        self.desk.normalise()
+        self.msg = "%s placed" % o.label if (o.x, o.y) != (x, y) else ""
 
     def _toggle_on(self, now):
         c = self.cur

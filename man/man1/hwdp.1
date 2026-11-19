@@ -333,6 +333,21 @@ so a stray Esc never writes or discards anything. It needs python3
 (curses), and saves through
 .BR "hwdp arrange" .
 .TP
+.BR "hwdp gdesk" " [" \fIdesk\fR ]
+The same desk tool in a window (GTK 4 and libadwaita), on the same code, so
+the two cannot disagree about a desk or how it is saved. PHYSICAL draws the
+layout to scale: click selects a monitor, and DRAGGING moves it, always to
+where it touches another without overlapping, pulled in to any alignment
+(flush, start, centre, end) within a few pixels of the pointer; Esc mid-drag
+undoes it. Its keys are the terminal tool's, and the buttons under the
+drawing do the same (rotate, swap, on/off, labels, preview, save). The
+preview's countdown, the quit prompt and a failed save's reasons are
+dialogs. REVIEW is the map as it will be saved. The names and the virtual
+grid are edited in
+.B hwdp desk
+for now. It needs a Wayland session (exit 3) and python3-gi with GTK 4 and
+libadwaita (exit 4).
+.TP
 .BR "hwdp desks" " [" \-\-name
 .IR "desk new" "] [" \-\-resolve
 .IR desk ]

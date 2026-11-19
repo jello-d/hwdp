@@ -1,0 +1,36 @@
+#!/bin/sh
+# hwdp gdesk: the interactive desk tool, in a window (GTK 4, libadwaita).
+#
+#   hwdp gdesk           the desk attached now
+#   hwdp gdesk <desk>    a NAMED desk (`hwdp desks`), attached or not; away
+#                        from it, saving writes its files without applying
+#
+# The same tool as `hwdp desk`, on the same code (lib/hwdp_desk): the layout
+# drawn to scale and dragged with the pointer, and a review of what will be
+# saved; the surface names and the virtual grid are still `hwdp desk`'s.
+# Its keys are the terminal tool's (hwdp(1)). Everything it saves goes
+# through the scripted commands (`hwdp arrange`, `hwdp profile --write`,
+# `hwdp surfaces --write`), so it can never write what they would refuse.
+# Needs a Wayland session (exit 3) and python3-gi with GTK 4 and libadwaita
+# (exit 4).
+# (end of --help)
+set -eu
+
+case "${1:-}" in
+  -h|--help) . "$HWDP_LIB/help_lib"; help_print "$0"; exit 0 ;;
+esac
+[ $# -le 1 ] || { echo "usage: hwdp gdesk [<desk>]" >&2; exit 2; }
+[ $# -eq 1 ] || exec "$HWDP_LIBEXEC/desk-gtk"
+
+# The attached desk opens the ordinary tool; any other opens it on that
+# desk's files.
+. "$HWDP_LIB/displayset_lib"
+. "$HWDP_LIB/desks_lib"
+if ! _dk=$(desk_resolve "$1"); then
+  echo "hwdp gdesk: no desk named \`$1\` (hwdp desks lists them)" >&2
+  exit 2
+fi
+if desk_here | grep -qxF "$_dk"; then
+  exec "$HWDP_LIBEXEC/desk-gtk"
+fi
+exec "$HWDP_LIBEXEC/desk-gtk" --desk "$_dk" --name "$1"

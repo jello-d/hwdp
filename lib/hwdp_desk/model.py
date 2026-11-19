@@ -265,6 +265,39 @@ def step(desk, mover, dx, dy, snap=True):
     desk.normalise()
 
 
+def drag_spot(desk, mover, x, y, reach):
+    """Where a monitor DRAGGED to (X, Y) lands: the nearest place it
+    touches another without overlapping, its position along that edge
+    then pulled to any alignment (flush, start, centre, end) within REACH
+    logical pixels, so a drag lines up as a step does. None when it has
+    nothing to touch (it is the only one on)."""
+    others = [o for o in desk.on() if o is not mover]
+    spot = nearest_valid(mover, others, x, y)
+    if spot is None:
+        return None
+    sx, sy = spot
+    r = (sx, sy, mover.w, mover.h)
+    # Flush on x (beside a neighbour) leaves y free to align, and the
+    # other way round.
+    side = any(touches(r, n.rect()) and (sx == n.x + n.w or sx + mover.w
+                                         == n.x) for n in others)
+    ax = "y" if side else "x"
+    cur = sy if side else sx
+    best = None
+    for v in snaps(mover, others, ax):
+        if abs(v - cur) > reach:
+            continue
+        t = (sx, v, mover.w, mover.h) if side else (v, sy, mover.w, mover.h)
+        if any(overlaps(t, n.rect()) for n in others) or \
+                not any(touches(t, n.rect()) for n in others):
+            continue
+        if best is None or abs(v - cur) < abs(best - cur):
+            best = v
+    if best is None:
+        return spot
+    return (sx, best) if side else (best, sy)
+
+
 def contacts(mover, others):
     """In words, what the mover is flush against and how it lines up, so
     a snap is visible as well as made."""

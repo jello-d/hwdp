@@ -682,6 +682,12 @@ do_check() {
       || warn "dep $_d absent (a feature degrades: inotify=auto-reapply," \
               "gamescope+bc=run-scaled, xrandr=X11 geometry," \
               "python3=identify labels and the layout tool)"; done
+  # Not a command, so not in DEPS_SOFT: the bindings `hwdp gdesk` imports.
+  if python3 -c 'import gi; gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1"); from gi.repository import Adw' 2>/dev/null
+  then ok "GTK 4 + libadwaita bindings present (hwdp gdesk)"
+  else warn "no GTK 4 + libadwaita bindings (python3-gi, gir1.2-adw-1):" \
+    "hwdp gdesk cannot run; hwdp desk can"; fi
   # ANY of the three will do, so report the one that would be used rather than
   # warning three times about tools the user deliberately does not have.
   _img=

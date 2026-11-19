@@ -16,6 +16,7 @@
 #   hwdp capture    snapshot the current arrangement into a profile
 #   hwdp arrange    write and apply a layout from placements (beside, align)
 #   hwdp desk       the interactive desk tool: layout, surfaces, grid
+#   hwdp gdesk      the desk tool in a window (GTK 4, libadwaita)
 #   hwdp profile    this desk's authored profile; --missing: does it need one
 #   hwdp surfaces   this desk's named surfaces, resolved (--check validates)
 #   hwdp map        draw this desk in text: outputs, surfaces, problems
@@ -72,7 +73,7 @@ esac
 # a visible error and a UI that quietly keeps its old size.
 case $_cmd in
   id|shape|ui|panels|geometry|layout|capture|watch|apply) ;;
-  surfaces|map|arrange|desk|profile|identify|desks|status) ;;
+  surfaces|map|arrange|desk|gdesk|profile|identify|desks|status) ;;
   *) echo "hwdp: unknown command '$_cmd'" >&2
      echo "try: hwdp help" >&2
      exit 2 ;;
