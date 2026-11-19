@@ -39,8 +39,23 @@
 #     2  usage error
 #
 # Usage: wallpaper-slicer [-m fill|fit] [-o OUTDIR] SOURCE
+#        wallpaper-slicer [-m fill|fit] [-o OUTDIR] [-d DIR] [-c] -M MAP
 #   -m  fill (cover, default) | fit (contain)   [env: WALLPAPER_SLICER_MODE]
-#   -o  output directory   (default ~/.cache/wallpaper-slicer)
+#   -o  output directory   (default ~/.cache/wallpaper-slicer, and its map/
+#       for -M)
+#   -M  MAP MODE: cut every image of a wallpaper map (`X Y FILE`, FILE
+#       relative to DIR, # comments) for every output, in parallel, from ONE
+#       reading of the layout, and print the path of a manifest that says,
+#       one line per cell and output, `X Y OUTPUT /abs/slice.png`. One output
+#       is enough here (a laptop alone is cut the same way as a desk). A cell
+#       whose image cannot be cut gets its plain `X Y FILE` line instead, the
+#       caller's own fallback. The manifest is NAMED BY ITS CONTENT
+#       (slices-<hash>.map), the previous one removed, because a consumer that
+#       reloads on a path change must see a new path for new slices.
+#   -d  the images' directory for -M   (default ~/Pictures/wallpaper)
+#   -c  with -M, CUT NOTHING: exit 0 and print the manifest path when every
+#       slice is already cached for the layout as it is, else exit 3. How a
+#       caller decides between the slices now and a cut in the background.
 #       fit's padding colour is WALLPAPER_SLICER_BG (default black)
 #       WALLPAPER_SLICER_TOOL pins the backend (magick|convert|vips)
 #
@@ -75,10 +90,14 @@ outdir="${XDG_CACHE_HOME:-$HOME/.cache}/wallpaper-slicer"
 
 log() { printf 'wallpaper-slicer: %s\n' "$*" >&2; }
 
-while getopts ':m:o:' opt; do
+map=; imgdir="$HOME/Pictures/wallpaper"; cached_only=0; outdir_set=0
+while getopts ':m:o:M:d:c' opt; do
   case "$opt" in
     m)  mode="$OPTARG" ;;
-    o)  outdir="$OPTARG" ;;
+    o)  outdir="$OPTARG"; outdir_set=1 ;;
+    M)  map="$OPTARG" ;;
+    d)  imgdir="$OPTARG" ;;
+    c)  cached_only=1 ;;
     :)  log "option -$OPTARG requires an argument"; exit 2 ;;
     \?) log "unknown option -$OPTARG"; exit 2 ;;
   esac
@@ -90,10 +109,15 @@ case "$mode" in
   *) log "mode must be 'fill' or 'fit' (got '$mode')"; exit 2 ;;
 esac
 
-src="${1:-}"
-if [ -z "$src" ]; then log "no source image given"; exit 2; fi
-case "$src" in "~"/*) src="$HOME/${src#"~"/}";; esac
-if [ ! -r "$src" ]; then log "source not readable: '$src'"; exit 1; fi
+if [ -n "$map" ]; then
+  [ "$outdir_set" = 1 ] || outdir=$outdir/map
+else
+  [ "$cached_only" = 0 ] || { log "-c goes with -M"; exit 2; }
+  src="${1:-}"
+  if [ -z "$src" ]; then log "no source image given"; exit 2; fi
+  case "$src" in "~"/*) src="$HOME/${src#"~"/}";; esac
+  if [ ! -r "$src" ]; then log "source not readable: '$src'"; exit 1; fi
+fi
 
 # image CLI: magick (IM7) > convert (IM6) > vips.
 #
@@ -330,15 +354,95 @@ read_geometry() {
     { print $1, X[$1], Y[$1], $11, $12, $8, $9 }'
 }
 
+# ---- map mode ---------------------------------------------------------------
+# map_mode: every cell of $map, cut by THIS script one image at a time (each
+# its own cache dir, keyed by the file name), several at once, all from one
+# reading of the layout. See -M in the header.
+map_mode() {
+  [ -r "$map" ] || { log "map not readable: '$map'"; return 1; }
+  _geom=$(read_geometry)
+  [ -n "$_geom" ] || { log "no outputs to cut for"; return 1; }
+  mkdir -p "$outdir" || return 1
+  _tab=$(printf '\t')
+  # One line per cell: X, Y, FILE and the cut's cache dir, TAB-separated.
+  _res=$(awk -v d="$outdir" '/^[ \t]*(#|$)/ { next }
+    NF >= 3 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {
+      f = $0; sub(/^[ \t]*[0-9]+[ \t]+[0-9]+[ \t]+/, "", f)
+      sub(/[ \t]+$/, "", f); print $1 "\t" $2 "\t" f }' "$map" \
+    | while IFS="$_tab" read -r _x _y _f; do
+        printf '%s\t%s\t%s\t%s/img-%s\n' "$_x" "$_y" "$_f" "$outdir" \
+          "$(printf '%s' "$_f" | cksum | cut -d' ' -f1)"
+      done)
+  [ -n "$_res" ] || { log "no cells in '$map'"; return 1; }
+  # The cuts, several at once. Each writes its NAME<TAB>PATH lines to a
+  # `mapping` file beside its slices, or leaves none when it could not cut.
+  # shellcheck disable=SC2016  # the inner sh expands these, from its env
+  printf '%s\n' "$_res" | cut -f3,4 | sort -u | tr '\t' '\n' \
+    | GEOM="$_geom" CHECK="$cached_only" SELF="$0" MODE="$mode" \
+      DIR="$imgdir" xargs -d '\n' -n 2 -P "${WALLPAPER_SLICER_JOBS:-4}" \
+      sh -c 'mkdir -p "$2" && rm -f "$2/mapping"
+        if WALLPAPER_SLICER_GEOM=$GEOM WALLPAPER_SLICER_MIN=1 \
+            WALLPAPER_SLICER_CHECK=$CHECK "$SELF" -m "$MODE" -o "$2" \
+            "$DIR/$1" > "$2/mapping.new" 2>/dev/null; then
+          mv "$2/mapping.new" "$2/mapping"
+        else
+          rm -f "$2/mapping.new"
+        fi' _ 9>&- || :
+  # The manifest: a cut cell is one line per output, an uncut one its plain
+  # line (the caller's fallback), which -c refuses.
+  _man=$(printf '%s\n' "$_res" | while IFS="$_tab" read -r _x _y _f _d; do
+      if [ -s "$_d/mapping" ]; then
+        while IFS="$_tab" read -r _o _p; do
+          printf '%s %s %s %s\n' "$_x" "$_y" "$_o" "$_p"
+        done < "$_d/mapping"
+      else
+        printf '%s %s %s\n' "$_x" "$_y" "$_f"
+      fi
+    done)
+  if [ "$cached_only" = 1 ] && printf '%s\n' "$_man" \
+      | awk '$4 !~ /^\// { b = 1 } END { exit !b }'; then
+    return 3
+  fi
+  # The slices are recut IN PLACE when the layout moves, so their paths alone
+  # would leave the manifest (and so its name) unchanged and a consumer that
+  # reloads on a new path would never see the new cut: every cut's own
+  # fingerprint goes in, as a comment.
+  _cut=$(printf '%s\n' "$_res" | cut -f4 | sort -u | while read -r _d; do
+      cat "$_d/fingerprint" 2>/dev/null || echo none; done | cksum \
+    | cut -d' ' -f1)
+  _txt=$(printf '# wallpaper-slicer -M: X Y OUTPUT SLICE, or X Y FILE\n'
+    printf '# cut %s\n%s' "$_cut" "$_man")
+  _name=slices-$(printf '%s\n' "$_txt" | cksum | cut -d' ' -f1).map
+  if [ ! -f "$outdir/$_name" ]; then
+    printf '%s\n' "$_txt" > "$outdir/$_name.new" \
+      && mv "$outdir/$_name.new" "$outdir/$_name"
+  fi
+  for _old in "$outdir"/slices-*.map; do
+    if [ -f "$_old" ] && [ "$_old" != "$outdir/$_name" ]; then
+      rm -f "$_old"
+    fi
+  done
+  touch "$outdir" 2>/dev/null || :
+  printf '%s\n' "$outdir/$_name"
+}
+
 # ---- main -------------------------------------------------------------------
-geom=$(read_geometry)
+if [ -n "$map" ]; then
+  map_mode
+  exit $?
+fi
+# Map mode reads the layout ONCE and hands it to every image's cut, so a
+# hotplug mid-run cannot cut two images against two layouts.
+geom=${WALLPAPER_SLICER_GEOM:-$(read_geometry)}
 # awk, not `grep -c`: grep exits 1 when the count is ZERO, so under `set -e`
 # the no-display case would abort here instead of reaching the message below,
 # the exact silent failure this is meant to report.
 nout=$(printf '%s\n' "$geom" | awk 'NF { n++ } END { print n + 0 }')
 
-if [ "$nout" -lt 2 ]; then
-  log "fewer than 2 outputs; nothing to span"; exit 1
+# Two outputs is the floor for a SPAN (the lock falls back to a whole image
+# on exit 1); map mode cuts for one too, so a laptop alone takes one path.
+if [ "$nout" -lt "${WALLPAPER_SLICER_MIN:-2}" ]; then
+  log "fewer than ${WALLPAPER_SLICER_MIN:-2} outputs; nothing to span"; exit 1
 fi
 
 # Union of all outputs, logical coords.
@@ -404,6 +508,11 @@ if [ -r "$fp_file" ] && [ "$(cat "$fp_file" 2>/dev/null)" = "$fp" ]; then
   done <<EOF
 $geom
 EOF
+fi
+
+# -c in map mode: answer from the cache, cut nothing.
+if [ "${WALLPAPER_SLICER_CHECK:-0}" = 1 ] && [ "$cache_valid" -eq 0 ]; then
+  exit 3
 fi
 
 # ---- cut slices as needed, emit NAME<TAB>PATH mapping -----------------------

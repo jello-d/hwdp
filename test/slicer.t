@@ -390,6 +390,70 @@ if command -v magick >/dev/null 2>&1; then
   done
 fi
 
+# --- MAP MODE: every cell of a wallpaper map, one layout, one manifest -------
+# The one path for the desktop's wallpapers too: `X Y FILE` in, a manifest of
+# `X Y OUTPUT SLICE` out, the layout read ONCE (counted), several cuts at
+# once, a cell it cannot cut left as its plain line, a cache probe (-c) that
+# cuts nothing, and a manifest named by its content.
+if [ "$_img" != vips ]; then
+  mkdir -p "$T/walls"
+  cp "$T/src.png" "$T/walls/split.png"
+  "$_img" -size 2000x1000 xc:gray50 "$T/walls/gray.png"
+  printf '%s\n' '# a map' '0 0  split.png' '1 0  gray.png' '0 1  gone.png' \
+    > "$T/walls.map"
+  cat > "$T/bin/hwdp" <<EOF
+#!/bin/sh
+[ "\$1" = geometry ] || exit 1
+echo geometry >> "$T/geoms"
+cat "$T/layout"
+EOF
+  chmod +x "$T/bin/hwdp"
+  printf '%s\n' "DP-1 1000 1000 normal 1 0 0 1000 1000 landscape" \
+    "DP-2 1000 1000 normal 1 1000 0 1000 1000 landscape" > "$T/layout"
+  mapcut() { PATH="$T/bin:$PATH" "$WS" "$@" -d "$T/walls" -o "$T/mout" \
+               -M "$T/walls.map"; }
+  : > "$T/crops"; : > "$T/geoms"
+  _m=$(mapcut 2>"$T/err") || fail "map mode failed: $(cat "$T/err")"
+  [ "$(grep -c . "$T/geoms")" -eq 1 ] \
+    || fail "map mode read the layout $(grep -c . "$T/geoms") times, not once"
+  [ "$(_crops)" -eq 4 ] || fail "two images on two outputs: $(_crops) crops"
+  _cells=$(grep -v '^#' "$_m" | awk '{ print $1, $2, $3 }' | sort | tr '\n' ,)
+  [ "$_cells" = "0 0 DP-1,0 0 DP-2,0 1 gone.png,1 0 DP-1,1 0 DP-2," ] \
+    || fail "the manifest's cells: $_cells"
+  _sl() { awk -v c="$1 $2 $3" '$1 " " $2 " " $3 == c { print $4 }' "$_m"; }
+  awk -v l="$(_mean "$(_sl 0 0 DP-1)")" -v r="$(_mean "$(_sl 0 0 DP-2)")" \
+    'BEGIN { exit !(l < 0.1 && r > 0.9) }' \
+    || fail "map mode's slices do not tile the way a single cut does"
+  : > "$T/crops"
+  [ "$(mapcut)" = "$_m" ] || fail "a warm run must give the same manifest"
+  [ "$(_crops)" -eq 0 ] || fail "a warm run cut $(_crops) crops"
+  # -c refuses: the missing image is a cell it cannot cut.
+  mapcut -c >/dev/null && fail "-c passed a map with a missing image"
+  printf '%s\n' '0 0  split.png' '1 0  gray.png' > "$T/walls.map"
+  _m=$(mapcut) || fail "map mode failed on a complete map"
+  [ "$(mapcut -c)" = "$_m" ] || fail "-c on a warm cache must give the path"
+  # The layout moves: -c says so and cuts nothing; the full run cuts, and
+  # its manifest is a NEW path with the old one gone.
+  printf '%s\n' "DP-1 1000 1000 normal 1 0 0 1000 1000 landscape" \
+    "DP-2 1000 1000 normal 1 1000 300 1000 1000 landscape" > "$T/layout"
+  : > "$T/crops"
+  _rc=0; mapcut -c >/dev/null || _rc=$?
+  [ "$_rc" = 3 ] && [ "$(_crops)" -eq 0 ] \
+    || fail "-c on a moved layout: rc $_rc, $(_crops) crops (want 3, 0)"
+  _m2=$(mapcut) || fail "map mode failed on the moved layout"
+  [ "$_m2" != "$_m" ] && [ ! -e "$_m" ] && [ -s "$_m2" ] \
+    || fail "new slices must be a new manifest, the old gone: $_m -> $_m2"
+  # One output: map mode cuts it; the single-image mode still refuses (the
+  # lock falls back to a whole image on that).
+  echo "eDP-1 1000 1000 normal 1 0 0 1000 1000 landscape" > "$T/layout"
+  _m1=$(mapcut) || fail "map mode refused one output"
+  [ "$(grep -c ' eDP-1 /' "$_m1")" -eq 2 ] \
+    || fail "one output: a slice per cell: $(cat "$_m1")"
+  PATH="$T/bin:$PATH" "$WS" -o "$T/one" "$T/src.png" >/dev/null 2>&1 \
+    && fail "the single-image mode must still refuse one output"
+  pass "map mode: one layout read, tiled, cached, probed, renamed, one panel"
+fi
+
 _missing=
 for _c in magick convert vips; do
   command -v "$_c" >/dev/null 2>&1 || _missing="$_missing $_c"

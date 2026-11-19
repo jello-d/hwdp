@@ -643,6 +643,25 @@ the compositor applies the output transform. Prints
 .IR NAME <TAB> PATH
 per output; needs one of
 .BR magick ", " convert " or " vips .
+With
+.BI \-M " MAP"
+it cuts EVERY image of a wallpaper map
+.RI ( "X Y FILE" ,
+FILE relative to
+.BI \-d " DIR" ,
+default
+.IR ~/Pictures/wallpaper )
+for every output, several at once, from ONE reading of the layout, and prints
+the path of a manifest of
+.I "X Y OUTPUT SLICE"
+lines (a cell it cannot cut keeps its plain line), named by its content so a
+new cut is a new path. One output is enough there; the single-image form
+still wants two.
+.B \-c
+with
+.B \-M
+cuts nothing: it prints the manifest when every slice is cached for the
+layout as it is, else exits 3.
 .SH FILES
 .TP
 .I ~/.config/hwdp/hooks/<edge>.d/*
