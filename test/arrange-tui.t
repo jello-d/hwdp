@@ -85,6 +85,10 @@ class FakeHw:
         self.calls.append(("names", [list(n) for n in names]))
         return self.rc.get("names", 0), "said no" if self.rc.get("names") \
             else ""
+    def apply(self):
+        self.calls.append(("apply",))
+        return self.rc.get("apply", 0), "a hook failed" \
+            if self.rc.get("apply") else ""
 
 def desk():
     """A 4K portrait (DP-1, rotated) with a 4K landscape right of it."""
@@ -239,15 +243,16 @@ check("q with changes asks first, save as Enter's answer",
 a.key(27, 0)
 check("Esc in that dialog keeps editing", a.dialog is None and not a.done)
 a.key(ord("s"), 0)
-check("s saves through arrange and stays",
-      hw.last()[0] is None and not a.done and not a.dirty()
+check("s saves through arrange, applies it, and stays",
+      [c[0] for c in hw.calls] == [None, "apply"] and not a.done
+      and not a.dirty()
       and a.dialog is None, hw.calls)
 a.key(ord("s"), 0)
 check("s with nothing changed saves nothing",
-      len(hw.calls) == 1 and a.msg == "nothing to save", (hw.calls, a.msg))
+      len(hw.calls) == 2 and a.msg == "nothing to save", (hw.calls, a.msg))
 a.key(ord("r"), 0); a.key(ord("q"), 0); a.key(10, 0)
 check("q then Enter saves and quits", a.done and not a.dirty()
-      and len(hw.calls) == 2, hw.calls)
+      and len(hw.calls) == 4, hw.calls)
 
 a, (p, l), hw = app()
 a.key(ord("r"), 0); a.key(ord("q"), 0); a.key(ord("d"), 0)
@@ -496,7 +501,7 @@ a.key(ord("a"), 0); typed(a, "chat"); a.key(10, 0)          # chat added
 a.key(ord("s"), 0)
 kinds = [c[0] for c in hw.calls]
 check("names, then the desk, then the names again without the deleted one",
-      kinds == ["names", "write", "names"]
+      kinds == ["names", "write", "names", "apply"]
       and ["mail", "Mail"] in hw.calls[0][1]
       and ["mail", "Mail"] not in hw.calls[2][1]
       and ["chat", "chat"] in hw.calls[2][1] and not a.dirty(), hw.calls)
@@ -523,6 +528,8 @@ check("splits load, written and implied",
 a, (p, l), hw = app()
 hw.rc["write"] = 2
 a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
+check("a refused desk write applies nothing",
+      ("apply",) not in hw.calls, hw.calls)
 check("a refused desk write stays and says so, in a dialog",
       not a.done and a.dirty() and a.dialog and a.dialog[0] == "error"
       and a.dialog[1]["text"] == "saving the desk: said no", a.dialog)
@@ -556,6 +563,25 @@ short = tui.error_lines({"title": "Not saved", "text": "said no",
 check("a short error is shown whole, with no scroll line",
       short == ["Not saved", "", "said no", "", "Enter or Esc closes"],
       short)
+
+# A save at the desk is APPLIED, so the grid and names reach the session
+# (a 4x3 save stayed 3x3 on screen, 2026-11-18); a failed apply is said as
+# exactly that, the save standing.
+a, (p, l), hw = app()
+a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
+check("a save at the desk is applied, last",
+      hw.calls[-1] == ("apply",) and not a.dirty() and a.msg == "saved",
+      (hw.calls, a.msg))
+a, (p, l), hw = app()
+hw.rc["apply"] = 1
+a.key(ord("3"), 0); a.key(10, 0); a.key(10, 0); a.key(ord("s"), 0)
+check("a failed apply: saved, and says it was not applied",
+      not a.dirty() and a.dialog and a.dialog[0] == "error"
+      and a.dialog[1]["title"] == "Saved, but not applied"
+      and "a hook failed" in a.dialog[1]["text"], (a.dialog, a.msg))
+off = tui.OfflineHwdp.__new__(tui.OfflineHwdp)
+check("a desk away from its panels is never applied",
+      off.apply() == (0, ""), off.apply())
 
 d, outs, hw = desk()
 hw.surf = (None, None, "a broken line")

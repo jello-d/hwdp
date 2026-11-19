@@ -548,6 +548,15 @@ class Hwdp:
             "%s %s\n" % (n, lab) for n, lab in names))
         return rc, why
 
+    def apply(self):
+        """Fire `changed` (`hwdp apply`), so what was saved reaches THIS
+        session: a desk file changes the grid and the workspace names with
+        no display event, and nothing else would tell the integrator's hooks
+        (a 4x3 save stayed 3x3 on screen, 2026-11-18)."""
+        rc, _, err = self._run(os.path.join(self.libexec, "cmd", "apply"),
+                               "-q")
+        return rc, err.strip()
+
     def identify(self, on):
         if on and self.overlay is None:
             self.overlay = subprocess.Popen(
@@ -630,6 +639,9 @@ class OfflineHwdp(Hwdp):
     them, never applied. Surfaces go through `hwdp surfaces` with
     HWDP_DESK set, the layout through `hwdp profile --write`."""
     offline = True
+
+    def apply(self):
+        return 0, ""                           # never applied: not here
 
     def __init__(self, key, name):
         super().__init__()
@@ -1090,7 +1102,7 @@ class App:
                 why = step("removing names", self.hw.write_names, names)
                 if why:
                     return why, "desk"
-            return "", "all"
+            return step("applying it to this session", self.hw.apply), "all"
 
         def finish(res):
             why, upto = res
@@ -1101,7 +1113,10 @@ class App:
                 if upto == "desk":           # the list still holds `keep`
                     self.saved_names = names + keep
             if why:
-                self.fail("Not saved", why)
+                # Saved whole and only the apply failed: say THAT, since
+                # "Not saved" would send someone to redo a save that stands.
+                self.fail("Saved, but not applied" if upto == "all"
+                          else "Not saved", why)
             else:
                 self.msg = "saved"
             self.done = then_exit and not why
