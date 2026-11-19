@@ -71,6 +71,25 @@ has "$_o" "^watch +running \\(pid $_sp, since " "the supervisor"
 has "$_o" "^kanshi +running \\(pid $_kp\\); applied hwdp-abc$" "the profile"
 printf "%s\n" "configuration for profile 'autoscale' applied" >> "$LOG"
 has "$(run wl-test)" 'applied the synthesized layout' "the last verdict wins"
+# A verdict's name is believed only if kanshi was GIVEN it (the profiles in
+# the config on its command line): a reload mid-apply makes kanshi print a
+# freed name, which once read here as garbage.
+printf '%s\n' 'profile autoscale {' '}' 'profile hwdp-abc {' '}' > "$T/kc.conf"
+printf '#!/bin/sh\nwhile :; do sleep 1; done\n' > "$T/fake/kanshi"
+sh "$T/fake/kanshi" --config "$T/kc.conf" & _kc=$!
+harness_cleanup "kill $_sp $_kp $_kc 2>/dev/null"
+printf '%s' "$_kc" > "$T/run/hwdp/watch.$_sp.kanshi"
+printf "%s\n" "configuration for profile 'hwdp-abc' applied" > "$LOG"
+has "$(run wl-test)" "^kanshi +running \\(pid $_kc\\); applied hwdp-abc$" \
+  "a name kanshi was given"
+printf "configuration for profile 'H\200[\377' applied\n" >> "$LOG"
+_o=$(run wl-test) || fail "a garbled name is kanshi's bug, not a problem: $_o"
+has "$_o" "applied a profile it then named" "a garbled name is said so"
+printf '%s' "$_o" | grep -q "$(printf '\200')" \
+  && fail "the garbled name was printed: $_o"
+kill "$_kc"; wait "$_kc" 2>/dev/null
+printf '%s' "$_kp" > "$T/run/hwdp/watch.$_sp.kanshi"
+harness_cleanup "kill $_sp $_kp 2>/dev/null"
 pass "a running supervisor and kanshi, and the profile kanshi last applied"
 
 # --- each problem is a ! line and exit 1 ------------------------------------

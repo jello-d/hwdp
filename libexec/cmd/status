@@ -132,6 +132,22 @@ show_watch() {
   fi
   _v=$(awk '/^configuration for profile .* applied/ { v = $0 }
     /^no profile matched/ { v = $0 } END { print v }' "$_log" 2>/dev/null)
+  # The name in a verdict is believed only if kanshi was GIVEN it: a reload
+  # mid-apply makes kanshi print a freed name (its own bug; the nudge no
+  # longer triggers it, see cmd/watch). The config is the one on its command
+  # line; unreadable, the name is taken as said.
+  _vn=$(printf '%s' "$_v" \
+    | sed -n "s/^configuration for profile '\(.*\)' applied.*/\1/p")
+  _kc=$(tr '\0' '\n' < "/proc/$_kp/cmdline" 2>/dev/null \
+    | awk 'p { print; exit } $0 == "--config" { p = 1 }')
+  if [ -n "$_vn" ] && [ -r "$_kc" ] && ! awk -v n="$_vn" '
+      $1 == "profile" { sub(/[ \t]*\{.*/, "", $0); sub(/^[ \t]*profile[ \t]+/,
+        "", $0); if ($0 == n) f = 1 }
+      END { exit !f }' "$_kc"; then
+    say kanshi "running (pid $_kp); applied a profile it then named"
+    say "" "unreadably (kanshi's own bug: a reload mid-apply); see the log"
+    return 0
+  fi
   case $_v in
     *"'autoscale'"*) say kanshi "running (pid $_kp); applied the synthesized\
  layout (no authored one)" ;;
