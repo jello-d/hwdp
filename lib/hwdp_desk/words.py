@@ -108,6 +108,68 @@ def review_lines(app):
         [""] + out
 
 
+def pick_words(app):
+    """What the name picker's choice is for."""
+    o, rg = app.vspot()
+    if app.pick["mode"] == "place":
+        return "Place on cell %d,%d, %s of %s" % (
+            app.vcell[0], app.vcell[1], rg, o.label)
+    return "The DEFAULT: %s of %s, every cell nothing claims" % (rg, o.label)
+
+
+def where_words(app, n):
+    """Where name N is at this desk, in full: its cells, and DEFAULT."""
+    here, dflt = app.placed(n)
+    at = "; ".join("cell %d,%d %s %s" % (x.cx, x.cy, x.conn, x.region)
+                   for x in here)
+    if dflt:
+        at = (at + "; " if at else "") + "DEFAULT, %s %s" % (
+            app.default.conn, app.default.region)
+    return at or "not placed"
+
+
+def delname_words(app):
+    """The question before a name is deleted: (heading, the lines under
+    it). Both views ask it in these words."""
+    n = app.side_name()
+    here, dflt = app.placed(n)
+    return "Delete the name %s?" % n, [
+        "It goes from EVERY desk's list; here it is %s." %
+        ("placed %d time(s)%s" % (len(here), ", and the default"
+                                 if dflt else "") if here or dflt
+         else "not placed"),
+        "A desk elsewhere that places it makes the save refuse."]
+
+
+def unsplit_words(app):
+    """The question before a panel with both halves placed is joined."""
+    conn, cx, cy = app.dialog[1]
+    here = [x.name for x in app.surfaces
+            if (x.conn, x.cx, x.cy) == app.dialog[1]]
+    return "Join %s again in cell %d,%d?" % (app.plabel(conn), cx, cy), [
+        "Both halves are placed: %s." % ", ".join(here),
+        "Joined, they become unplaced here (still in the list)."]
+
+
+def selection_words(app):
+    """The virtual tab's selection IN FULL, what a drawing cuts: the names
+    first, then where they sit."""
+    sel_o, sel_r = app.vspot()
+    n = [full_name(app, x.name) for x in app.at_spot()]
+    return "%s  in cell %d,%d  %s %s  %s" % (
+        ", ".join(n) if n else "(empty)", app.vcell[0], app.vcell[1],
+        sel_o.label, sel_o.token(), sel_r)
+
+
+def cell_words(app):
+    """The selected cell's wallpaper, and the desk's default."""
+    d = app.default
+    return "wallpaper: %s   default: " % app.walls.get(
+        tuple(app.vcell), DEFAULT_WALL) + (
+        "%s, %s of %s" % (full_name(app, d.name), d.region,
+                          app.plabel(d.conn)) if d else "none")
+
+
 def mark_of(app, n):
     """A name's marker: D the default here, N placed here N times, - not
     placed at this desk."""

@@ -217,22 +217,11 @@ def draw_dialog(scr, app, now):
     if kind == "name":
         text = form_lines(app)
     elif kind == "delname":
-        n = app.side_name()
-        here, dflt = app.placed(n)
-        text = ["Delete the name %s?" % n, "",
-                "It goes from EVERY desk's list; here it is %s." %
-                ("placed %d time(s)%s" % (len(here), ", and the default"
-                                         if dflt else "") if here or dflt
-                 else "not placed"),
-                "A desk elsewhere that places it makes the save refuse.",
-                "", "y  delete it", "Esc  keep it"]
+        head, said = delname_words(app)
+        text = [head, ""] + said + ["", "y  delete it", "Esc  keep it"]
     elif kind == "unsplit":
-        conn, cx, cy = arg
-        here = [x.name for x in app.surfaces if (x.conn, x.cx, x.cy) == arg]
-        text = ["Join %s again in cell %d,%d?" % (app.plabel(conn), cx, cy),
-                "", "Both halves are placed: %s." % ", ".join(here),
-                "Joined, they become unplaced here (still in the list).",
-                "", "y  join it", "Esc  keep the split"]
+        head, said = unsplit_words(app)
+        text = [head, ""] + said + ["", "y  join it", "Esc  keep the split"]
     elif kind == "pick":
         text = pick_lines(app)
     elif kind == "wpick":
@@ -278,11 +267,7 @@ def pick_lines(app):
     """The picker: what the choice is for, the filter typed so far, and the
     names that match it, the chosen one marked."""
     pk, shown = app.pick, app.pick_list()
-    o, rg = app.vspot()
-    what = ("Place on cell %d,%d, %s of %s" % (app.vcell[0], app.vcell[1],
-                                              rg, o.label)
-            if pk["mode"] == "place" else
-            "The DEFAULT: %s of %s, every cell nothing claims" % (rg, o.label))
+    what = pick_words(app)
     sel = min(pk["sel"], max(0, len(shown) - 1))
     first = max(0, min(sel - 5, len(shown) - 12))
     rows = ["%s %-20s %s" % ("> " if i == sel else "  ", n, lab)
@@ -324,17 +309,11 @@ def draw_surfaces_tab(scr, app, top, rows, width, left):
     room = rows - 2
     first = max(0, min(app.side - room + 1, len(app.names) - room))
     for i, (n, lab) in enumerate(app.names[first:first + room]):
-        here, dflt = app.placed(n)
-        at = "; ".join("cell %d,%d %s %s" % (x.cx, x.cy, x.conn, x.region)
-                       for x in here)
-        if dflt:
-            at = (at + "; " if at else "") + "DEFAULT, %s %s" % (
-                app.default.conn, app.default.region)
         mk, used = mark_of(app, n)
         attr = curses.A_REVERSE if first + i == app.side else \
             (0 if used else curses.A_DIM)
         put(scr, top + 2 + i, left, ("%-3s%-22s%-24s%s" % (
-            mk, n, lab, at or "not placed"))[:width].ljust(width), attr)
+            mk, n, lab, where_words(app, n)))[:width].ljust(width), attr)
     if not app.names:
         put(scr, top + 2, left, "no names yet: a adds one", curses.A_DIM)
 
@@ -408,18 +387,9 @@ def draw_virtual(scr, app, top, rows, cols, left):
     # cuts what does not fit, and this line is where the cut part is read.
     # The names LEAD, since they are what the drawing cut; where they sit
     # follows, and is what a narrow screen loses first.
-    n = [full_name(app, x.name) for x in app.at_spot()]
-    put(scr, top + gh * ch, left, (
-        "%s  in cell %d,%d  %s %s  %s" % (
-            ", ".join(n) if n else "(empty)", app.vcell[0], app.vcell[1],
-            sel_o.label, sel_o.token(), sel_r))[:cols], curses.A_BOLD)
-    d = app.default
-    put(scr, top + gh * ch + 1, left, (
-        "wallpaper: %s   default: " % app.walls.get(tuple(app.vcell),
-                                                    DEFAULT_WALL)
-        + ("%s, %s of %s" % (
-            full_name(app, d.name), d.region, app.plabel(d.conn))
-            if d else "none"))[:cols], curses.A_DIM)
+    put(scr, top + gh * ch, left, selection_words(app)[:cols],
+        curses.A_BOLD)
+    put(scr, top + gh * ch + 1, left, cell_words(app)[:cols], curses.A_DIM)
 
 
 def draw_physical(scr, app, b, cols, left):
