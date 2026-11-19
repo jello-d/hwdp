@@ -173,6 +173,12 @@ kanshi_live_pid() {
   [ -n "$_p" ] && echo "$_p"
 }
 
+# What kanshi says in OUR log when a reload is done, either way: the one
+# pattern both waits below read (the supervisor's settle, and a nudge's
+# second reload).
+KANSHI_VERDICT='^configuration for profile .* applied'
+KANSHI_VERDICT="$KANSHI_VERDICT|^no profile matched|failed"
+
 hup_kanshi() {  # reload this session's kanshi, and no one else's
   for p in $(session_kanshi_pids); do
     kill -HUP "$p" 2>/dev/null || true
@@ -207,10 +213,26 @@ nudge() {
     _by="pid $PPID ($_cl)"
   fi
   [ -n "${HWDP_HOOK:-}" ] && _by="$_by, from the $HWDP_HOOK hook"
-  [ -w "$watch_log" ] && wlog "nudged by $_by: reloading kanshi now and" \
-    "again in 0.4s" 2>>"$watch_log"
+  [ -w "$watch_log" ] && wlog "nudged by $_by: reloading kanshi now, and" \
+    "again once it has applied that" 2>>"$watch_log"
+  # THE SECOND RELOAD WAITS FOR KANSHI'S VERDICT ON THE FIRST. It must land
+  # after the compositor's own reset (hence never sooner than 0.4s), and a
+  # fixed 0.4s also landed MID-APPLY: kanshi then printed the first apply's
+  # profile name from the config the reload had freed ("H<garbage>",
+  # dragonfly 2026-11-19), a use-after-free in kanshi this keeps us from
+  # triggering. Bounded (HWDP_NUDGE_TICKS of 0.1s, 5s), and without a
+  # readable log it is the old 0.4s.
+  _nm=$(wc -c 2>/dev/null < "$watch_log") || _nm=0
   hup_kanshi
-  ( sleep 0.4; hup_kanshi ) &
+  ( sleep 0.4 9>&-
+    _w=0
+    while [ "$_w" -lt "${HWDP_NUDGE_TICKS:-50}" ] && [ -r "$watch_log" ] \
+        && ! tail -c +"$((_nm + 1))" "$watch_log" 2>/dev/null \
+          | grep -q -E "$KANSHI_VERDICT"; do
+      sleep 0.1 9>&-
+      _w=$((_w + 1))
+    done
+    hup_kanshi ) 9>&- &
 }
 
 # Daemonize: re-exec ourselves detached from the terminal/job-control so the
@@ -378,8 +400,8 @@ await_kanshi() {   # <log offset before the reload>
   [ /proc/self/fd/1 -ef "$watch_log" ] 2>/dev/null || return 0
   _aw=0
   while [ "$_aw" -lt "${HWDP_APPLY_TICKS:-50}" ]; do   # 0.1s each: 5s
-    if tail -c +"$(($1 + 1))" "$watch_log" 2>/dev/null | grep -q -E \
-        '^configuration for profile .* applied|^no profile matched|failed'
+    if tail -c +"$(($1 + 1))" "$watch_log" 2>/dev/null \
+        | grep -q -E "$KANSHI_VERDICT"
     then
       return 0
     fi

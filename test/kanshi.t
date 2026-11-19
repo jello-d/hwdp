@@ -167,9 +167,30 @@ grep -q 'nudged by a caller that had already exited' \
   "$T/run/hwdp/watch.log" || fail "a zombie caller must be said as exited: \
 $(cat "$T/run/hwdp/watch.log")"
 wait "$_zp" 2>/dev/null || :
+# THE SECOND RELOAD WAITS FOR KANSHI'S VERDICT on the first (a fixed 0.4s
+# landed mid-apply, and kanshi printed a freed profile name). First every
+# earlier nudge's own second reload is let drain (each may wait up to 5s).
+sleep 6
+: > "$T/ours.hups"; : > "$T/run/hwdp/watch.log"
+_hups() { grep -c . "$T/ours.hups"; }
+_two() { [ "$(_hups)" -ge 2 ]; }
+( _env "$MGR" watch ) >/dev/null 2>&1 || fail "the serial nudge failed"
+_wait_for 5 _has "$T/ours.hups" || fail "a nudge's first reload never came"
+sleep 1.5
+[ "$(_hups)" -eq 1 ] || fail "the second reload did not wait for kanshi's \
+verdict: $(_hups) reloads with nothing said"
+echo "configuration for profile 'autoscale' applied" \
+  >> "$T/run/hwdp/watch.log"
+_wait_for 3 _two || fail "kanshi's verdict did not release the second reload"
+# Bounded: with no verdict at all it still comes, at HWDP_NUDGE_TICKS.
+sleep 1; : > "$T/ours.hups"
+( HWDP_NUDGE_TICKS=5; export HWDP_NUDGE_TICKS; _env "$MGR" watch ) \
+  >/dev/null 2>&1 || fail "the bounded nudge failed"
+_wait_for 4 _two || fail "with no verdict the second reload never came"
 kill "$_ours" "$_holder" 2>/dev/null
 wait "$_ours" "$_holder" 2>/dev/null || :
 pass "a nudge reloads this session's kanshi and no other"
+pass "a nudge's second reload waits for kanshi's verdict, within a bound"
 
 # --- 2. a supervisor neither adopts nor kills a stranger ---------------------
 ( _env HWDP_WATCH_DAEMONIZED=1 HWDP_HOTPLUG_POLL=1 \
