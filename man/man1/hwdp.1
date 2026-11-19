@@ -260,24 +260,27 @@ beside a READ-ONLY sidebar of every surface NAME, each marked placed here
 (with how many), the default, or not placed at this desk. Lines are drawn in
 box glyphs on a UTF-8 terminal and ASCII elsewhere.
 PHYSICAL is the layout, the live arrangement drawn as boxes, edited in place.
-Tab or the arrows select a monitor;
+Tab or the arrows HIGHLIGHT a monitor;
 .B r
 rotates it a quarter turn (its neighbours re-pack to its new edge);
 .B w
 marks it and
 .B w
 (or Enter) on another swaps their places;
-.B m
-enters move mode, where the arrows step it 25 logical pixels and shift+arrow
-one; a step stops early at anything it would line up with on the way (flush
+Enter (or
+.BR m )
+SELECTS the highlighted one to move, where the arrows step it 25 logical
+pixels and shift+arrow one; a step stops early at anything it would line
+up with on the way (flush
 against an output, or aligned with its start, centre or end), only a step
 taken from flush jumps to a neighbour's far side, sliding off the end of an
 edge turns the corner onto the next side, and an output left touching nothing
 comes back flush in one step. Facing edges a little apart are flagged, since
 the pointer cannot cross that strip. Enter (or
 .BR m )
-locks it and Esc undoes it. Enter only ever finishes what is in progress,
-and Esc only ever backs out of it;
+again puts it down, and Esc undoes the whole move, the rest of the desk as
+it was too. With a swap marked, Enter makes it instead. Esc only ever backs
+out of what is in progress;
 .B o
 switches it off or back on;
 .B i
@@ -336,10 +339,14 @@ so a stray Esc never writes or discards anything. It needs python3
 .BR "hwdp gdesk" " [" \fIdesk\fR ]
 The same desk tool in a window (GTK 4 and libadwaita), on the same code, so
 the two cannot disagree about a desk or how it is saved. PHYSICAL draws the
-layout to scale: click selects a monitor, and DRAGGING moves it, always to
-where it touches another without overlapping, pulled in to any alignment
-(flush, start, centre, end) within a few pixels of the pointer; Esc mid-drag
-undoes it. Its keys are the terminal tool's, and the buttons under the
+layout to scale: a click (or Tab) HIGHLIGHTS a monitor, an outline, and
+Enter or a double-click SELECTS it to move, filled, until Enter puts it
+down. Selected, the arrows step it and DRAGGING carries it, always to where
+it touches another without overlapping, pulled in to any alignment (flush,
+start, centre, end) within a few pixels of the pointer. A drag selects the
+monitor too, and it stays selected when the button is let go, so the arrows
+fine-tune it; a click on nothing puts it down, and Esc undoes the whole
+move. Its keys are the terminal tool's, and the buttons under the
 drawing do the same (rotate, swap, on/off, labels, preview, save).
 SURFACES lists the names with their labels and where each is; Add, Label
 and Delete edit them. VIRTUAL draws the desk in every cell of the grid:

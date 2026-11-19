@@ -228,8 +228,20 @@ a.key(ord("m"), 0); a.key(curses.KEY_DOWN, 0); a.key(10, 0)
 check("Enter in move mode locks the move", a.moving is None
       and p.y == tui.STEP and a.dialog is None, (p.y, a.dialog))
 a.key(10, 0)
-check("Enter with nothing in progress does nothing",
-      a.dialog is None and not a.done and not hw.calls, (a.dialog, hw.calls))
+check("Enter with nothing in progress SELECTS the monitor to move",
+      a.moving and a.moving[0] is p and a.dialog is None and not hw.calls,
+      (a.moving, a.dialog, hw.calls))
+a.key(10, 0)
+check("and Enter again puts it down", a.moving is None and p.y == tui.STEP,
+      (a.moving, p.y))
+before = [o.rect() for o in (p, l)]
+a.sel = 1
+a.key(10, 0)
+for _ in range(60):
+    a.key(curses.KEY_LEFT, 0)
+a.key(27, 0)
+check("Esc after a move past the left edge puts back the WHOLE desk",
+      [o.rect() for o in (p, l)] == before, [o.rect() for o in (p, l)])
 
 a, (p, l), hw = app()
 a.key(ord("q"), 0)

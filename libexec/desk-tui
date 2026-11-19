@@ -9,16 +9,16 @@ sidebar of every surface NAME and where it is (D the default, N placed N
 times, - not placed at this desk):
 
   1 PHYSICAL, the layout: where the panels sit and how they turn
-    Tab / arrows  select a monitor          r  rotate it a quarter turn
+    Tab / arrows  highlight a monitor       r  rotate it a quarter turn
     w             swap (mark, then swap)    o  switch it off / back on
-    m             move mode: arrows step it 25px, stopping flush and at
+    Enter or m    select it to move, or put it down: selected, the arrows
+                  step it 25px, stopping flush and at
                   every alignment on the way; a step from flush jumps past
                   a neighbour, and off an edge's end turns the corner;
                   shift+arrow one pixel
     i             a label on every monitor, saying which one it is
     p             preview live, with a countdown that reverts unless kept
-    Enter         finish what is in progress (lock a move, make a marked
-                  swap); nothing otherwise
+    Enter         on a marked swap, make it with the highlighted monitor
   2 SURFACES, the names: each with its label and where it is at this desk
     arrows        select a name             a  add one (a fixed name, a label)
     e             its label                 D  delete it (from every desk's
@@ -81,7 +81,7 @@ from hwdp_desk.controller import *   # noqa: E402,F401,F403
 
 TABS = ("Physical", "Surfaces", "Virtual", "Review")
 HELP = (
-    "Tab/arrows select  m move  r rotate  w swap  o off/on  i identify"
+    "Tab/arrows highlight  Enter move  r rotate  w swap  o off/on  i identify"
     "  p preview",
     "arrows select  a add  e label  D delete",
     "arrows cell  Tab panel/half  g split  Enter place  f default"

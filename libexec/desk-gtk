@@ -7,13 +7,17 @@ saved back to them without applying. The same desk tool as `hwdp desk`,
 four tabs over one desk:
 
   PHYSICAL, the layout, drawn to scale
-    click         select a monitor          drag  move it: it stays where it
+    click, Tab    highlight a monitor       drag  move it: it stays where it
                                                   touches another, and pulls
                                                   in to any alignment nearby
+    Enter         select the highlighted one to move, or put it down (or
+                  double-click); selected, the arrows step it (shift+arrow
+                  one pixel) and a drag carries it. A drag selects it too,
+                  and it STAYS selected when the button is let go, so the
+                  arrows fine-tune it; a click on nothing puts it down
     r             rotate it a quarter turn  w     swap (mark, then swap)
     o             switch it off / back on   i     a label on every monitor
     p             preview live, with a countdown that reverts unless kept
-    m, arrows     move mode, as in the terminal (shift+arrow one pixel)
   SURFACES, the names: each with its label and where it is at this desk
     a             add one                   e     its label (or double-click)
     D             delete it (from every desk's list; asked first)
@@ -260,15 +264,17 @@ def fit(cr, s, r, colour, bold=True, sizes=(11, 9, 8), align=0.5):
 
 
 def draw_output(cr, app, i, rect, fg, accent):
+    """One monitor: HIGHLIGHTED (where Tab and a click land) is an accent
+    outline; SELECTED to move is filled with the accent as well."""
     o = app.desk.outs[i]
     x, y, w, h = rect
     sel, moving = i == app.sel, app.moving and app.moving[0] is o
-    fill = rgba(accent, 0.55 if moving else 0.30) if sel else \
-        rgba(fg, 0.07 if o.on else 0.03)
+    fill = rgba(accent, 0.55) if moving else \
+        rgba(fg, 0.10 if sel else 0.07 if o.on else 0.03)
     rounded(cr, x + 2, y + 2, w - 4, h - 4, 8)
     cr.set_source_rgba(*fill)
     cr.fill_preserve()
-    cr.set_line_width(3 if sel else 1.5)
+    cr.set_line_width(4 if moving else 2.5 if sel else 1.5)
     if app.mark is o:
         cr.set_dash([8, 5])
         cr.set_source_rgba(*rgba(accent))
@@ -281,6 +287,8 @@ def draw_output(cr, app, i, rect, fg, accent):
     if o.on:
         lines += [("%d×%d" % (o.w, o.h), 10, False),
                   ("%s  %s°" % (o.token(), o.degrees()), 9, False)]
+    if moving:
+        lines += [("moving: Enter puts it down", 9, True)]
     ty = y + max(8, h / 2 - 9 * len(lines))
     for s, size, bold in lines:
         took = text(cr, s, x, ty, w, size, bold, rgba(fg, 0.9))
@@ -373,6 +381,7 @@ class DeskView:
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
         self.area.set_draw_func(self._draw)
         self.frozen = None      # the frame held still while dragging
+        self.pressed = None     # the output a press landed on
         self.start = None       # the grabbed output's (x, y) at the grab
         self.moved = False      # past SLOP: a drag, not a click
         drag = Gtk.GestureDrag()
@@ -380,6 +389,9 @@ class DeskView:
         drag.connect("drag-update", self.on_update)
         drag.connect("drag-end", self.on_end)
         self.area.add_controller(drag)
+        twice = Gtk.GestureClick()
+        twice.connect("pressed", self.on_click)
+        self.area.add_controller(twice)
 
     def fr(self):
         if self.moved:
@@ -388,22 +400,32 @@ class DeskView:
                      self.area.get_height())
 
     def on_begin(self, gesture, px, py):
+        """A press HIGHLIGHTS what it lands on (on nothing, puts down the
+        selected one); it becomes a drag only past SLOP."""
         app = self.win.app
         i = hit(app.desk.outs, self.fr(), self.area.get_width(),
                 self.area.get_height(), px, py)
-        if i is None or not app.grab(i):
+        if i is None:
+            app.release()
+        if i is None or not app.highlight(i):
             gesture.set_state(Gtk.EventSequenceState.DENIED)
             self.win.sync()
             return
-        self.frozen = frame(app.desk.outs, self.area.get_width(),
-                            self.area.get_height(), room=app.cur)
-        self.start, self.moved = (app.cur.x, app.cur.y), False
+        self.pressed, self.start, self.moved = i, None, False
         self.win.sync()
 
     def on_update(self, gesture, dx, dy):
-        if not self.start or (not self.moved and
-                              dx * dx + dy * dy < SLOP * SLOP):
+        app = self.win.app
+        if self.pressed is None or (not self.moved and
+                                    dx * dx + dy * dy < SLOP * SLOP):
             return
+        if not self.start:
+            if not app.grab(self.pressed):
+                self.pressed = None
+                return
+            self.frozen = frame(app.desk.outs, self.area.get_width(),
+                                self.area.get_height(), room=app.cur)
+            self.start = (app.cur.x, app.cur.y)
         self.moved = True
         scale = self.frozen[0]
         self.win.app.drag_to(self.start[0] + dx / scale,
@@ -413,9 +435,19 @@ class DeskView:
     def on_end(self, gesture, dx, dy):
         if self.start:
             self.win.app.drop()
-        self.frozen = self.start = None
+        self.frozen = self.start = self.pressed = None
         self.moved = False
         self.win.sync()
+
+    def on_click(self, gesture, n, px, py):
+        """A double-click on a monitor: Enter on IT, in or out of selected
+        (highlighted here, since nothing orders this gesture after the
+        drag's press)."""
+        app = self.win.app
+        i = hit(app.desk.outs, self.fr(), self.area.get_width(),
+                self.area.get_height(), px, py)
+        if n == 2 and i is not None and app.highlight(i):
+            self.win.press(ENTER)
 
     def _draw(self, area, cr, w, h):
         app = self.win.app

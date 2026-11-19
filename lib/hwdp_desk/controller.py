@@ -52,7 +52,10 @@ class App:
         self.desk, self.hw = desk, hw
         self.sel = 0
         self.mark = None          # the output marked for a swap
-        self.moving = None        # (output, x, y) it started the move at
+        # The output SELECTED to move, and where EVERY output was when it
+        # was: a step re-normalises the desk, so the mover's old (x, y)
+        # alone would mean another place once it has passed an edge.
+        self.moving = None        # (output, [(x, y) per output])
         self.saved = desk.placements()
         self.live_unsaved = False  # a preview was KEPT but not saved
         self.dialog = None        # (kind, its deadline or default)
@@ -171,6 +174,8 @@ class App:
             self._revert("no answer: reverted")
 
     def _select(self, k):
+        if self.moving:             # Tab puts the selected one down
+            self._move_mode(0)
         n = len(self.desk.outs)
         if k == 9:
             self.sel = (self.sel + 1) % n
@@ -214,14 +219,19 @@ class App:
             self.mark = None
 
     def _move_mode(self, now):
-        c = self.cur
+        """In and out of SELECTED: the highlighted monitor taken to move
+        (the arrows step it, a drag carries it), or put down where it is."""
         if self.moving:
+            o = self.moving[0]
             self.moving = None
-            self.msg = "%s locked at %d,%d" % (c.label, c.x, c.y)
-        elif c.on:
-            self.moving = (c, c.x, c.y)
+            self.msg = "%s placed at %d,%d" % (o.label, o.x, o.y)
+        elif self.cur.on:
+            self._take(self.cur)
             self.msg = ("moving %s: arrows step, shift+arrow one pixel,"
-                        " Enter locks, Esc undoes" % c.label)
+                        " Enter places it, Esc undoes" % self.cur.label)
+
+    def _take(self, o):
+        self.moving = (o, [(n.x, n.y) for n in self.desk.outs])
 
     def _move(self, k):
         o = self.moving[0]
@@ -235,19 +245,33 @@ class App:
             o.conn, o.x, o.y,
             contacts(o, [n for n in self.desk.on() if n is not o]))
 
-    # --- the pointer: a monitor grabbed, dragged and dropped -------------
-    # A drag is move mode driven by a pointer: Esc mid-drag undoes it as it
-    # undoes a move, and the monitor is only ever where it touches another.
-    def grab(self, i):
-        """Select output I and start dragging it; False if it cannot move
-        (it is off, or a dialog or a save has the screen)."""
+    # --- the pointer: a monitor highlighted, grabbed, dragged, dropped ----
+    # A drag SELECTS the monitor, as Enter does, and it STAYS selected when
+    # the button is let go, so the arrows fine-tune where the drag left it;
+    # Enter, or a click elsewhere, puts it down, and Esc undoes it all.
+    def highlight(self, i):
+        """Highlight output I (a click), putting down a monitor selected
+        to move first; False when a dialog or a save has the screen."""
         if self.busy or self.dialog:
             return False
-        self.sel, o = i, self.desk.outs[i]
-        if not o.on:
-            return False
-        self.moving = (o, o.x, o.y)
+        if self.moving and self.moving[0] is not self.desk.outs[i]:
+            self._move_mode(0)
+        self.sel = i
         return True
+
+    def grab(self, i):
+        """Highlight output I and select it to drag; False if it cannot
+        move (it is off, or a dialog or a save has the screen)."""
+        if not self.highlight(i) or not self.desk.outs[i].on:
+            return False
+        if not self.moving:
+            self._take(self.desk.outs[i])
+        return True
+
+    def release(self):
+        """A click on nothing: put down whatever was selected."""
+        if self.moving and not (self.busy or self.dialog):
+            self._move_mode(0)
 
     def drag_to(self, x, y, reach):
         """The grabbed output follows (X, Y), its top-left in logical
@@ -265,12 +289,14 @@ class App:
             contacts(o, [n for n in self.desk.on() if n is not o]))
 
     def drop(self):
+        """The button let go: normalised, and still selected."""
         if not self.moving:
             return
-        o, x, y = self.moving
-        self.moving = None
         self.desk.normalise()
-        self.msg = "%s placed" % o.label if (o.x, o.y) != (x, y) else ""
+        o = self.moving[0]
+        self.msg = "%s %d,%d  %s  (arrows nudge it, Enter places it)" % (
+            o.label, o.x, o.y,
+            contacts(o, [n for n in self.desk.on() if n is not o]))
 
     def _toggle_on(self, now):
         c = self.cur
@@ -822,12 +848,14 @@ class App:
             self.msg = "nothing to save"
 
     def _commit(self, now):
-        """Enter finishes what is in progress, and is nothing otherwise:
-        a move is locked, a marked swap is made with the selection."""
-        if self.moving:
+        """Enter: a marked swap is made with the highlighted monitor (and
+        is nothing on the marked one itself); otherwise in and out of
+        SELECTED, as m."""
+        if self.mark and not self.moving:
+            if self.mark is not self.cur:
+                self._swap(now)
+        else:
             self._move_mode(now)
-        elif self.mark and self.mark is not self.cur:
-            self._swap(now)
 
     def _quit(self, now, default=ord("s")):
         """Leave, at once when nothing is unsaved; otherwise ask. DEFAULT
@@ -840,10 +868,9 @@ class App:
 
     def _escape(self, now):
         if self.moving:
-            o, x, y = self.moving
-            o.x, o.y = x, y
+            for n, (x, y) in zip(self.desk.outs, self.moving[1]):
+                n.x, n.y = x, y
             self.moving = None
-            self.desk.normalise()
             self.msg = "move undone"
         elif self.mark:
             self.mark, self.msg = None, ""

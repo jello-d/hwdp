@@ -15,7 +15,7 @@ harness_init desk-gtk
 command -v python3 >/dev/null 2>&1 || skip "python3 not installed"
 
 cat > "$T/common.py" <<'PY'
-import importlib.machinery, importlib.util, sys
+import curses, importlib.machinery, importlib.util, sys
 here = sys.argv[1]
 ld = importlib.machinery.SourceFileLoader("gui", here + "/libexec/desk-gtk")
 sp = importlib.util.spec_from_loader("gui", ld)
@@ -120,9 +120,15 @@ check("dragged left of everything it touches the laptop's left edge",
       ((l.x, l.y), a.msg))
 check("the frame is not normalised mid-drag", e.x == 0, e.x)
 a.drop()
-check("the drop normalises and says so", a.moving is None and l.x == 0
-      and e.x == 2560 and not d.faults() and "placed" in a.msg,
+check("the drop normalises, and it STAYS selected for the arrows",
+      a.moving and a.moving[0] is l and l.x == 0 and e.x == 2560
+      and not d.faults() and "Enter places it" in a.msg,
       (l.rect(), e.rect(), a.msg))
+a.key(curses.KEY_SF, 0)
+check("so an arrow after the drop nudges it", l.y == 402, l.y)
+a.key(10, 0)
+check("and Enter puts it down where it is", a.moving is None
+      and (l.x, l.y) == (0, 402) and "placed" in a.msg, (l.rect(), a.msg))
 a.grab(1)
 a.drag_to(9000, 9000, 0)
 a.key(27, 0)
@@ -131,6 +137,23 @@ check("Esc mid-drag undoes it, as it undoes a move",
 a.drag_to(0, 0, 0)
 a.drop()
 check("a drag after Esc moves nothing", (p.x, p.y) == (4480, 0), p.rect())
+before = [o.rect() for o in d.outs]
+a.grab(1)
+a.drag_to(-9000, 0, 0)
+a.drop()
+a.key(27, 0)
+check("Esc after a drag past the left edge puts back the WHOLE desk",
+      [o.rect() for o in d.outs] == before and not d.faults(),
+      [o.rect() for o in d.outs])
+a.grab(2)
+a.drag_to(-9000, 300, 0)
+a.drop()
+check("a click on another monitor puts the selected one down",
+      a.highlight(0) and a.moving is None and a.sel == 0
+      and "placed" in a.msg, (a.moving, a.msg))
+a.grab(2)
+a.release()
+check("and a click on nothing does too", a.moving is None)
 a.desk.outs[0].on = False
 check("an output that is off is selected but not grabbed",
       not a.grab(0) and a.sel == 0 and a.moving is None)
@@ -303,14 +326,27 @@ def drive(w, a, hw, d, outs):
     x, y, bw, bh = gui.box(l, fr)
     g = Gesture()
     v.on_begin(g, x + bw / 2, y + bh / 2)
-    check("a press on a panel grabs it", not g.denied and a.moving)
+    check("a press on a panel highlights it, and selects nothing",
+          not g.denied and a.sel == 2 and a.moving is None, a.moving)
+    v.on_update(g, 2, 1)
+    check("a wander inside the slop is still a click", a.moving is None)
     v.on_update(g, -(x + bw / 2) - 400, 900)
     v.on_end(g, 0, 0)
-    check("the drag moved it, and the desk is sound",
-          l.x == 0 and not d.faults(), [o.rect() for o in d.outs])
+    check("the drag moved it, the desk is sound, and it stays selected",
+          l.x == 0 and not d.faults() and a.moving and a.moving[0] is l,
+          [o.rect() for o in d.outs])
+    y0 = l.y
+    check("an arrow then nudges it, no button held",
+          key(w, Gdk.KEY_Down) and l.y > y0, (y0, l.y))
     g = Gesture()
     v.on_begin(g, 1, 1)
-    check("a press on nothing is refused", g.denied)
+    check("a press on nothing is refused, and puts it down",
+          g.denied and a.moving is None)
+    v.on_click(None, 2, *gui.box(e, v.fr())[:2])
+    check("a double-click selects the monitor under it",
+          a.moving and a.moving[0] is e, a.moving)
+    key(w, Gdk.KEY_Return)
+    check("and Enter puts it down", a.moving is None)
     a.sel = 0
     check("a key reaches the App", key(w, Gdk.KEY_r) and e.transform == "90",
           e.transform)
