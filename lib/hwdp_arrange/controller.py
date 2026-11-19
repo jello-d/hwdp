@@ -1,0 +1,802 @@
+"""hwdp arrange: what a key means: the App both views drive."""
+import curses
+import threading
+
+from .model import (
+    HALVES, NEW_GRID, PREVIEW_SECONDS, SPLITS, SPLIT_OF, STEP, Surface,
+    clashes, contacts, nearest_valid, step)
+from .words import DEFAULT_WALL, brief
+
+
+# --- the controller: what a key means ---------------------------------------
+
+ARROWS = {curses.KEY_LEFT: (-1, 0), curses.KEY_RIGHT: (1, 0),
+          curses.KEY_UP: (0, -1), curses.KEY_DOWN: (0, 1),
+          ord("h"): (-1, 0), ord("l"): (1, 0),
+          ord("k"): (0, -1), ord("j"): (0, 1)}
+FINE = {curses.KEY_SLEFT: (-1, 0), curses.KEY_SRIGHT: (1, 0),
+        curses.KEY_SR: (0, -1), curses.KEY_SF: (0, 1),
+        ord("H"): (-1, 0), ord("L"): (1, 0),
+        ord("K"): (0, -1), ord("J"): (0, 1)}
+ESC = 27
+ENTER = (10, 13, curses.KEY_ENTER)
+
+
+class App:
+    def __init__(self, desk, hw):
+        self.desk, self.hw = desk, hw
+        self.sel = 0
+        self.mark = None          # the output marked for a swap
+        self.moving = None        # (output, x, y) it started the move at
+        self.saved = desk.placements()
+        self.live_unsaved = False  # a preview was KEPT but not saved
+        self.dialog = None        # (kind, its deadline or default)
+        self.msg = ""
+        self.ident = False
+        self.done = False
+        self.form = None          # the name form, while it is up
+        self.busy = None          # [what, since, latest line] while saving
+        self.job = None           # the save running beside the screen
+        self.tab = 0              # TABS: physical, virtual, review
+        self.side = 0             # the sidebar's selected name
+        self.vcell = [0, 0]       # the virtual tab's selected cell
+        self.vpanel = 0           # ... panel in it (index into desk.on())
+        self.vhalf = 0            # ... and half of it, when it is split
+        self.rscroll = 0          # the review tab's first line
+        self.pick = None          # the picker, while it is up
+        surf, default, why = hw.surfaces(desk)
+        # Files `hwdp surfaces` refuses are NOT edited on top of: rewriting
+        # them from what the tool could read would drop what it could not.
+        self.names_blocked = brief(why) if surf is None else ""
+        self.surfaces = surf or []
+        self.default = default
+        # {(panel, cx, cy): split}: written ones, then any a placed half
+        # implies (a file from before splits were written).
+        self.splits = {(c, x, y): w for c, x, y, w in hw.splits()}
+        for x in self.surfaces:
+            if x.region in SPLIT_OF:
+                self.splits.setdefault((x.conn, x.cx, x.cy),
+                                       SPLIT_OF[x.region])
+        self.grid = hw.grid() or NEW_GRID
+        self.names = hw.names()
+        self.walls = dict(hw.wallpapers())   # {(cx, cy): file}
+        self.wpick = None                    # the wallpaper picker, if up
+        self._mark_saved()
+
+    def plabel(self, conn):
+        """A stored panel name as a person reads it."""
+        for o in self.desk.outs:
+            if o.conn == conn:
+                return o.label
+        return conn
+
+    def _mark_saved(self):
+        self.saved_surfaces = self._surface_keys()
+        self.saved_default = self.default.key() if self.default else None
+        self.saved_grid = self.grid
+        self.saved_splits = sorted(self.splits.items())
+        self.saved_names = [list(n) for n in self.names]
+        self.saved_walls = dict(self.walls)
+
+    @property
+    def cur(self):
+        return self.desk.outs[self.sel]
+
+    def _surface_keys(self):
+        return sorted(x.key() for x in self.surfaces)
+
+    def desk_dirty(self):
+        return (self._surface_keys() != self.saved_surfaces
+                or self.walls != self.saved_walls
+                or self.grid != self.saved_grid
+                or sorted(self.splits.items()) != self.saved_splits
+                or (self.default.key() if self.default else None)
+                != self.saved_default)
+
+    def dirty(self):
+        return (self.desk.placements() != self.saved or self.live_unsaved
+                or self.desk_dirty() or self.names != self.saved_names)
+
+    # Dialogs first: while one is up, it owns the keyboard. Then what is
+    # the same on every tab (switching, the sidebar, save, quit), then the
+    # tab's own keys.
+    def key(self, k, now):
+        if self.busy:
+            return                # a save owns the screen until it lands
+        if self.dialog:
+            return self._dialog_key(k, now)
+        if self.moving and (k in ARROWS or k in FINE):
+            return self._move(k)
+        tab = {ord("1"): 0, ord("2"): 1, ord("3"): 2, ord("4"): 3,
+               curses.KEY_F1: 0, curses.KEY_F2: 1, curses.KEY_F3: 2,
+               curses.KEY_F4: 3}.get(k)
+        if tab is not None:
+            self.tab, self.msg = tab, ""
+            return
+        common = {ord("q"): self._quit, ord("s"): self._save_here}.get(k)
+        if common:
+            return common(now)
+        if k == ESC:
+            return self._escape(now)
+        if self.tab == 1:
+            return self._surfaces_key(k, now)
+        if self.tab == 2:
+            return self._virtual_key(k, now)
+        if self.tab == 3:
+            if k in ARROWS:
+                self.rscroll = max(0, self.rscroll + ARROWS[k][1] * 3)
+            elif k in (curses.KEY_NPAGE, ord(" ")):
+                self.rscroll += 15
+            elif k == curses.KEY_PPAGE:
+                self.rscroll = max(0, self.rscroll - 15)
+            return
+        if k in ARROWS or k in (9, curses.KEY_BTAB):
+            return self._select(k)
+        action = {ord("r"): self._rotate, ord("w"): self._swap,
+                  ord("m"): self._move_mode, ord("o"): self._toggle_on,
+                  ord("i"): self._identify, ord("p"): self._preview}.get(k)
+        if action:
+            return action(now)
+        if k in ENTER:
+            return self._commit(now)
+
+    def tick(self, now):
+        self._landed()
+        if self.dialog and self.dialog[0] == "keep" and now >= self.dialog[1]:
+            self._revert("no answer: reverted")
+
+    def _select(self, k):
+        n = len(self.desk.outs)
+        if k == 9:
+            self.sel = (self.sel + 1) % n
+            return
+        if k == curses.KEY_BTAB:
+            self.sel = (self.sel - 1) % n
+            return
+        dx, dy = ARROWS[k]
+        c = self.cur
+        cx, cy = c.x + c.w / 2, c.y + c.h / 2
+        best = None
+        for i, o in enumerate(self.desk.outs):
+            if o is c or not o.on:
+                continue
+            ox, oy = o.x + o.w / 2 - cx, o.y + o.h / 2 - cy
+            ahead = ox * dx + oy * dy
+            if ahead <= 0:
+                continue
+            d = ahead + 2 * abs(ox * dy + oy * dx)
+            if best is None or d < best[0]:
+                best = (d, i)
+        if best:
+            self.sel = best[1]
+
+    def _rotate(self, now):
+        if self.cur.on:
+            self.desk.rotate(self.cur)
+            self.msg = "%s rotated" % self.cur.label
+
+    def _swap(self, now):
+        c = self.cur
+        if not c.on:
+            self.msg = "%s is off" % c.label
+        elif self.mark is None or self.mark is c:
+            self.mark = None if self.mark is c else c
+            self.msg = ("%s marked: select another and press w or Enter"
+                        % c.label) if self.mark else ""
+        else:
+            self.desk.swap(self.mark, c)
+            self.msg = "swapped %s and %s" % (self.mark.label, c.label)
+            self.mark = None
+
+    def _move_mode(self, now):
+        c = self.cur
+        if self.moving:
+            self.moving = None
+            self.msg = "%s locked at %d,%d" % (c.label, c.x, c.y)
+        elif c.on:
+            self.moving = (c, c.x, c.y)
+            self.msg = ("moving %s: arrows step, shift+arrow one pixel,"
+                        " Enter locks, Esc undoes" % c.label)
+
+    def _move(self, k):
+        o = self.moving[0]
+        if k in FINE:
+            dx, dy = FINE[k]
+        else:
+            dx, dy = ARROWS[k]
+            dx, dy = dx * STEP, dy * STEP
+        step(self.desk, o, dx, dy, snap=k not in FINE)
+        self.msg = "%s %d,%d  %s" % (
+            o.conn, o.x, o.y,
+            contacts(o, [n for n in self.desk.on() if n is not o]))
+
+    def _toggle_on(self, now):
+        c = self.cur
+        if c.on and len(self.desk.on()) == 1:
+            self.msg = "the last monitor on cannot be switched off"
+            return
+        c.on = not c.on
+        if c.on:
+            spot = nearest_valid(c, [o for o in self.desk.on()
+                                     if o is not c], c.x, c.y)
+            if spot:
+                c.x, c.y = spot
+        self.desk.normalise()
+        self.msg = "%s switched %s" % (c.label, "on" if c.on else "off")
+
+    def _identify(self, now):
+        if getattr(self.hw, "offline", False):
+            self.msg = "%s is not attached: no monitors to label" \
+                % self.hw.name
+            return
+        self.ident = self.hw.identify(not self.ident)
+        if not self.ident:
+            self.msg = "labels off"
+
+    def _preview(self, now):
+        if getattr(self.hw, "offline", False):
+            self.msg = "%s is not attached: a preview needs its panels" \
+                % self.hw.name
+            return
+        if self.desk.faults():
+            self.msg = "the monitors must meet edge to edge first"
+            return
+        rc, why = self.hw.arrange("--preview", self.desk.placements())
+        if rc == 0:
+            self.dialog = ("keep", now + PREVIEW_SECONDS)
+        else:
+            self.fail("Not previewed", why or "preview failed (%d)" % rc)
+
+    def _revert(self, why):
+        self.hw.arrange("--revert", [])
+        self.live_unsaved = False
+        self.dialog = None
+        self.msg = why
+
+    def _save(self, now, then_exit):
+        """The layout, the names, the desk; done only if all landed. It runs
+        BESIDE the screen, which says what it is waiting on: a save fires
+        the integrator's hooks, and those can take seconds.
+
+        THE NAMES GO IN TWO STEPS around the desk, because a desk may only
+        place listed names and the list may not drop a placed one: first the
+        new list PLUS anything removed that the saved desk still places,
+        then the desk, then the new list alone."""
+        self.dialog = None
+        place = self.desk.placements()
+        layout = place != self.saved or self.live_unsaved
+        desk = (self.grid, list(self.surfaces), self.default,
+                sorted(k + (w,) for k, w in self.splits.items())) \
+            if self.desk_dirty() else None
+        names = [list(n) for n in self.names]
+        keep = [n for n in self.saved_names
+                if n[0] not in {m[0] for m in names}]
+        names_changed = names != self.saved_names
+        walls = dict(self.walls) if self.walls != self.saved_walls else None
+        self.busy = ["saving", now, ""]
+
+        def said(line):
+            self.busy[2] = line
+
+        def step(what, call, *args):
+            self.busy[0] = what
+            rc, why = call(*args)
+            if rc == 0:
+                return ""
+            why = why or "exit %d" % rc
+            # A reason of several lines starts on its own line, so each is
+            # read as one (and loses its `hwdp <cmd>:` prefix in the dialog).
+            return "%s:%s%s" % (what, "\n" if "\n" in why else " ", why)
+
+        def work():
+            if layout:
+                self.busy[0] = "saving the layout"
+                rc, why = self.hw.arrange(None, place, progress=said)
+                if rc != 0:
+                    return why or "not saved (%d)" % rc, "none"
+            if names_changed:
+                why = step("saving names", self.hw.write_names, names + keep)
+                if why:
+                    return why, "layout"
+            if desk is not None:
+                why = step("saving the desk", self.hw.write_desk, *desk)
+                if why:
+                    return why, "layout"
+            if walls is not None:
+                why = step("saving the wallpapers", self.hw.write_wallpapers,
+                           walls)
+                if why:
+                    return why, "layout"
+            if keep:
+                why = step("removing names", self.hw.write_names, names)
+                if why:
+                    return why, "desk"
+            return step("applying it to this session", self.hw.apply), "all"
+
+        def finish(res):
+            why, upto = res
+            if upto != "none":
+                self.saved, self.live_unsaved = place, False
+            if upto in ("desk", "all"):
+                self._mark_saved()
+                if upto == "desk":           # the list still holds `keep`
+                    self.saved_names = names + keep
+            if why:
+                # Saved whole and only the apply failed: say THAT, since
+                # "Not saved" would send someone to redo a save that stands.
+                self.fail("Saved, but not applied" if upto == "all"
+                          else "Not saved", why)
+            else:
+                self.msg = "saved"
+            self.done = then_exit and not why
+        self.job = self.spawn(work, finish)
+        self._landed()
+
+    @staticmethod
+    def spawn(work, finish):
+        """Run WORK on a thread; the screen calls FINISH with its answer
+        once it lands (see _landed). A test swaps in a synchronous one."""
+        job = {"finish": finish}
+
+        def run():
+            try:
+                job["res"] = work()
+            except Exception as e:      # said on screen, never swallowed
+                job["res"] = ("save failed: %s" % e, None)
+        job["thread"] = threading.Thread(target=run, daemon=True)
+        job["thread"].start()
+        return job
+
+    def _landed(self):
+        if self.job and "res" in self.job:
+            job, self.job, self.busy = self.job, None, None
+            job["finish"](job["res"])
+
+    # --- the sidebar: the global surface names --------------------------
+    def _blocked(self):
+        if self.names_blocked:
+            self.msg = ("surfaces cannot be edited: " + self.names_blocked +
+                        " (see hwdp surfaces --check)")
+        return bool(self.names_blocked)
+
+    def side_name(self):
+        return self.names[self.side][0] if self.names else None
+
+    def _surfaces_key(self, k, now):
+        """The SURFACES tab: the names, edited here and nowhere else."""
+        if k in (curses.KEY_DOWN, ord("j")):
+            return self._side_down(now)
+        if k in (curses.KEY_UP, ord("k")):
+            return self._side_up(now)
+        act = {ord("a"): self._name_add, ord("e"): self._name_edit,
+               ord("D"): self._name_delete}.get(k)
+        if act:
+            return act(now)
+
+    def _side_down(self, now):
+        if self.names:
+            self.side = (self.side + 1) % len(self.names)
+
+    def _side_up(self, now):
+        if self.names:
+            self.side = (self.side - 1) % len(self.names)
+
+    def placed(self, name):
+        """Where NAME is at this desk: its surfaces, and whether it is the
+        default (the sidebar's marker reads this)."""
+        here = [x for x in self.surfaces if x.name == name]
+        return here, bool(self.default and self.default.name == name)
+
+    def _name_add(self, now):
+        if not self._blocked():
+            self.form = {"field": 0, "name": "", "label": "", "err": "",
+                         "edit": None}
+            self.dialog = ("name", None)
+
+    def _name_edit(self, now):
+        if self._blocked() or not self.names:
+            return
+        n, lab = self.names[self.side]
+        self.form = {"field": 1, "name": n, "label": lab, "err": "",
+                     "edit": self.side}
+        self.dialog = ("name", None)
+
+    def _name_delete(self, now):
+        if not self._blocked() and self.names:
+            self.dialog = ("delname", None)
+
+    def _form_key(self, k):
+        """The name form: a NAME (the machine key: letters, digits, - and _;
+        fixed once made, since other desks may place it) and a LABEL (what
+        a workspace name shows; spaces allowed)."""
+        f = self.form
+        if k == ESC:
+            self.form, self.dialog = None, None
+        elif k in ENTER:
+            self._form_done()
+        elif k in (9, curses.KEY_DOWN, curses.KEY_BTAB, curses.KEY_UP):
+            f["field"] = 1 if f["edit"] is not None else 1 - f["field"]
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            fld = "name" if f["field"] == 0 else "label"
+            f[fld] = f[fld][:-1]
+        elif 32 <= k < 127:
+            c = chr(k)
+            if f["field"] == 0 and (c.isalnum() or c in "_-"):
+                f["name"] += c
+            elif f["field"] == 1:
+                f["label"] += c
+
+    def _form_done(self):
+        f = self.form
+        label = f["label"].strip() or f["name"]
+        if f["edit"] is not None:
+            self.names[f["edit"]][1] = label
+            self.msg = "%s is labelled %s" % (f["name"], label)
+        elif not f["name"]:
+            f["err"] = "give it a name"
+            return
+        elif any(n == f["name"] for n, _ in self.names):
+            f["err"] = "%s is already a name" % f["name"]
+            return
+        else:
+            self.names.append([f["name"], label])
+            self.side = len(self.names) - 1
+            self.msg = "%s added; place it in the virtual tab" % f["name"]
+        self.form, self.dialog = None, None
+
+    def _name_gone(self):
+        """Delete the selected name, and its places at THIS desk with it.
+        Another desk placing it makes the save refuse, naming that desk."""
+        n = self.names.pop(self.side)[0]
+        self.surfaces = [x for x in self.surfaces if x.name != n]
+        if self.default and self.default.name == n:
+            self.default = None
+        self.side = max(0, min(self.side, len(self.names) - 1))
+        self.dialog, self.msg = None, "%s deleted" % n
+
+    # --- the virtual tab: surfaces on the grid --------------------------
+    def split_at(self, o, cx, cy):
+        """How output O is cut in cell (cx, cy): None (whole) or a SPLITS
+        word."""
+        return self.splits.get((o.conn, cx, cy))
+
+    def vstops(self):
+        """Every stop Tab walks in the selected cell, in order: each panel
+        whole, or each of its halves when it is split there."""
+        return [(o, rg) for o in self.desk.on()
+                for rg in HALVES[self.split_at(o, *self.vcell)]]
+
+    def vspot(self):
+        """(output, region) selected in the virtual tab, or (None, "full")
+        when no output is on. The half is clamped, so a panel split in one
+        cell and whole in the next is still a valid selection."""
+        on = self.desk.on()
+        if not on:
+            return None, "full"
+        self.vpanel %= len(on)
+        o = on[self.vpanel]
+        hs = HALVES[self.split_at(o, *self.vcell)]
+        self.vhalf = min(self.vhalf, len(hs) - 1)
+        return o, hs[self.vhalf]
+
+    def _vtab(self, step):
+        """Tab to the next stop (a whole panel, or a half), across panels."""
+        stops = self.vstops()
+        if not stops:
+            return
+        here = stops.index(self.vspot())
+        o, rg = stops[(here + step) % len(stops)]
+        on = self.desk.on()
+        self.vpanel = on.index(o)
+        self.vhalf = HALVES[self.split_at(o, *self.vcell)].index(rg)
+
+    def at_spot(self):
+        """The surfaces that overlap the selected spot."""
+        o, rg = self.vspot()
+        probe = Surface("", o.conn if o else "", rg, *self.vcell)
+        return [x for x in self.surfaces if clashes(probe, x)]
+
+    def _virtual_key(self, k, now):
+        if k in ARROWS:
+            dx, dy = ARROWS[k]
+            self.vcell = [min(max(self.vcell[0] + dx, 0), self.grid[0] - 1),
+                          min(max(self.vcell[1] + dy, 0), self.grid[1] - 1)]
+            return
+        if k in (9, curses.KEY_BTAB):
+            return self._vtab(1 if k == 9 else -1)
+        act = {ord("g"): self._vsplit, ord("x"): self._vclear,
+               ord("b"): self._wpick_open,
+               ord("f"): lambda now: self._pick("default"),
+               ord("F"): self._vnodefault,
+               ord("+"): lambda now: self._regrid(1, 0),
+               ord("-"): lambda now: self._regrid(-1, 0),
+               ord("]"): lambda now: self._regrid(0, 1),
+               ord("["): lambda now: self._regrid(0, -1)}.get(k)
+        if act:
+            return act(now)
+        if k in ENTER:
+            return self._pick("place")
+
+    # --- the picker: which name goes on the selected spot -----------------
+    def _pick(self, mode):
+        """Open the picker over the names. PLACE puts the choice on the
+        selected spot; DEFAULT makes it the default there. It starts on what
+        is there now, so Enter twice changes nothing."""
+        if self._blocked():
+            return
+        if not self.names:
+            self.msg = "no names yet: tab 2 adds them"
+            return
+        if self.vspot()[0] is None:
+            return
+        here = [x.name for x in self.at_spot()] if mode == "place" else \
+            [self.default.name] if self.default else []
+        names = [n for n, _ in self.names]
+        self.pick = {"mode": mode, "filter": "",
+                     "sel": names.index(here[0]) if here else 0}
+        self.dialog = ("pick", None)
+
+    def pick_list(self):
+        """The names the picker shows: those whose name or label holds what
+        has been typed, in the list's order."""
+        f = self.pick["filter"].lower()
+        return [(n, lab) for n, lab in self.names
+                if f in n.lower() or f in lab.lower()]
+
+    def _pick_key(self, k, now):
+        pk, shown = self.pick, self.pick_list()
+        if k == ESC:
+            self.pick, self.dialog = None, None
+        elif k in ENTER:
+            if shown:
+                n = shown[min(pk["sel"], len(shown) - 1)][0]
+                self.pick, self.dialog = None, None
+                (self._vplace if pk["mode"] == "place" else
+                 self._vdefault)(n)
+        elif k == curses.KEY_DOWN:
+            pk["sel"] = min(pk["sel"] + 1, max(0, len(shown) - 1))
+        elif k == curses.KEY_UP:
+            pk["sel"] = max(pk["sel"] - 1, 0)
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            pk["filter"], pk["sel"] = pk["filter"][:-1], 0
+        elif 32 < k < 127:
+            pk["filter"], pk["sel"] = pk["filter"] + chr(k), 0
+
+    # --- the wallpaper picker: which image the selected cell shows -------
+    def _wpick_open(self, now):
+        """Open the picker over the wallpaper directory for the selected
+        CELL (a wallpaper is per workspace, not per panel). It starts on the
+        cell's own choice; "(default)" leaves the cell to its default."""
+        if self._blocked():
+            return
+        imgs = self.hw.wallpaper_images()
+        if not imgs:
+            self.msg = "no images in the wallpaper directory"
+            return
+        cur = self.walls.get(tuple(self.vcell))
+        self.wpick = {"filter": "", "images": imgs,
+                      "sel": imgs.index(cur) + 1 if cur in imgs else 0}
+        self.dialog = ("wpick", None)
+
+    def wpick_list(self):
+        """What the picker shows: "(default)" first, then the images whose
+        name holds what has been typed."""
+        f = self.wpick["filter"].lower()
+        return ([DEFAULT_WALL] if not f else []) + \
+            [n for n in self.wpick["images"] if f in n.lower()]
+
+    def _wpick_key(self, k, now):
+        wp, shown = self.wpick, self.wpick_list()
+        if k == ESC:
+            self.wpick, self.dialog = None, None
+        elif k in ENTER:
+            if shown:
+                n = shown[min(wp["sel"], len(shown) - 1)]
+                self.wpick, self.dialog = None, None
+                cell = tuple(self.vcell)
+                if n == DEFAULT_WALL:
+                    self.walls.pop(cell, None)
+                    self.msg = "cell %d,%d: the default wallpaper" % cell
+                else:
+                    self.walls[cell] = n
+                    self.msg = "cell %d,%d: %s" % (cell + (n,))
+        elif k == curses.KEY_DOWN:
+            wp["sel"] = min(wp["sel"] + 1, max(0, len(shown) - 1))
+        elif k == curses.KEY_UP:
+            wp["sel"] = max(wp["sel"] - 1, 0)
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            wp["filter"], wp["sel"] = wp["filter"][:-1], 0
+        elif 32 < k < 127:
+            wp["filter"], wp["sel"] = wp["filter"] + chr(k), 0
+
+    def _vsplit(self, now):
+        """Cut the selected panel in THIS cell, or join it again: whole,
+        top-bottom, left-right, whole. What is placed moves where it has
+        exactly one home (whole to the first half, top to left, one half
+        back to whole); joining a panel with BOTH halves placed asks first,
+        and unplaces them, since keeping either would be a guess."""
+        o, _ = self.vspot()
+        if self._blocked() or o is None:
+            return
+        k = (o.conn,) + tuple(self.vcell)
+        nxt = SPLITS[(SPLITS.index(self.splits.get(k)) + 1) % len(SPLITS)]
+        here = [x for x in self.surfaces if (x.conn, x.cx, x.cy) == k]
+        if nxt is None and len(here) > 1:
+            self.dialog = ("unsplit", k)
+            return
+        self._resplit(k, nxt, here)
+
+    def _resplit(self, k, nxt, here):
+        old = HALVES[self.splits.get(k)]
+        new = HALVES[nxt]
+        for x in here:
+            x.region = new[min(old.index(x.region), len(new) - 1)] \
+                if x.region in old else new[0]
+        if nxt:
+            self.splits[k] = nxt
+        else:
+            self.splits.pop(k, None)
+        self.vhalf = 0
+        self.msg = "%s, cell %d %d: %s" % (
+            self.plabel(k[0]), k[1], k[2], nxt or "whole")
+
+    def _unsplit_key(self, k):
+        cell = self.dialog[1]
+        if k in (ord("y"),):
+            gone = [x for x in self.surfaces
+                    if (x.conn, x.cx, x.cy) == cell]
+            self.surfaces = [x for x in self.surfaces if x not in gone]
+            self._resplit(cell, None, [])
+            self.msg += "; unplaced " + ", ".join(x.name for x in gone)
+            self.dialog = None
+        elif k in (ESC, ord("n")) or k in ENTER:
+            self.dialog = None      # Enter keeps it: unplacing is asked
+
+    def _vplace(self, n):
+        """Put name N HERE. A name is in one place per desk, so it MOVES if
+        it was elsewhere; whatever overlapped this spot goes."""
+        o, rg = self.vspot()
+        if self._blocked() or o is None or n is None:
+            return
+        gone = [x.name for x in self.at_spot() if x.name != n]
+        self.surfaces = [x for x in self.surfaces
+                         if x.name != n and x.name not in gone]
+        if self.default and self.default.name == n:
+            self.default = None
+        self.surfaces.append(Surface(n, o.conn, rg, *self.vcell))
+        self.msg = "%s: %s of %s, cell %d %d%s" % (
+            n, rg, o.conn, self.vcell[0], self.vcell[1],
+            ("  (replaced %s)" % ", ".join(gone)) if gone else "")
+
+    def _vclear(self, now):
+        gone = self.at_spot()
+        if not self._blocked() and gone:
+            self.surfaces = [x for x in self.surfaces if x not in gone]
+            self.msg = "cleared " + ", ".join(x.name for x in gone)
+
+    def _vdefault(self, n):
+        """Name N becomes the DEFAULT on this panel and region: where every
+        cell no surface claims falls. Not also a surface."""
+        o, rg = self.vspot()
+        if self._blocked() or o is None or n is None:
+            return
+        self.surfaces = [x for x in self.surfaces if x.name != n]
+        self.default = Surface(n, o.conn, rg, None, None)
+        self.msg = "%s is the default: %s of %s" % (n, rg, o.label)
+
+    def _vnodefault(self, now):
+        if self.default:
+            self.default, self.msg = None, "no default"
+
+    def _regrid(self, dw, dh):
+        """Grow or shrink the grid. Shrinking REFUSES while the column or
+        row going away holds a surface: clear it first, nothing silently."""
+        w, h = self.grid[0] + dw, self.grid[1] + dh
+        if w < 1 or h < 1:
+            return
+        lost = [x.name for x in self.surfaces if x.cx >= w or x.cy >= h]
+        if lost:
+            self.msg = "not shrinking: %s would fall off the grid" % \
+                ", ".join(lost)
+            return
+        self.grid = (w, h)
+        self.vcell = [min(self.vcell[0], w - 1), min(self.vcell[1], h - 1)]
+        self.msg = "grid %dx%d" % self.grid
+        # A wallpaper never blocks a shrink, unlike a surface: it is a look,
+        # not a place something lives. It goes, and is said.
+        gone = sorted(c for c in self.walls if c[0] >= w or c[1] >= h)
+        for c in gone:
+            del self.walls[c]
+        if gone:
+            self.msg += "; dropped the wallpaper of " + ", ".join(
+                "cell %d,%d" % c for c in gone)
+
+    def _save_here(self, now):
+        if self.dirty():
+            self._save(now, False)
+        else:
+            self.msg = "nothing to save"
+
+    def _commit(self, now):
+        """Enter finishes what is in progress, and is nothing otherwise:
+        a move is locked, a marked swap is made with the selection."""
+        if self.moving:
+            self._move_mode(now)
+        elif self.mark and self.mark is not self.cur:
+            self._swap(now)
+
+    def _quit(self, now, default=ord("s")):
+        """Leave, at once when nothing is unsaved; otherwise ask. DEFAULT
+        is the answer Enter picks: save from q (leaving was asked for),
+        keep editing from Esc (a back-out key never writes or discards)."""
+        if self.dirty():
+            self.dialog = ("quit", default)
+        else:
+            self.done = True
+
+    def _escape(self, now):
+        if self.moving:
+            o, x, y = self.moving
+            o.x, o.y = x, y
+            self.moving = None
+            self.desk.normalise()
+            self.msg = "move undone"
+        elif self.mark:
+            self.mark, self.msg = None, ""
+        else:
+            self._quit(now, ESC)
+
+    def fail(self, title, why):
+        """A failure, in a dialog sized to what it says: the reasons come
+        before hwdp's one-line summary, and the status line has room for
+        neither (it showed "...the result would be bro", 2026-11-18)."""
+        self.dialog = ("error", {"title": title, "text": why, "top": 0})
+        self.msg = "%s: %s" % (title.lower(), brief(why))
+
+    def _dialog_key(self, k, now):
+        kind = self.dialog[0]
+        if kind == "wpick":
+            return self._wpick_key(k, now)
+        if kind == "error":
+            d = self.dialog[1]
+            if k in ENTER or k in (ESC, ord("q")):
+                self.dialog = None
+            elif k in (curses.KEY_DOWN, ord("j")):
+                d["top"] += 1
+            elif k in (curses.KEY_UP, ord("k")):
+                d["top"] = max(0, d["top"] - 1)
+            elif k == curses.KEY_NPAGE:
+                d["top"] += 10
+            elif k == curses.KEY_PPAGE:
+                d["top"] = max(0, d["top"] - 10)
+            return
+        if kind == "name":
+            return self._form_key(k)
+        if kind == "pick":
+            return self._pick_key(k, now)
+        if kind == "unsplit":
+            return self._unsplit_key(k)
+        if kind == "delname":
+            if k in (ord("y"), ord("D")):
+                self._name_gone()
+            elif k in (ESC, ord("n")) or k in ENTER:
+                self.dialog = None      # Enter keeps it: deleting is asked
+            return
+        if kind == "quit":
+            if k in ENTER:
+                k = self.dialog[1]
+            if k == ord("s"):
+                self._save(now, True)
+            elif k == ord("d"):
+                if self.live_unsaved:
+                    self.hw.arrange("--revert", [])
+                self.done = True
+            elif k == ESC:
+                self.dialog = None
+        elif kind == "keep":
+            if k in (ord("y"), ord("k")) or k in ENTER:
+                self.live_unsaved = True
+                self.dialog = None
+                self.msg = "kept live; s saves it"
+            elif k in (ESC, ord("n")):
+                self._revert("reverted")
