@@ -168,11 +168,18 @@ layout_repack() {
       return hi - lo
     }
     # <old offset> <old edge a> <old edge b> <new edge a> <new edge b>
+    # The midpoint keeps its fraction, BOUNDED so the two still share at
+    # least a pixel: a contact mostly off the edge has its midpoint past the
+    # end, and carrying that fraction to a new length could land it beyond
+    # the edge, detached (a one-pixel contact rotated, 2026-11-19).
     function off(d, ea, eb, na, nb,   v) {
       if (d == 0) return 0
       if (d + eb == ea) return na - nb
       v = (d + eb / 2) / ea * na - nb / 2
-      return (v >= 0) ? int(v + 0.5) : -int(-v + 0.5)
+      v = (v >= 0) ? int(v + 0.5) : -int(-v + 0.5)
+      if (v > na - 1) v = na - 1
+      if (v < 1 - nb) v = 1 - nb
+      return v
     }
     $1 == "old" {
       n++; N[n] = $2; X[n] = $3 + 0; Y[n] = $4 + 0

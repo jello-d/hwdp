@@ -79,6 +79,15 @@ _rp_is "a panel left of the first, and the origin moves to it" \
 _rp_is "a laptop centred BELOW a 4K that scales" \
   'old E 0 0 3840 2160; old B 1097 2160 1645 1028; new E 2194 1234' \
   'E 0 0;B 274 1234;'
+# A contact mostly OFF the edge (one pixel, its midpoint past the end) must
+# not be carried past the end: the midpoint rule alone detached it (y 2350
+# against a 1920-tall edge), found by dragging in hwdp gdesk. Both ends.
+_rp_is "a one-pixel contact at an edge's end survives a rotation" \
+  'old E 2560 0 1920 1200; old L 0 1199 2560 1440; new E 1200 1920' \
+  'E 2560 0;L 0 1919;'
+_rp_is "and at its start" \
+  'old E 2560 1439 1920 1200; old L 0 0 2560 1440; new E 1200 1920' \
+  'E 2560 1439;L 0 0;'
 _rp_is "unchanged sizes change nothing" \
   'old A 0 0 2160 3840; old B 2160 0 2160 3840' \
   'A 0 0;B 2160 0;'
