@@ -306,6 +306,12 @@ chmod +x "$T/hooks/changed.d/50-unplug-once"
 [ -d "$T/drm/card0-DP-3" ] || fail "DP-3 must be plugged before this case"
 _before=$(_runs); sup "$T/run-race" "$T/cfgdir/wayfire.ini"
 _wait_runs $((_before + 1)) 10 || fail "no startup pass (race case)"
+# 10-record writes the line just waited for, and 50-unplug-once runs AFTER
+# it in the same pass: polled, or a loaded box fails this between the two.
+_i=0
+while [ -f "$_once" ] && [ "$_i" -lt 40 ]; do
+  sleep 0.25; _i=$((_i + 1))
+done
 [ -f "$_once" ] && fail "the one-shot hook did not run at startup"
 _wait_runs $((_before + 2)) 15 || fail "a panel unplugged DURING the \
 startup pass was never acted on: $(cat "$T/run-race/mgr.log")"
