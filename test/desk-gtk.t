@@ -443,7 +443,8 @@ until _wl=$(cd "$T/run" && ls wayland-[0-9] 2>/dev/null | head -1) \
 done
 _out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/run" \
   WAYLAND_DISPLAY="$_wl" GSK_RENDERER=cairo GDK_BACKEND=wayland \
-  timeout 60 python3 -I - "$HERE" "$T" 2>&1 <<'PY'
+  timeout 60 python3 -I -W default::DeprecationWarning - "$HERE" "$T" \
+  2>&1 <<'PY'
 import sys, time
 exec(open(sys.argv[2] + "/common.py").read())
 from gi.repository import Adw, Gdk, Gio, GLib
@@ -547,6 +548,12 @@ print("FAILS:" + "|".join(fails) if fails else "OK")
 PY
 )
 case $_out in *OK) ;; *) fail "window: $_out" ;; esac
+# The window warns of nothing it calls (a deprecation reached the user's
+# terminal once, 2026-11-20); shown here by -W, as for a script run directly
+# (not PYTHONWARNINGS: -I ignores every PYTHON* variable).
+printf '%s\n' "$_out" | grep -E 'desk-gtk:[0-9]+: [A-Za-z]*Warning' \
+  && fail "the window warned: $(printf '%s\n' "$_out" | grep -E \
+'desk-gtk:[0-9]+: [A-Za-z]*Warning')"
 pass "the window: drag, keys, keep and error dialogs, the quit prompt"
 
 # --- the preview's cut: the real slicer, for the desk as edited ------------
@@ -603,7 +610,8 @@ fi
 # --- the window: names, the grid, and every dialog they raise --------------
 _out=$(env -i PATH=/usr/bin:/bin HOME="$T/home" XDG_RUNTIME_DIR="$T/run" \
   WAYLAND_DISPLAY="$_wl" GSK_RENDERER=cairo GDK_BACKEND=wayland \
-  timeout 60 python3 -I - "$HERE" "$T" 2>&1 <<'PY'
+  timeout 60 python3 -I -W default::DeprecationWarning - "$HERE" "$T" \
+  2>&1 <<'PY'
 import sys, time, cairo
 exec(open(sys.argv[2] + "/common.py").read())
 make_walls()
@@ -915,6 +923,12 @@ print("FAILS:" + "|".join(fails) if fails else "OK")
 PY
 )
 case $_out in *OK) ;; *) fail "window, names and grid: $_out" ;; esac
+# The window warns of nothing it calls (a deprecation reached the user's
+# terminal once, 2026-11-20); shown here by -W, as for a script run directly
+# (not PYTHONWARNINGS: -I ignores every PYTHON* variable).
+printf '%s\n' "$_out" | grep -E 'desk-gtk:[0-9]+: [A-Za-z]*Warning' \
+  && fail "the window warned: $(printf '%s\n' "$_out" | grep -E \
+'desk-gtk:[0-9]+: [A-Za-z]*Warning')"
 pass "the window: names added and deleted, a grid placed by click, drop and"\
 " picker, cut and joined, a wallpaper, saved"
 

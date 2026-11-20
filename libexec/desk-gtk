@@ -698,24 +698,31 @@ class Thumbs:
         (crisp on a scaled panel), cropped to exactly that, covering it,
         so every row's picture is one size whatever the image's own shape,
         and kept."""
+        # The texture is made from PNG BYTES: a kept thumbnail already is
+        # one, and Gdk.Texture.new_for_pixbuf is deprecated (it warned on
+        # every window, 2026-11-20).
         try:
             kept = thumb_file(path)
-            pb = GdkPixbuf.Pixbuf.new_from_file(kept)
+            with open(kept, "rb") as fh:
+                data = fh.read()
             touch(kept)
-            GLib.idle_add(self._landed, path, pb, "")
+            GLib.idle_add(self._landed, path, data, "")
             return
-        except (OSError, GLib.Error):
+        except OSError:
             pass
         pb, why = self._decode(path)
+        data = None
         if pb is not None:
             try:
+                data = pb.save_to_bufferv("png", [], [])[1]
                 kept = thumb_file(path)
                 os.makedirs(os.path.dirname(kept), exist_ok=True)
-                pb.savev(kept + ".new", "png", [], [])
+                with open(kept + ".new", "wb") as fh:
+                    fh.write(data)
                 os.replace(kept + ".new", kept)
             except (OSError, GLib.Error):
                 pass                # shown anyway; kept next time
-        GLib.idle_add(self._landed, path, pb, why)
+        GLib.idle_add(self._landed, path, data, why)
 
     @staticmethod
     def _decode(path):
@@ -734,8 +741,13 @@ class Thumbs:
             pb, why = None, str(e) or "unreadable"
         return pb, why
 
-    def _landed(self, path, pb, why):
-        tex = Gdk.Texture.new_for_pixbuf(pb) if pb else None
+    def _landed(self, path, data, why):
+        tex = None
+        if data:
+            try:
+                tex = Gdk.Texture.new_from_bytes(GLib.Bytes.new(data))
+            except GLib.Error as e:
+                why = why or str(e)
         self.done[path] = (tex, why)
         for pic in self.waiting.pop(path, []):
             self._show(pic, tex, why)
