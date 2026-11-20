@@ -470,7 +470,7 @@ with HWDP_SAVED set to the profile, and refreshes a running session's kanshi
 config, which carries every desk.
 .TP
 .B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-wallpapers|\-\-raw|\
-\-\-default\-wallpapers|\-\-check|\-\-write]
+\-\-default\-wallpapers|\-\-follow|\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each (eight fields, FROZEN: a consumer refuses any other count):
 .IP
@@ -537,6 +537,23 @@ prints
 .I "X Y FILE"
 for the cells inside the grid (one outside is kept, not used), nothing when
 the desk sets none, and every other cell keeps its default.
+.BI "\-\-follow " "FROM X Y" " \fR[\fINAME\fR...]"
+answers where a person on cell
+.I X Y
+of desk
+.I FROM
+should be now: the cell of THIS desk holding one of the surfaces
+.I FROM
+had there (the built-in panel's first, then whole before halves), else one
+of the
+.IR NAME s
+(an integrator's memory of what it last followed, which carries it across a
+desk with nothing placed, as a dock still arriving is), printed as
+.IR "CX CY NAME" ;
+nothing and exit 1 when none is placed here.
+.I FROM
+is read from its own file, else its kind's. Surface names are global, which
+is what makes the join.
 .B \-\-default\-wallpapers
 prints that default,
 .IR "X Y FILE" ,
@@ -626,7 +643,16 @@ is told the edge that fired it as
 .B HWDP_EDGE
 and its own name as
 .BR HWDP_HOOK " (" pre.d/10-name ),
-which whatever it starts inherits.
+which whatever it starts inherits. A
+.B changed
+hook is also told the desk it fires for as
+.B HWDP_DESK_NOW
+and the desk the supervisor's previous pass was for as
+.B HWDP_PREVIOUS_DESK
+(empty on the first pass): with
+.BR "hwdp surfaces \-\-follow" ,
+what an integrator needs to keep a person on the same surface across a dock
+or an undock.
 .PP
 It reacts to the DISPLAY SET changing as well as to the compositor config: the
 connected panels are polled every

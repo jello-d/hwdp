@@ -26,6 +26,16 @@
 #             cells inside its grid only; FILE is relative to the wallpaper
 #             directory (the integrator's), as a wallpaper map writes it.
 #             Nothing when the desk sets none: every cell keeps its default
+#   --follow FROM X Y [NAME...]  where a person on cell X Y of desk FROM
+#             should be NOW: the cell of THIS desk holding one of the
+#             surfaces FROM had there (the built-in's first, then whole
+#             before halves, then reading order), then of NAME... (an
+#             integrator's memory of what it last followed, which carries
+#             it across a desk with nothing placed, as a dock that is still
+#             arriving is). Prints `CX CY NAME`; nothing and exit 1 when no
+#             candidate is placed here. FROM is a desk key (HWDP_PREVIOUS_
+#             DESK, see `hwdp watch`), its own file else its kind's; empty
+#             for none. Surface names are global, which is the whole join
 #   --default-wallpapers  the wallpaper each cell has when this desk sets
 #             none, `X Y FILE`, as the INTEGRATOR says: hwdp knows no image
 #             of its own, so it asks the `wallpapers` providers
@@ -118,6 +128,7 @@ case "${1:-}" in
   --write-names) MODE=write-names ;;
   --wallpapers) MODE=wallpapers ;;
   --default-wallpapers) MODE=default-wallpapers ;;
+  --follow) MODE=follow ;;
   --write-wallpapers) MODE=write-wallpapers ;;
   --raw)   MODE=raw ;;
   --splits) MODE=splits ;;
@@ -408,6 +419,50 @@ write_wallpapers() {
   install_desk "$_wd" --write-wallpapers
 }
 
+
+if [ "$MODE" = follow ]; then
+  shift
+  if [ $# -lt 3 ]; then
+    echo "usage: hwdp surfaces --follow FROM X Y [NAME...]" >&2
+    exit 2
+  fi
+  _from=$1 _fx=$2 _fy=$3
+  shift 3
+  case "$_fx.$_fy" in
+    *[!0-9.]*|.*|*.) echo "hwdp surfaces: --follow: X and Y are cells" >&2
+                     exit 2 ;;
+  esac
+  case $_from in
+    */*|.*) echo "hwdp surfaces: --follow: bad desk \`$_from\`" >&2
+            exit 2 ;;
+  esac
+  _old=
+  if [ -n "$_from" ]; then
+    _old=$(HWDP_DESK=$_from "$0" --raw 2>/dev/null) || _old=
+    if [ -z "$_old" ]; then
+      . "$HWDP_LIB/desks_lib"
+      _k=$(desk_kind "$_from" 2>/dev/null) || _k=
+      [ -n "$_k" ] && _old=$(HWDP_DESK=$_k "$0" --raw 2>/dev/null) || :
+    fi
+  fi
+  _now=$(env -u HWDP_DESK "$0" 2>/dev/null) || _now=
+  _hit=$({
+    printf '%s\n' "$_old" | awk -F"$TAB" -v x="$_fx" -v y="$_fy" '
+      $1 == "surface" && $4 == x && $5 == y {
+        print (($3 == "@builtin") ? 0 : 1) (($6 == "full") ? 0 :
+          ($6 == "top" || $6 == "left") ? 1 : 2) "\t" $2 }' \
+      | sort -s -k1,1 | cut -f2 | sed 's/^/c\t/'
+    for _n in "$@"; do printf 'c\t%s\n' "$_n"; done
+    printf '%s\n' "$_now" \
+      | awk -v OFS="$TAB" 'NF >= 4 { print "n", $1, $3, $4 }'
+  } | awk -F"$TAB" '$1 == "c" { c[++k] = $2; next }
+      $1 == "n" && !($2 in at) { at[$2] = $3 " " $4 }
+      END { for (i = 1; i <= k; i++) if (c[i] in at) {
+              print at[c[i]], c[i]; exit } }')
+  [ -n "$_hit" ] || exit 1
+  printf '%s\n' "$_hit"
+  exit 0
+fi
 
 _file=
 if [ -n "${HWDP_DESK:-}" ]; then

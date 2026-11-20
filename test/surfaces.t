@@ -532,3 +532,55 @@ _dw=$(DESK=BL ww_any --default-wallpapers) \
 rm -f "$T/no-user/wallpapers/50-shape"
 [ -z "$(run --default-wallpapers)" ] || fail "no provider must be silence"
 pass "default wallpapers: asked of a provider with the desk's shape"
+
+# --- --follow: where a person on a cell of one desk should be on this one ----
+# Surface names are global, so the join is by name: the old cell's surfaces
+# (the built-in's first, whole before halves) then the names an integrator
+# remembers, the first placed HERE winning.
+rm -rf "$T/desks"; mkdir -p "$T/desks"
+printf '%s\n' comms code mail spare > "$T/desks/surfaces.names"
+cat > "$FD" <<'DESK'
+grid 2 2
+surface comms "Dell PORTRAIT SN2" cell 1 1 bottom
+surface code  "Dell WIDE SN3"     cell 0 1
+surface mail  "@builtin"          cell 1 0
+DESK
+cat > "$T/desks/0fa1afa1afa1.conf" <<'DESK'
+grid 3 3
+surface mail  "@builtin" cell 2 0
+surface code  "@builtin" cell 0 2 bottom
+surface comms "@builtin" cell 0 2 top
+surface spare "@builtin" cell 1 1
+surface code2 "Dell WIDE SN3" cell 2 1
+DESK
+printf '%s\n' 'surface code "Dell WIDE SN3" cell 2 1' \
+  'surface mail "@builtin" cell 2 1 bottom' > "$T/desks/0fa1afa1afa2.conf"
+_f() { run --follow "$@" 2>&1; }
+[ "$(_f 0fa1afa1afa1 2 0)" = "1 0 mail" ] \
+  || fail "a cell follows to where its surface is now: $(_f 0fa1afa1afa1 2 0)"
+[ "$(_f 0fa1afa1afa1 0 2)" = "1 1 comms" ] \
+  || fail "of two halves the top comes first: $(_f 0fa1afa1afa1 0 2)"
+[ "$(_f 0fa1afa1afa2 2 1)" = "1 0 mail" ] \
+  || fail "the built-in's surface comes first: $(_f 0fa1afa1afa2 2 1)"
+_rc=0; _o=$(run --follow 0fa1afa1afa1 1 1) || _rc=$?
+[ "$_rc" = 1 ] && [ -z "$_o" ] \
+  || fail "names not placed here: exit 1 and nothing, got $_rc '$_o'"
+[ "$(_f 0fa1afa1afa1 1 1 code)" = "0 1 code" ] \
+  || fail "a remembered name carries it: $(_f 0fa1afa1afa1 1 1 code)"
+[ "$(_f '' 0 0 mail)" = "1 0 mail" ] \
+  || fail "with no desk before, the names alone: $(_f '' 0 0 mail)"
+printf 'surface code "@builtin" cell 2 2\n' > "$T/desks/BL.conf"
+[ "$(_f BL 2 2)" = "0 1 code" ] \
+  || fail "a generic desk's file is read too: $(_f BL 2 2)"
+# A desk with no file of its own falls back to its KIND's (its profile says
+# it is a laptop alone, BL), as the attached desk does.
+mkdir -p "$T/home/.config/kanshi/profiles"
+printf '%s\n' 'profile x {' \
+  '  output "@builtin" mode 2880x1800 position 0,0 transform normal' '}' \
+  > "$T/home/.config/kanshi/profiles/0fa1afa1afa3.conf"
+[ "$(_f 0fa1afa1afa3 2 2)" = "0 1 code" ] \
+  || fail "a desk with no file follows by its kind's: $(_f 0fa1afa1afa3 2 2)"
+run --follow 0fa1afa1afa1 2 >/dev/null 2>&1 && fail "--follow took 2 args"
+run --follow 0fa1afa1afa1 a 0 >/dev/null 2>&1 && fail "a non-cell was taken"
+run --follow ../x 0 0 >/dev/null 2>&1 && fail "a path was taken as a desk"
+pass "--follow: a cell's surfaces, or remembered names, found on this desk"

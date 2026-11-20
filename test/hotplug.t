@@ -62,7 +62,8 @@ printf '#!/bin/sh\nexit 0\n' > "$T/bin/pkill"; chmod +x "$T/bin/pkill"
 
 cat > "$T/hooks/changed.d/10-record" <<EOF
 #!/bin/sh
-echo changed >> "$T/changed.log"
+echo "changed \${HWDP_PREVIOUS_DESK:--} \${HWDP_DESK_NOW:--}" \
+  >> "$T/changed.log"
 EOF
 chmod +x "$T/hooks/changed.d/10-record"
 
@@ -137,6 +138,15 @@ sleep 1
   || fail "the kanshi config was not regenerated for the new panel"
 grep -q "$(head -1 "$T/drm/card0-DP-2/modes" | cut -dx -f1)" "$T/kanshi.conf" \
   || fail "the regenerated config does not mention the new panel"
+# The hooks are told where they came from: the startup pass, nothing (what
+# a file held then is another session's); a change, the desk before it.
+_first=$(head -1 "$T/changed.log"); _plug=$(tail -1 "$T/changed.log")
+case $_first in "changed - "?*) ;; *)
+  fail "the startup pass must name no previous desk: $_first" ;; esac
+[ "$(echo "$_plug" | cut -d' ' -f2)" = "$(echo "$_first" | cut -d' ' -f3)" ] \
+  && [ "$(echo "$_plug" | cut -d' ' -f3)" != \
+       "$(echo "$_first" | cut -d' ' -f3)" ] \
+  || fail "a plug must name the desk it came from: $_first / $_plug"
 
 # --- and unplugging fires too -----------------------------------------------
 # Removal matters as much as arrival: a layout still describing a departed
@@ -145,6 +155,11 @@ _before=$(_runs)
 rm -rf "$T/drm/card0-DP-2"
 _wait_runs $((_before + 1)) 15 \
   || fail "unplugging a panel fired no changed pass"
+_back=$(tail -1 "$T/changed.log")
+_d1=$(echo "$_first" | cut -d' ' -f3); _d2=$(echo "$_plug" | cut -d' ' -f3)
+[ "$_back" = "changed $_d2 $_d1" ] \
+  || fail "the unplug must come from the plugged desk, back to the first:
+$_first / $_plug / $_back"
 
 # --- a monitor SWAPPED on one connector counts as a change ------------------
 # Status alone would miss this: the connector never leaves `connected`. The

@@ -97,6 +97,11 @@ kanshi_pidf="$_rt/watch.$$.kanshi"
 # while a dock is still enumerating, which is exactly when panels arrive.
 panels_f="$_rt/watch.$$.panels"
 
+# The DESK the last `changed` pass was for, so the next can tell its hooks
+# where they came from (HWDP_PREVIOUS_DESK): an integrator following the
+# workspace a person was on across a dock or an undock needs both ends.
+desk_f="$_rt/watch.$$.desk"
+
 # The `unmapped` timer's generation token, the same mechanism as the settle's.
 unmapped_token="$_rt/watch.$$.unmapped"
 unmapped_gen=0
@@ -282,7 +287,7 @@ cleanup() {
   # Dropping the token stands down any settle still sleeping; it is detached,
   # so there is nothing of ours left to kill.
   rm -f "$fifo" "$settle_token" "$kanshi_pidf" "$unmapped_token" \
-    "$panels_f" "$relayout_due"
+    "$panels_f" "$relayout_due" "$desk_f"
   exit 0
 }
 trap '' HUP
@@ -428,6 +433,22 @@ panel_desc() {
   probe_panels 2>/dev/null | awk -F'\t' '{ print $2 " " $3 "x" $4 }' \
     | sort | awk '{ s = s (NR > 1 ? ", " : "") $0 } END { print s }'
 }
+# changed_pass: fire `changed`, every hook told the desk it was fired for as
+# HWDP_DESK_NOW and the one the previous pass was for as HWDP_PREVIOUS_DESK.
+# The startup pass names none, because the file is this supervisor's own
+# and does not exist yet: a desk from another session, followed, would move
+# a person somewhere unasked.
+changed_pass() {
+  _dnow=$(desk_id 2>/dev/null) || _dnow=
+  HWDP_PREVIOUS_DESK=$(cat "$desk_f" 2>/dev/null) || HWDP_PREVIOUS_DESK=
+  HWDP_DESK_NOW=$_dnow
+  export HWDP_PREVIOUS_DESK HWDP_DESK_NOW
+  [ -n "$HWDP_PREVIOUS_DESK" ] && [ "$HWDP_PREVIOUS_DESK" != "$_dnow" ] \
+    && wlog "desk ${HWDP_PREVIOUS_DESK} -> ${_dnow:-none}"
+  printf '%s\n' "$_dnow" >"$desk_f"
+  run_hooks changed
+}
+
 panel_fingerprint >"$panels_f"   # before the layout is generated
 wlog "supervisor up (pid $$); panels: $(panel_desc)"
 
@@ -439,7 +460,7 @@ start_kanshi
 
 wait "$runtime_pid" 2>/dev/null || true
 await_kanshi "$_m"
-run_hooks changed
+changed_pass
 schedule_unmapped
 
 # Degrade gracefully without inotifywait: kanshi runs, auto-reapply is lost,
@@ -536,7 +557,7 @@ schedule_settle() {   # [relayout]
       _m=$(log_mark)
       hup_kanshi
       await_kanshi "$_m"
-      run_hooks changed ) 7<&- 9>&- & )
+      changed_pass ) 7<&- 9>&- & )
 }
 
 # cancel_settle: stand down whatever is pending, owning no process to kill.
