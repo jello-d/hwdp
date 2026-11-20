@@ -84,7 +84,10 @@ class FakeHw:
         self.calls.append(("walls", dict(walls)))
         return self.rc.get("walls", 0), "said no" if self.rc.get("walls") \
             else ""
-    def write_names(self, names):
+    unplaced = None
+    def write_names(self, names, unplace=False):
+        if unplace:
+            self.unplaced = [list(x) for x in names]
         self.calls.append(("names", [list(n) for n in names]))
         return self.rc.get("names", 0), "said no" if self.rc.get("names") \
             else ""
@@ -520,6 +523,9 @@ check("names, then the desk, then the names again without the deleted one",
       and ["mail", "Mail"] in hw.calls[0][1]
       and ["mail", "Mail"] not in hw.calls[2][1]
       and ["chat", "chat"] in hw.calls[2][1] and not a.dirty(), hw.calls)
+check("the names step that drops a deleted name takes it off other desks",
+      hw.unplaced is not None and ["mail", "Mail"] not in hw.unplaced,
+      hw.unplaced)
 check("the desk save carries the grid and the surfaces",
       hw.calls[1][1:] == ((3, 3), [("comms", "DP-1", "full", 0, 0)], None),
       hw.calls[1])

@@ -292,8 +292,11 @@ class Hwdp:
         rc, _, why = self._surf("--write", stdin=lines)
         return rc, why
 
-    def write_names(self, names):
-        rc, _, why = self._surf("--write-names", stdin="".join(
+    def write_names(self, names, unplace=False):
+        """The names list. UNPLACE: a name it drops that a desk places
+        (another desk: this one is already written) comes off that desk."""
+        args = ["--write-names"] + (["--unplace"] if unplace else [])
+        rc, _, why = self._surf(*args, stdin="".join(
             "%s %s\n" % (n, lab) for n, lab in names))
         return rc, why
 

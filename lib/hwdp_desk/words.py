@@ -138,7 +138,8 @@ def delname_words(app):
         ("placed %d time(s)%s" % (len(here), ", and the default"
                                  if dflt else "") if here or dflt
          else "not placed"),
-        "A desk elsewhere that places it makes the save refuse."]
+        "Saving takes it off every other desk that places it too, attached"
+        " or not."]
 
 
 def unsplit_words(app):

@@ -354,6 +354,42 @@ printf 'a\na\n' | wn >/dev/null 2>&1 && fail "--write-names took a doubled name"
 [ "$(cksum < "$NM")" = "$_before" ] || fail "a refusal must leave the list"
 pass "--write-names: refuses to drop a placed name or double one, else writes"
 
+# --unplace: a deleted name comes OFF every desk that places it, attached
+# or not (the user, 2026-11-20: deleting a name at the laptop was refused
+# because the docked desk, not attached, still placed it).
+wnu() {
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" HWDP_DESKS="$T/desks" \
+    HWDP_SURFACES="$T/surf" sh "$KA" surfaces --write-names "$@"
+}
+OD=$T/desks/a1b2c3d4e5f6.conf
+printf '%s\n' 'grid 2 2' 'surface comms "Dell PORTRAIT SN2" cell 1 1' \
+  'surface spare "Dell WIDE SN3" cell 0 1' 'default comms "@builtin" full' \
+  'split "Dell WIDE SN3" cell 1 0 left-right' > "$OD"
+cp "$FD" "$T/fd.keep" 2>/dev/null || : > "$T/fd.keep"
+printf '%s\n' 'grid 3 2' 'surface comms "Dell PORTRAIT SN2" cell 0 0 bottom' \
+  'surface code "Dell WIDE SN3" cell 1 0' > "$FD"
+printf '%s\n' 'comms' 'code' 'elsewhere' 'spare' 'extra' | wn >/dev/null \
+  || fail "the fixture's names list"
+printf '%s\n' 'code' 'elsewhere' 'spare' 'extra' \
+  | wnu --unplace >/dev/null 2>"$T/err" \
+  || fail "--unplace refused: $(cat "$T/err")"
+grep -q 'comms' "$FD" "$OD" && fail "comms must be off both desks:
+$(grep -n comms "$FD" "$OD")"
+grep -qx 'surface spare "Dell WIDE SN3" cell 0 1' "$OD" \
+  && grep -qx 'split "Dell WIDE SN3" cell 1 0 left-right' "$OD" \
+  && grep -qx 'grid 2 2' "$OD" \
+  || fail "every other line must stay: $(cat "$OD")"
+grep -q '^comms' "$NM" && fail "and off the list: $(cat "$NM")"
+[ -f "$T/home/.local/state/hwdp/surfaces/a1b2c3d4e5f6.conf.bak" ] \
+  || fail "the old desk file must be kept"
+grep -q 'took `comms` off .*a1b2c3d4e5f6.conf' "$T/err" \
+  || fail "it must say what it took off: $(cat "$T/err")"
+printf 'code\n' | wnu --bogus >/dev/null 2>&1 && fail "--bogus was taken"
+cp "$T/fd.keep" "$FD"
+printf '%s\n' 'comms Work Comms' 'code' 'elsewhere' 'spare' 'extra Extra' \
+  | wn >/dev/null || fail "putting the names list back"
+pass "--write-names --unplace: off every desk that places it, the rest kept"
+
 # The names list's first home (~/.config/hwdp/surfaces.names) is still read,
 # and written, while the new one (in the desks dir) does not exist.
 mv "$NM" "$T/home/.config/hwdp/surfaces.names" 2>/dev/null \

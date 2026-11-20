@@ -588,6 +588,16 @@ on stderr. Needs a session (exit 3 without one).
 describes each surface and the default in words and notes a panel name that
 matches nothing attached, a switched-on panel no surface uses, gaps in the
 map when there is no default, and names this desk does not place.
+.BR \-\-write\-names " [" \-\-unplace ]
+replaces the names list from
+.I "name [label]"
+lines on stdin; a name it would drop that ANY desk still places (attached or
+not) is refused, or with
+.B \-\-unplace
+taken off every such desk first (its surface and default lines; cuts stay),
+each desk file kept as a backup and announced on the
+.B saved
+edge. The desk tool deletes a name that way.
 .B \-\-write
 writes THIS desk's own file (never a generic one) from
 .IR "grid <w> <h>" ,

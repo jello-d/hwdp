@@ -72,7 +72,10 @@ class FakeHw:
     def slice_preview(self, walls, layout, outdir):
         self.calls.append(("preview", dict(walls)))
         return real.slice_preview(walls, layout, outdir)
-    def write_names(self, names):
+    unplaced = None
+    def write_names(self, names, unplace=False):
+        if unplace:
+            self.unplaced = [list(x) for x in names]
         self.calls.append(("names", [list(n) for n in names]))
         return 0, ""
     def write_desk(self, grid, surfaces, default, splits=()):

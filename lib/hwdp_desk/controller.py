@@ -407,7 +407,10 @@ class App:
                 if why:
                     return why, "layout"
             if keep:
-                why = step("removing names", self.hw.write_names, names)
+                # Deleting a name was asked and answered: it comes off any
+                # OTHER desk that places it too, attached or not.
+                why = step("removing names", self.hw.write_names, names,
+                           True)
                 if why:
                     return why, "desk"
             return step("applying it to this session", self.hw.apply), "all"
