@@ -469,7 +469,7 @@ away from it), through the same writer as arrange and capture, fires
 with HWDP_SAVED set to the profile, and refreshes a running session's kanshi
 config, which carries every desk.
 .TP
-.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-wallpapers|\-\-raw|\
+.B hwdp surfaces [\-\-map|\-\-grid|\-\-names|\-\-labels|\-\-wallpapers|\-\-raw|\
 \-\-default\-wallpapers|\-\-follow|\-\-check|\-\-write]
 This desk's named SURFACES, resolved against the outputs switched on now, one
 line each (eight fields, FROZEN: a consumer refuses any other count):
@@ -518,8 +518,14 @@ prints the desk's grid,
 or nothing;
 .B \-\-names
 prints the names list,
-.I "name label"
-per line.
+.I "name: label"
+per line: no handle has a colon, so the first one divides, and the label
+keeps its spaces (and any colons) as written; a name with no label is
+labelled by itself.
+.B \-\-labels
+prints the plain eight fields, then each surface's label as the rest of the
+line; it is opt-in, since a consumer of the plain record refuses a ninth
+field.
 .B \-\-splits
 prints the panels CUT in two,
 .I "CONNECTOR CX CY top-bottom|left-right"

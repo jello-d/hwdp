@@ -18,7 +18,13 @@
 #             cell no surface claims falls to, which is what makes the map
 #             total without hwdp having to paint every cell
 #   --grid    the desk's grid, `W H`; nothing when the desk sets none
-#   --names   the surface NAMES, `name label...`, one per line
+#   --labels  the same eight fields, then the surface's LABEL (its
+#             vanity name, spaces and all: the rest of the line, so the
+#             eight before it still split on whitespace). Opt-in, because a
+#             consumer of the frozen record refuses a ninth field
+#   --names   the surface NAMES, `name: label`, one per line: a handle has
+#             no colon, so the first one divides it from the label, which
+#             keeps its spaces (and any colons) as written
 #   --check   validate the files and report, in words, instead of resolving
 #   --write   replace this desk's file from lines on stdin (see write_file)
 #   --write-names  replace the names list from stdin (see write_names)
@@ -125,6 +131,7 @@ case "${1:-}" in
   --map)   MODE=map ;;
   --grid)  MODE=grid ;;
   --names) MODE=names ;;
+  --labels) MODE=labels ;;
   --check) MODE=check ;;
   --write) MODE='write' ;;
   --write-names) MODE=write-names ;;
@@ -215,7 +222,8 @@ fi
 if [ "$MODE" = names ]; then
   [ -f "$NAMES" ] || exit 0
   awk '/^[ \t]*(#|$)/ { next }
-    { n = $1; sub(/^[ \t]*[^ \t]+[ \t]*/, ""); print n, ($0 == "" ? n : $0) }
+    { n = $1; sub(/^[ \t]*[^ \t]+[ \t]*/, "")
+      print n ": " ($0 == "" ? n : $0) }
   ' "$NAMES"
   exit 0
 fi
@@ -583,5 +591,20 @@ _nf=$NAMES; [ -f "$_nf" ] || _nf=/dev/null
   && echo "note  no names file ($NAMES): names are not checked"
 
 . "$HWDP_LIB/surfaces_lib"
+if [ "$MODE" = labels ]; then
+  # Resolved as the plain record, THEN labelled: a file the resolver
+  # refuses still exits 2 with nothing on stdout.
+  _out=$(printf '%s\n' "$_live" | surfaces_resolve emit "$_file" "$_nf" \
+    "$_bn" "$_pids") || exit $?
+  [ -n "$_out" ] || exit 0
+  # By FILENAME, not FNR == NR: that is true for the SECOND file when the
+  # first is empty, and with no names list the first is /dev/null.
+  printf '%s\n' "$_out" | awk -v nf="$_nf" 'FILENAME == nf {
+      if ($0 ~ /^[ \t]*(#|$)/) next
+      n = $1; sub(/^[ \t]*[^ \t]+[ \t]*/, ""); L[n] = ($0 == "" ? n : $0)
+      next }
+    { print $0, (($1 in L) ? L[$1] : $1) }' "$_nf" -
+  exit 0
+fi
 printf '%s\n' "$_live" | surfaces_resolve "$MODE" "$_file" "$_nf" "$_bn" \
   "$_pids"

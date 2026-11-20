@@ -43,6 +43,18 @@ def desk_lock(what):
     return fd, ""
 
 
+def name_label(ln):
+    """(name, label) from a `hwdp surfaces --names` line, `name: label`
+    (no handle has a colon, so the first one divides it from a label that
+    may hold spaces and colons), or the older `name label`; (None, None)
+    for neither."""
+    head, sep, rest = ln.partition(":")
+    if sep and head and all(c.isalnum() or c in "_-" for c in head):
+        return head, rest.strip()
+    f = ln.split(None, 1)
+    return (f[0], f[1]) if len(f) == 2 else (None, None)
+
+
 # --- talking to hwdp ---------------------------------------------------------
 
 class Hwdp:
@@ -263,9 +275,10 @@ class Hwdp:
 
     def names(self):
         """[[name, label], ...], the global list, in its order."""
-        rc, out, _ = self._surf("--names")    # always `name label`
-        return [ln.split(None, 1) for ln in out.splitlines()
-                if len(ln.split(None, 1)) == 2] if rc == 0 else []
+        rc, out, _ = self._surf("--names")
+        found = [name_label(ln) for ln in out.splitlines()] if rc == 0 \
+            else []
+        return [[n, lab] for n, lab in found if n]
 
     def write_desk(self, grid, surfaces, default, splits=()):
         lines = "grid %d %d\n" % grid

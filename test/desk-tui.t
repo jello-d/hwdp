@@ -880,6 +880,17 @@ a.key(curses.KEY_SRIGHT, 0)
 check("a desk whose files cannot be edited moves nothing",
       a.surfaces[0].cx == 0 and "cannot be edited" in a.msg, a.msg)
 
+# `hwdp surfaces --names`, as the tool reads it: `name: label`, the first
+# colon dividing, and the older `name label` still read.
+check("a names line is name: label, the label whole",
+      tui.name_label("eng-ops: Engineering: Operations")
+      == ("eng-ops", "Engineering: Operations"))
+check("and the older form still reads",
+      tui.name_label("work-comms Work Comms") == ("work-comms", "Work Comms")
+      and tui.name_label("x Has: A colon") == ("x", "Has: A colon"))
+check("and a line that is neither is nothing",
+      tui.name_label("lonely") == (None, None))
+
 # --- ARRANGE: tiles laid out freely, evened out into a grid on commit -------
 def placed(a):
     return {x.name: (x.cx, x.cy) for x in a.surfaces}

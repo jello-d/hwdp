@@ -233,8 +233,8 @@ $_want
 got
 $_o"
 [ "$(run --grid)" = "3 2" ] || fail "--grid: $(run --grid)"
-[ "$(run --names | sed -n 1p)" = "comms Work Comms" ] \
-  && [ "$(run --names | sed -n 2p)" = "code code" ] \
+[ "$(run --names | sed -n 1p)" = "comms: Work Comms" ] \
+  && [ "$(run --names | sed -n 2p)" = "code: code" ] \
   || fail "--names: a label defaults to the name: $(run --names)"
 run --check 2>&1 | grep -q '`spare` is not placed at this desk' \
   || fail "--check must name an unplaced name: $(run --check 2>&1)"
@@ -359,7 +359,7 @@ pass "--write-names: refuses to drop a placed name or double one, else writes"
 mv "$NM" "$T/home/.config/hwdp/surfaces.names" 2>/dev/null \
   || { mkdir -p "$T/home/.config/hwdp"
        mv "$NM" "$T/home/.config/hwdp/surfaces.names"; }
-[ "$(run --names | sed -n 1p)" = "comms Work Comms" ] \
+[ "$(run --names | sed -n 1p)" = "comms: Work Comms" ] \
   || fail "the old names path must still be read: $(run --names)"
 printf '%s\n' 'comms' 'code' 'elsewhere' 'spare' 'extra' 'later' | wn \
   >/dev/null || fail "writing at the old path failed"
@@ -587,3 +587,41 @@ run --follow 0fa1afa1afa1 2 >/dev/null 2>&1 && fail "--follow took 2 args"
 run --follow 0fa1afa1afa1 a 0 >/dev/null 2>&1 && fail "a non-cell was taken"
 run --follow ../x 0 0 >/dev/null 2>&1 && fail "a path was taken as a desk"
 pass "--follow: a cell's surfaces, or remembered names, found on this desk"
+
+# --- --labels: the plain record, then each surface's label, opt-in -----------
+rm -rf "$T/desks"; mkdir -p "$T/desks"
+printf '%s\n' 'comms Work Comms' 'code' > "$T/desks/surfaces.names"
+printf '%s\n' 'surface comms "Dell PORTRAIT SN2" cell 0 0 bottom' \
+  'surface code "Dell WIDE SN3" cell 1 0' > "$FD"
+_p=$(run) || fail "the plain record failed"
+_l=$(run --labels) || fail "--labels failed"
+[ "$(printf '%s\n' "$_p" | awk 'NF != 8' | wc -l)" -eq 0 ] \
+  || fail "the default record must stay eight fields: $_p"
+[ "$(printf '%s\n' "$_l" | grep '^comms ' | cut -d' ' -f1-8)" = \
+  "$(printf '%s\n' "$_p" | grep '^comms ')" ] \
+  || fail "--labels must lead with the same eight fields: $_l"
+printf '%s\n' "$_l" | grep -q '^comms .* 1920 Work Comms$' \
+  || fail "the label, spaces and all, ends the line: $_l"
+printf '%s\n' "$_l" | grep -q '^code .* code$' \
+  || fail "a name with no label is labelled by itself: $_l"
+mv "$T/desks/surfaces.names" "$T/names.keep"
+# The OLD names path too, or the command falls back to it and this is not
+# the no-list case at all (it was not, until a planted bug passed it).
+[ -f "$T/home/.config/hwdp/surfaces.names" ] \
+  && mv "$T/home/.config/hwdp/surfaces.names" "$T/old-names.keep"
+_l=$(run --labels) || fail "--labels with no names list failed"
+[ "$(printf '%s\n' "$_l" | wc -l)" -eq 2 ] \
+  && printf '%s\n' "$_l" | grep -q '^comms .* comms$' \
+  || fail "with no names list every line is still there, by handle: $_l"
+mv "$T/names.keep" "$T/desks/surfaces.names"
+[ -f "$T/old-names.keep" ] \
+  && mv "$T/old-names.keep" "$T/home/.config/hwdp/surfaces.names"
+printf 'eng-ops Engineering: Operations\n' >> "$T/desks/surfaces.names"
+[ "$(run --names | grep '^eng-ops')" = "eng-ops: Engineering: Operations" ] \
+  || fail "--names: the first colon divides, a label keeps its own: $(run \
+--names)"
+printf 'surface comms "Dell WIDE SN3" cell 1 0\n' >> "$FD"
+_rc=0; _l=$(run --labels 2>/dev/null) || _rc=$?
+[ "$_rc" = 2 ] && [ -z "$_l" ] \
+  || fail "a broken file: exit 2 and nothing, got $_rc '$_l'"
+pass "--labels: the eight fields, then the label; opt-in, the record intact"
