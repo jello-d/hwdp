@@ -815,12 +815,18 @@ class App:
         gone = [x.name for x in self.at_spot() if x.name != n]
         self.surfaces = [x for x in self.surfaces
                          if x.name != n and x.name not in gone]
-        if self.default and self.default.name == n:
+        # SAID, not done quietly: a name is in one place per desk, so the
+        # default's own name placed in a cell stops being the default, and
+        # that once took a desk's default away unnoticed (2026-11-14).
+        was_default = bool(self.default and self.default.name == n)
+        if was_default:
             self.default = None
         self.surfaces.append(Surface(n, o.conn, rg, *self.vcell))
-        self.msg = "%s: %s of %s, cell %d %d%s" % (
+        self.msg = "%s: %s of %s, cell %d %d%s%s" % (
             n, rg, o.conn, self.vcell[0], self.vcell[1],
-            ("  (replaced %s)" % ", ".join(gone)) if gone else "")
+            ("  (replaced %s)" % ", ".join(gone)) if gone else "",
+            "  (no longer the default: this desk has none now)"
+            if was_default else "")
 
     def _vclear(self, now):
         gone = self.at_spot()
@@ -834,9 +840,12 @@ class App:
         o, rg = self.vspot()
         if self._blocked() or o is None or n is None:
             return
+        cells = sorted((x.cx, x.cy) for x in self.surfaces if x.name == n)
         self.surfaces = [x for x in self.surfaces if x.name != n]
         self.default = Surface(n, o.conn, rg, None, None)
-        self.msg = "%s is the default: %s of %s" % (n, rg, o.label)
+        self.msg = "%s is the default: %s of %s%s" % (
+            n, rg, o.label, "  (taken out of cell %s)" % ", ".join(
+                "%d,%d" % c for c in cells) if cells else "")
 
     def _vnodefault(self, now):
         if self.default:

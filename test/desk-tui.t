@@ -880,6 +880,24 @@ a.key(curses.KEY_SRIGHT, 0)
 check("a desk whose files cannot be edited moves nothing",
       a.surfaces[0].cx == 0 and "cannot be edited" in a.msg, a.msg)
 
+# A name is in one place per desk, and moving it between being a surface
+# and being the default is SAID: the default's name placed in a cell once
+# took a desk's default away with nothing on the screen (2026-11-14).
+a, hw = gridapp({}, {})
+a.vcell = [1, 1]
+a.key(ord("f"), 0)
+a.pick["sel"] = [n for n, _ in a.names].index("comms")
+a.key(10, 0)
+check("making a placed name the default says where it was taken from",
+      a.default and a.default.name == "comms"
+      and "taken out of cell 0,0" in a.msg, a.msg)
+a.vcell = [2, 0]
+a.key(10, 0)
+a.pick["sel"] = [n for n, _ in a.names].index("comms")
+a.key(10, 0)
+check("placing the default's name in a cell says the desk lost its default",
+      a.default is None and "no longer the default" in a.msg, a.msg)
+
 # `hwdp surfaces --names`, as the tool reads it: `name: label`, the first
 # colon dividing, and the older `name label` still read.
 check("a names line is name: label, the label whole",
