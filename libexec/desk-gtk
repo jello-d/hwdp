@@ -30,6 +30,11 @@ four tabs over one desk:
                   down (it trades places with its neighbour); t turns the
                   grid, columns becoming rows. Everything a cell holds goes
                   with it: surfaces, cuts, and the wallpaper it shows
+    A             ARRANGE: every workspace a tile to lay out freely, any
+                  shape: drag one (or pick a place and shift+arrows) and it
+                  lands on a row and column, swapping with a tile there;
+                  d deletes one (asked first when it holds something);
+                  Enter commits, evened out into a grid; Esc cancels
     x             clear the spot            f / F  the default / none
     b             the cell's wallpaper      + - ] [  columns and rows
                   (the picker shows each image; every cell with one shows
@@ -62,8 +67,9 @@ from hwdp_desk.hwdp import Hwdp, OfflineHwdp, desk_lock # noqa: E402
 from hwdp_desk.model import (                           # noqa: E402
     HALVES, NEAR, REGION_OF, Desk, near_misses, slicer_layout, slicer_name)
 from hwdp_desk.words import (                           # noqa: E402
-    cell_words, covered, delname_words, error_lines, label_of, mark_of,
-    pick_words, review_lines, selection_words, unsplit_words, where_words)
+    arrange_words, cell_words, covered, deltile_words, delname_words,
+    error_lines, label_of, mark_of, pick_words, review_lines,
+    selection_words, unsplit_words, where_words)
 
 try:
     import gi
@@ -158,12 +164,13 @@ def hit(outs, fr, w, h, px, py):
     return None
 
 
-def vframe(app, w, h):
+def vframe(app, w, h, dims=None):
     """The virtual tab's frame: every cell the same size, each holding the
     desk at one scale, as a dict (cw, ch: a cell's pitch; s: the scale;
-    minx, miny, bw, bh: the desk's logical bounds)."""
+    minx, miny, bw, bh: the desk's logical bounds). DIMS, (columns, rows),
+    when it is not the grid (an arrangement's lattice)."""
     on = app.desk.on()
-    gw, gh = app.grid
+    gw, gh = dims or app.grid
     minx, miny = min(o.x for o in on), min(o.y for o in on)
     bw = max(o.x + o.w for o in on) - minx
     bh = max(o.y + o.h for o in on) - miny
@@ -213,6 +220,24 @@ def vhit(app, w, h, px, py):
                     if inside(px, py, part(rg, b)):
                         return cx, cy, o, rg
             return cx, cy, None, None
+    return None
+
+
+def arr_dims(app):
+    """An arrangement's lattice: (x0, y0) its first place, (nx, ny) its
+    size, the tiles and the ring round them."""
+    x0, y0, x1, y1 = app.arr_extent()
+    return (x0, y0), (x1 - x0 + 1, y1 - y0 + 1)
+
+
+def arr_hit(app, w, h, px, py):
+    """The lattice place under widget point (PX, PY), or None."""
+    (x0, y0), dims = arr_dims(app)
+    vf = vframe(app, w, h, dims)
+    for ix in range(dims[0]):
+        for iy in range(dims[1]):
+            if inside(px, py, cell_rect(vf, ix, iy)):
+                return x0 + ix, y0 + iy
     return None
 
 
@@ -409,9 +434,15 @@ def draw_panel(cr, app, o, cx, cy, b, lit, fg, accent, img=None):
         cr.stroke()
 
 
-def draw_cell(cr, app, vf, cx, cy, fg, accent, cut=None):
-    cur = [cx, cy] == app.vcell
-    x, y, w, h = cell_rect(vf, cx, cy)
+def draw_cell(cr, app, vf, cx, cy, fg, accent, cut=None, at=None,
+              cur=None):
+    """Cell (cx, cy) drawn at its own place, or at AT (an index into the
+    frame) when an arrangement has moved it; CUR lights it, and only the
+    grid lights a spot inside it."""
+    ix, iy = at or (cx, cy)
+    if cur is None:
+        cur = [cx, cy] == app.vcell
+    x, y, w, h = cell_rect(vf, ix, iy)
     rounded(cr, x, y, w, h, 8)
     cr.set_source_rgba(*rgba(fg, 0.03))
     cr.fill_preserve()
@@ -427,9 +458,40 @@ def draw_cell(cr, app, vf, cx, cy, fg, accent, cut=None):
             rgba(fg, 0.5 if own else 0.35), bold=False, sizes=(8,), align=1)
     sel_o, sel_r = app.vspot()
     for o in app.desk.on():
-        draw_panel(cr, app, o, cx, cy, vbox(vf, cx, cy, o),
-                   sel_r if cur and o is sel_o else None, fg, accent,
-                   (cut or {}).get((cx, cy, slicer_name(o))))
+        draw_panel(cr, app, o, cx, cy, vbox(vf, ix, iy, o),
+                   sel_r if cur and o is sel_o and at is None else None,
+                   fg, accent, (cut or {}).get((cx, cy, slicer_name(o))))
+
+
+def draw_arrangement(cr, app, w, h, fg, accent, cut, hover):
+    """An ARRANGEMENT: every tile drawn as its cell, where the draft has
+    put it; every empty place of the lattice a dashed outline to drop
+    into; the selected place lit, and HOVER (a drag's target) outlined."""
+    (x0, y0), dims = arr_dims(app)
+    vf = vframe(app, w, h, dims)
+    for ix in range(dims[0]):
+        for iy in range(dims[1]):
+            pos = (x0 + ix, y0 + iy)
+            cell = app.arr["at"].get(pos)
+            sel = pos == app.arr["sel"]
+            if cell is not None:
+                draw_cell(cr, app, vf, cell[0], cell[1], fg, accent, cut,
+                          at=(ix, iy), cur=sel)
+            else:
+                r = cell_rect(vf, ix, iy)
+                rounded(cr, r[0], r[1], r[2], r[3], 8)
+                cr.set_dash([5, 5])
+                cr.set_line_width(2 if sel else 1)
+                cr.set_source_rgba(*(rgba(accent) if sel else
+                                     rgba(fg, 0.15)))
+                cr.stroke()
+                cr.set_dash([])
+            if pos == hover:
+                r = cell_rect(vf, ix, iy)
+                rounded(cr, r[0] - 3, r[1] - 3, r[2] + 6, r[3] + 6, 10)
+                cr.set_line_width(3)
+                cr.set_source_rgba(*rgba(accent, 0.8))
+                cr.stroke()
 
 
 def colours(area):
@@ -724,6 +786,12 @@ class GridPage:
         click = Gtk.GestureClick()
         click.connect("pressed", self.on_press)
         self.area.add_controller(click)
+        self.dragging = self.hover = None   # an arrangement's drag
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self.on_tile_begin)
+        drag.connect("drag-update", self.on_tile_update)
+        drag.connect("drag-end", self.on_tile_end)
+        self.area.add_controller(drag)
         drop = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.COPY)
         drop.connect("motion", self.on_motion)
         drop.connect("drop", self.on_drop)
@@ -751,7 +819,42 @@ class GridPage:
         return vhit(self.win.app, self.area.get_width(),
                     self.area.get_height(), x, y)
 
+    def place_at(self, x, y):
+        return arr_hit(self.win.app, self.area.get_width(),
+                       self.area.get_height(), x, y)
+
+    # An arrangement: a press picks a place, a drag carries a tile there.
+    def on_tile_begin(self, gesture, x, y):
+        app = self.win.app
+        pos = self.place_at(x, y) if app.arr is not None else None
+        if pos is None or pos not in app.arr["at"] or self.win.alert:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+            return
+        self.dragging, self.hover = pos, pos
+        self.start = (x, y)
+
+    def on_tile_update(self, gesture, dx, dy):
+        if self.dragging is not None:
+            self.hover = self.place_at(self.start[0] + dx,
+                                       self.start[1] + dy)
+            self.area.queue_draw()
+
+    def on_tile_end(self, gesture, dx, dy):
+        app = self.win.app
+        if self.dragging is not None and self.hover is not None and \
+                app.arr is not None:
+            app.arr_put(self.dragging, self.hover)
+        self.dragging = self.hover = None
+        self.win.sync()
+
     def on_press(self, gesture, n, x, y):
+        app = self.win.app
+        if app.arr is not None:
+            pos = self.place_at(x, y)
+            if pos is not None and not self.win.alert:
+                app.arr["sel"] = pos
+                self.win.sync()
+            return
         spot = self.at(x, y)
         if spot is None or self.win.alert or self.win.app.busy:
             return
@@ -761,6 +864,8 @@ class GridPage:
         self.win.sync()
 
     def on_motion(self, target, x, y):
+        if self.win.app.arr is not None:
+            return 0
         spot = self.at(x, y)
         if spot is None or spot[2] is None:
             return 0
@@ -769,6 +874,8 @@ class GridPage:
         return Gdk.DragAction.COPY
 
     def on_drop(self, target, name, x, y):
+        if self.win.app.arr is not None:
+            return False
         spot = self.at(x, y)
         if spot is None or spot[2] is None or self.win.alert:
             return False
@@ -823,6 +930,12 @@ class GridPage:
 
     def caption(self):
         app = self.win.app
+        if app.arr is not None:
+            self.sel.set_text(arrange_words(app))
+            self.cell.set_text("arranging: drag a workspace (it lands on a"
+                               " row and column), d deletes one, Enter"
+                               " commits, Esc cancels")
+            return
         self.sel.set_text(selection_words(app))
         why = self.slices.why
         self.cell.set_text(cell_words(app) + (
@@ -831,6 +944,10 @@ class GridPage:
     def _draw(self, area, cr, w, h):
         app = self.win.app
         fg, accent = colours(area)
+        if app.arr is not None:
+            draw_arrangement(cr, app, w, h, fg, accent, self.slices.cut,
+                             self.hover)
+            return
         vf = vframe(app, w, h)
         for cy in range(app.grid[1]):
             for cx in range(app.grid[0]):
@@ -899,6 +1016,9 @@ def tab_buttons(keyed, ident):
                   curses_key("SF")),
             keyed(None, "object-flip-horizontal-symbolic",
                   "Turn the grid: columns become rows (t)", ord("t")),
+            keyed("Arrange", "view-app-grid-symbolic",
+                  "Lay the workspaces out freely, then commit (A)",
+                  ord("A")),
             Gtk.Separator(orientation=Gtk.Orientation.VERTICAL),
             keyed(None, "list-remove-symbolic", "A column fewer (-)",
                   ord("-")),
@@ -906,7 +1026,15 @@ def tab_buttons(keyed, ident):
             keyed(None, "list-add-symbolic", "A column more (+)", ord("+")),
             keyed(None, "list-remove-symbolic", "A row fewer ([)", ord("[")),
             Gtk.Label(label="rows"),
-            keyed(None, "list-add-symbolic", "A row more (])", ord("]"))]}
+            keyed(None, "list-add-symbolic", "A row more (])", ord("]"))],
+        "arrange": [
+            keyed("Done", "object-select-symbolic",
+                  "Commit the arrangement, evened out into a grid (Enter)",
+                  ENTER),
+            keyed("Cancel", "edit-undo-symbolic",
+                  "Throw the arrangement away (Esc)", ESC),
+            keyed("Delete", "user-trash-symbolic",
+                  "Delete the selected workspace (d)", ord("d"))]}
 
 
 class Window:
@@ -1058,8 +1186,10 @@ class Window:
         tab = TABS[app.tab]
         if self.stack.get_visible_child_name() != tab:
             self.stack.set_visible_child_name(tab)
+        shown = "arrange" if tab == "virtual" and app.arr is not None \
+            else tab
         for name, g in self.groups.items():
-            g.set_visible(name == tab)
+            g.set_visible(name == shown)
         self.preview.set_visible(tab == "physical")
         warn = banner_text(app.desk) if tab == "physical" else ""
         self.banner.set_title(warn)
@@ -1355,8 +1485,17 @@ def pick_form(win, kind):
     return d, None
 
 
+def deltile_alert(win):
+    head, said = deltile_words(win.app)
+    return alert(win, head, "\n".join(said),
+                 [("cancel", "Keep it", None),
+                  ("delete", "Delete", Adw.ResponseAppearance.DESTRUCTIVE)],
+                 "cancel", "cancel"), None
+
+
 DIALOGS = {"keep": keep_alert, "quit": quit_alert, "error": error_alert,
            "delname": delname_alert, "unsplit": unsplit_alert,
+           "deltile": deltile_alert,
            "name": name_form, "pick": lambda w: pick_form(w, "pick"),
            "wpick": lambda w: pick_form(w, "wpick")}
 RESPONSES = {"keep": ord("y"), "revert": ESC, "cancel": ESC,

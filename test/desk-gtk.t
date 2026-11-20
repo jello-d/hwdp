@@ -763,6 +763,54 @@ def virtual_tab(w, a, hw, outs):
     drawn("virtual", g._draw, g.area, 900, 600)
     drawn("physical", w.view._draw, w.view.area, 900, 600)
 
+class G:
+    denied = False
+    def set_state(self, st):
+        self.denied = True
+
+def arrange_tab(w, a, hw):
+    key(w, Gdk.KEY_3)
+    g = w.grid
+    key(w, Gdk.KEY_A)
+    yield
+    check("A opens an arrangement, its own buttons in place of the grid's",
+          a.arr is not None and w.groups["arrange"].get_visible()
+          and not w.groups["virtual"].get_visible())
+    W, H = g.area.get_width(), g.area.get_height()
+    (x0, y0), dims = gui.arr_dims(a)
+    vf = gui.vframe(a, W, H, dims)
+    def mid(pos):
+        r = gui.cell_rect(vf, pos[0] - x0, pos[1] - y0)
+        return r[0] + r[2] / 2, r[1] + r[3] / 2
+    drawn("arrangement", g._draw, g.area, W, H)
+    gest = G()
+    sx, sy = mid((0, 0))
+    g.on_tile_begin(gest, sx, sy)
+    tx, ty = mid((0, -1))
+    g.on_tile_update(gest, tx - sx, ty - sy)
+    check("a drag outlines where the tile will land",
+          not gest.denied and g.hover == (0, -1), g.hover)
+    g.on_tile_end(gest, tx - sx, ty - sy)
+    check("and drops it there, into the ring above the grid",
+          a.arr["at"].get((0, -1)) == (0, 0) and (0, 0) not in a.arr["at"],
+          sorted(a.arr["at"].items()))
+    full = [p for p, c in a.arr["at"].items() if a.tile_holds(c)[0]]
+    a.arr["sel"] = full[0]
+    key(w, Gdk.KEY_d)
+    yield
+    check("deleting a tile that holds something asks",
+          w.alert and w.alert[0] == "deltile")
+    w.alert[1].emit("response", "cancel")
+    yield
+    check("Keep it keeps it", not w.alert and full[0] in a.arr["at"])
+    rows = len({p[1] for p in a.arr["at"]})
+    cols = len({p[0] for p in a.arr["at"]})
+    key(w, Gdk.KEY_Return)
+    yield
+    check("Enter commits it, evened out into a grid",
+          a.arr is None and a.grid == (cols, rows)
+          and w.groups["virtual"].get_visible(), (a.grid, cols, rows))
+
 def delete_and_save(w, a, hw):
     key(w, Gdk.KEY_2)
     a.side = 1
@@ -785,7 +833,7 @@ def delete_and_save(w, a, hw):
 def drive(w, a, hw, outs):
     faint_and_lit()
     for step in (surfaces_tab(w, a, hw), virtual_tab(w, a, hw, outs),
-                 delete_and_save(w, a, hw)):
+                 arrange_tab(w, a, hw), delete_and_save(w, a, hw)):
         yield from step
 
 def activate(g):

@@ -324,6 +324,18 @@ with its neighbour, and
 turns the grid (columns become rows). Everything a cell holds moves with it:
 its surfaces, its cuts and the wallpaper it shows, a default one becoming
 the desk's own where it lands unless that place's default is the same.
+.B A
+ARRANGES: every workspace becomes a tile to lay out freely, in any shape,
+with an empty ring round the tiles to drop into. Arrows pick a place,
+shift+arrows (or, in the window, a drag) move a tile there, swapping with a
+tile already in it;
+.B d
+deletes one, asking first when it holds something (its surfaces are then
+unplaced).
+Enter COMMITS: the draft is shifted to 0,0, every row and column holding no
+tile is dropped, the bounding box becomes the grid and a hole in it a new,
+empty workspace; what each tile held goes with it, as for the moves above.
+Esc throws the draft away, and while one is open nothing is saved or quit.
 REVIEW is the map as it will be saved, cell by cell, with what is missing
 from it: gaps with no default, names not placed here.
 .B s

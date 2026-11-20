@@ -151,6 +151,31 @@ def unsplit_words(app):
         "Joined, they become unplaced here (still in the list)."]
 
 
+def deltile_words(app):
+    """The question before an arrangement's tile that holds something is
+    deleted: (heading, the lines under it)."""
+    cell = app.arr["at"][app.dialog[1]]
+    names, wall = app.tile_holds(cell)
+    held = ", ".join(names) if names else ""
+    if wall:
+        held += ("; " if held else "") + "its wallpaper " + wall
+    return "Delete workspace %d,%d?" % cell, [
+        "It holds %s." % held,
+        "Its surfaces are unplaced when the arrangement is committed (the"
+        " names stay in the list)."]
+
+
+def arrange_words(app):
+    """The arrangement's selected place, in full."""
+    sel = app.arr["sel"]
+    cell = app.arr["at"].get(sel)
+    if cell is None:
+        return "an empty place: shift+arrows from a workspace move it here"
+    names, wall = app.tile_holds(cell)
+    return "workspace %d,%d: %s" % (cell + (", ".join(names) or "(empty)",)) \
+        + ("   wallpaper " + wall if wall else "")
+
+
 def selection_words(app):
     """The virtual tab's selection IN FULL, what a drawing cuts: the names
     first, then where they sit."""

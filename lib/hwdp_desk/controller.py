@@ -20,6 +20,7 @@ FINE = {curses.KEY_SLEFT: (-1, 0), curses.KEY_SRIGHT: (1, 0),
         ord("K"): (0, -1), ord("J"): (0, 1)}
 ESC = 27
 ENTER = (10, 13, curses.KEY_ENTER)
+ARR_PENDING = "an arrangement is open: Enter commits it, Esc cancels it"
 
 # The same keys as a toolkit names them (X keysym names, which GTK reports),
 # so a graphical view hands App.key exactly what the terminal does and one
@@ -92,6 +93,7 @@ class App:
         # integrator's, read only, never saved as the desk's own.
         self.wall_defaults = dict(hw.default_wallpapers())
         self.wpick = None                    # the wallpaper picker, if up
+        self.arr = None                      # an ARRANGEMENT being drafted
         self._mark_saved()
 
     def plabel(self, conn):
@@ -138,6 +140,12 @@ class App:
             return self._dialog_key(k, now)
         if self.moving and (k in ARROWS or k in FINE):
             return self._move(k)
+        if self.arr is not None:
+            if self.tab == 2:
+                return self._arrange_key(k, now)
+            if k in (ord("q"), ord("s")):
+                self.msg = ARR_PENDING
+                return
         tab = {ord("1"): 0, ord("2"): 1, ord("3"): 2, ord("4"): 3,
                curses.KEY_F1: 0, curses.KEY_F2: 1, curses.KEY_F3: 2,
                curses.KEY_F4: 3}.get(k)
@@ -653,6 +661,7 @@ class App:
                ord("f"): lambda now: self._pick("default"),
                ord("F"): self._vnodefault,
                ord("t"): lambda now: self._transpose(),
+               ord("A"): lambda now: self.arrange(),
                ord("+"): lambda now: self._regrid(1, 0),
                ord("-"): lambda now: self._regrid(-1, 0),
                ord("]"): lambda now: self._regrid(0, 1),
@@ -862,19 +871,22 @@ class App:
     # it lands, unless that place's own default is the same image), so what
     # is seen is what moves. The desk's default surface has no cell.
     def _relocate(self, where, grid):
-        """Move every cell C to WHERE(C) (a permutation of the grid), the
-        grid becoming GRID."""
+        """Move every cell C to WHERE(C), the grid becoming GRID. WHERE
+        answers None for a cell that is GONE: what it held is unplaced."""
         if self._blocked():
             return False
+        self.surfaces = [x for x in self.surfaces
+                         if where((x.cx, x.cy)) is not None]
         for x in self.surfaces:
             x.cx, x.cy = where((x.cx, x.cy))
         self.splits = {(c,) + where((cx, cy)): w
-                       for (c, cx, cy), w in self.splits.items()}
+                       for (c, cx, cy), w in self.splits.items()
+                       if where((cx, cy)) is not None}
         shown = {}
         for cx in range(self.grid[0]):
             for cy in range(self.grid[1]):
                 f, _own = self.wall_at((cx, cy))
-                if f:
+                if f and where((cx, cy)) is not None:
                     shown[where((cx, cy))] = f
         self.grid = grid
         self.walls = {c: f for c, f in shown.items()
@@ -912,6 +924,105 @@ class App:
         if self._relocate(lambda c: (c[1], c[0]), (h, w)):
             self.vcell = [self.vcell[1], self.vcell[0]]
             self.msg = "grid transposed: %dx%d" % (h, w)
+
+    # --- ARRANGE: the cells laid out freely, a grid only when committed ----
+    # Every cell becomes a TILE on an open lattice (one empty ring round it
+    # to drop into); a tile moves by a shift+arrow or a drag and always
+    # lands on a lattice place, SWAPPING with a tile already there. A draft
+    # may be any shape. COMMIT evens it out: shifted to 0,0, every row and
+    # column holding no tile dropped, the bounding box the grid, a hole in
+    # it a new empty workspace. Esc throws the draft away; while one is open
+    # nothing is saved or quit, so it can be neither lost nor half-saved.
+    def arrange(self):
+        if self._blocked():
+            return
+        at = {(cx, cy): (cx, cy) for cx in range(self.grid[0])
+              for cy in range(self.grid[1])}
+        self.arr = {"at": at, "sel": tuple(self.vcell), "gone": []}
+        self.msg = ("arranging: shift+arrows or a drag move a workspace,"
+                    " d deletes one, Enter commits, Esc cancels")
+
+    def arr_extent(self):
+        """(x0, y0, x1, y1) of the lattice drawn: the tiles and one ring."""
+        at = self.arr["at"]
+        xs = [p[0] for p in at] or [0]
+        ys = [p[1] for p in at] or [0]
+        return min(xs) - 1, min(ys) - 1, max(xs) + 1, max(ys) + 1
+
+    def arr_put(self, src, dst):
+        """The tile at SRC to DST (a lattice place in the extent), swapping
+        with one there; the selection follows it."""
+        at = self.arr["at"]
+        x0, y0, x1, y1 = self.arr_extent()
+        if src not in at or not (x0 <= dst[0] <= x1 and y0 <= dst[1] <= y1):
+            return
+        tile = at.pop(src)
+        if dst in at:
+            at[src] = at.pop(dst)
+        at[dst] = tile
+        self.arr["sel"] = dst
+        self.msg = "workspace %d,%d to %d,%d" % (tile + dst)
+
+    def _arrange_key(self, k, now):
+        sel = self.arr["sel"]
+        if k == ESC:
+            self.arr = None
+            self.msg = "arrangement cancelled"
+        elif k in ENTER:
+            self._arrange_commit()
+        elif k in ARROWS:
+            dx, dy = ARROWS[k]
+            x0, y0, x1, y1 = self.arr_extent()
+            self.arr["sel"] = (min(max(sel[0] + dx, x0), x1),
+                               min(max(sel[1] + dy, y0), y1))
+        elif k in FINE:
+            dx, dy = FINE[k]
+            self.arr_put(sel, (sel[0] + dx, sel[1] + dy))
+        elif k == ord("d"):
+            self.arr_delete(sel)
+        else:
+            self.msg = ("arranging: shift+arrows move, d deletes, Enter"
+                        " commits, Esc cancels")
+
+    def tile_holds(self, cell):
+        """What a cell holds that deleting it would lose: its surfaces'
+        names, and its own wallpaper."""
+        names = [x.name for x in self.surfaces if (x.cx, x.cy) == cell]
+        return names, self.walls.get(cell)
+
+    def arr_delete(self, pos):
+        """Delete the tile at POS: at once when it holds nothing, else
+        after asking (its surfaces are unplaced when it goes)."""
+        if pos not in self.arr["at"]:
+            return
+        names, wall = self.tile_holds(self.arr["at"][pos])
+        if names or wall:
+            self.dialog = ("deltile", pos)
+        else:
+            self._tile_gone(pos)
+
+    def _tile_gone(self, pos):
+        cell = self.arr["at"].pop(pos)
+        self.arr["gone"].append(cell)
+        self.dialog = None
+        self.msg = "workspace %d,%d deleted (when committed)" % cell
+
+    def _arrange_commit(self):
+        at = self.arr["at"]
+        if not at:
+            self.msg = "a desk needs at least one workspace"
+            return
+        xs = sorted({p[0] for p in at})
+        ys = sorted({p[1] for p in at})
+        new = {cell: (xs.index(p[0]), ys.index(p[1]))
+               for p, cell in at.items()}
+        sel = new.get(at.get(self.arr["sel"]), (0, 0))
+        gone = len(self.arr["gone"])
+        if self._relocate(new.get, (len(xs), len(ys))):
+            self.arr = None
+            self.vcell = list(sel)
+            self.msg = "arranged: grid %dx%d" % self.grid + (
+                ", %d workspace(s) deleted" % gone if gone else "")
 
     def _save_here(self, now):
         if self.dirty():
@@ -979,6 +1090,12 @@ class App:
             return self._pick_key(k, now)
         if kind == "unsplit":
             return self._unsplit_key(k)
+        if kind == "deltile":
+            if k == ord("y"):
+                self._tile_gone(self.dialog[1])
+            elif k in (ESC, ord("n")) or k in ENTER:
+                self.dialog = None      # Enter keeps it: deleting is asked
+            return
         if kind == "delname":
             if k in (ord("y"), ord("D")):
                 self._name_gone()

@@ -880,6 +880,83 @@ a.key(curses.KEY_SRIGHT, 0)
 check("a desk whose files cannot be edited moves nothing",
       a.surfaces[0].cx == 0 and "cannot be edited" in a.msg, a.msg)
 
+# --- ARRANGE: tiles laid out freely, evened out into a grid on commit -------
+def placed(a):
+    return {x.name: (x.cx, x.cy) for x in a.surfaces}
+a, hw = gridapp({}, {(1, 0): "own.jpg"})
+a.key(ord("A"), 0)
+check("A opens an arrangement of every cell", a.arr is not None
+      and len(a.arr["at"]) == 6, a.arr)
+check("its lattice has a ring to drop into",
+      a.arr_extent() == (-1, -1, 3, 2), a.arr_extent())
+a.key(ord("q"), 0); a.key(ord("1"), 0)
+check("q and the tab keys do nothing while it is open",
+      not a.done and a.tab == 2 and a.arr is not None, (a.done, a.tab))
+# The user's case: column 1 made into a row of its own below the rest.
+a.arr_put((1, 1), (1, 2))
+a.arr_put((1, 0), (0, 2))
+a.key(10, 0)
+check("committed: the bounding box is the grid, the holes new workspaces",
+      a.arr is None and a.grid == (3, 3), (a.arr, a.grid))
+check("what the column held went with it, into the row",
+      placed(a) == {"comms": (0, 0), "mail": (0, 2), "code": (2, 1)}
+      and a.walls == {(0, 2): "own.jpg"}, (placed(a), a.walls))
+a, hw = gridapp({}, {})
+a.key(ord("A"), 0)
+# Column 1 carried out to the ring on the right: an EMPTY column is left
+# inside the layout (0, then nothing, then 2 and 3), and it must go.
+a.arr_put((1, 0), (3, 0)); a.arr_put((1, 1), (3, 1))
+a.key(10, 0)
+check("a column left with no tile is dropped, even inside the layout",
+      a.grid == (3, 2) and placed(a) == {"comms": (0, 0), "mail": (2, 0),
+                                         "code": (1, 1)}, (a.grid, placed(a)))
+a, hw = gridapp({}, {})
+a.key(ord("A"), 0)
+a.arr_put((2, 0), (-1, 0)); a.arr_put((2, 1), (-1, 1))
+a.key(10, 0)
+check("and a layout reaching left of 0 is shifted back to 0,0",
+      a.grid == (3, 2) and placed(a) == {"comms": (1, 0), "mail": (2, 0),
+                                         "code": (0, 1)}, (a.grid, placed(a)))
+a, hw = gridapp({}, {})
+a.key(ord("A"), 0)
+a.arr_put((0, 0), (1, 0))
+check("a drop on a tile swaps the two", a.arr["at"][(1, 0)] == (0, 0)
+      and a.arr["at"][(0, 0)] == (1, 0), a.arr["at"])
+a.arr["sel"] = (0, 1)
+a.key(ord("d"), 0)
+check("an empty tile is deleted at once", (0, 1) not in a.arr["at"]
+      and a.dialog is None and (0, 1) in a.arr["gone"], a.arr["gone"])
+a.arr["sel"] = (0, 0)                          # mail's cell, moved here
+a.key(ord("d"), 0)
+check("one that holds something asks first", a.dialog
+      and a.dialog[0] == "deltile"
+      and "mail" in " ".join(tui.deltile_words(a)[1]), a.dialog)
+a.key(10, 0)
+check("Enter keeps it", a.dialog is None and (0, 0) in a.arr["at"])
+a.key(ord("d"), 0); a.key(ord("y"), 0)
+a.key(10, 0)
+check("committed, a deleted tile's surfaces are unplaced",
+      "mail" not in placed(a) and a.arr is None, placed(a))
+a, hw = gridapp({}, {(1, 0): "own.jpg"})
+before = (a.grid, placed(a), dict(a.walls))
+a.key(ord("A"), 0)
+a.arr_put((1, 0), (3, 2))
+a.key(27, 0)
+check("Esc throws the draft away", a.arr is None
+      and (a.grid, placed(a), a.walls) == before, (a.grid, placed(a)))
+a.key(ord("A"), 0)
+a.tab = 0
+a.key(ord("s"), 0)
+check("save is refused while an arrangement is open",
+      not any(c[0] in ("write", "walls") for c in hw.calls)
+      and "arrangement is open" in a.msg, a.msg)
+a.tab = 2
+scr = Scr(80, 24)
+tui.render(scr, a, 0.0)
+check("the terminal draws the arrangement, its tiles titled by cell",
+      "1,0" in scr.text() and "mail" in scr.text()
+      and "S-arrows move it" in scr.text(), scr.text())
+
 print("\n".join(fails) if fails else "ALL-OK")
 PY
 )

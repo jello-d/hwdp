@@ -38,6 +38,11 @@ times, - not placed at this desk):
                   down; t turns the grid, columns becoming rows. What a
                   cell holds goes with it: surfaces, cuts, the wallpaper
                   it shows
+    A             ARRANGE: every workspace a tile to lay out freely, any
+                  shape; arrows pick a place, shift+arrows move the tile
+                  (swapping with one there), d deletes one (asked first
+                  when it holds something), Enter commits (evened out into
+                  a grid), Esc cancels
                   (fewer refuses while that column or row holds a surface)
   4 REVIEW, the map as it will be saved, and what is missing from it
   everywhere
@@ -88,9 +93,11 @@ HELP = (
     "Tab/arrows highlight  Enter move  r rotate  w swap  o off/on  i identify"
     "  p preview",
     "arrows select  a add  e label  D delete",
-    "arrows cell  Tab panel/half  g split  Enter place  f default"
-    "  F none  x clear  b wallpaper  +/- ]/[ grid  S-arrows move  t turn",
+    "Tab panel  g split  Enter place  f/F default  x clear  b wallpaper"
+    "  +/- ]/[ grid  S-arrows move  t turn  A arrange",
     "arrows / PgUp PgDn scroll")
+HELP_ARR = ("arrows place  S-arrows move it  d delete  Enter commit"
+            "  Esc cancel")
 HELP_ALL = "1-4 tabs  s save  q quit"
 SIDE_W = 26             # the sidebar's columns, when the screen has them
 
@@ -222,6 +229,9 @@ def draw_dialog(scr, app, now):
         text = form_lines(app)
     elif kind == "delname":
         head, said = delname_words(app)
+        text = [head, ""] + said + ["", "y  delete it", "Esc  keep it"]
+    elif kind == "deltile":
+        head, said = deltile_words(app)
         text = [head, ""] + said + ["", "y  delete it", "Esc  keep it"]
     elif kind == "unsplit":
         head, said = unsplit_words(app)
@@ -396,6 +406,30 @@ def draw_virtual(scr, app, top, rows, cols, left):
     put(scr, top + gh * ch + 1, left, cell_words(app)[:cols], curses.A_DIM)
 
 
+def draw_arrange(scr, app, top, rows, cols, left):
+    """An ARRANGEMENT: every place of the lattice a box, a workspace's
+    titled with the cell it came from and listing what it holds, an empty
+    one dim; the selected place lit. Shapes need not be a grid yet."""
+    x0, y0, x1, y1 = app.arr_extent()
+    nx, ny = x1 - x0 + 1, y1 - y0 + 1
+    cw, ch = max(6, min(16, cols // nx)), max(3, min(6, rows // ny))
+    for (px, py) in [(x, y) for y in range(y0, y1 + 1)
+                     for x in range(x0, x1 + 1)]:
+        bx, by = left + (px - x0) * cw, top + (py - y0) * ch
+        cell = app.arr["at"].get((px, py))
+        lit = (px, py) == app.arr["sel"]
+        attr = (curses.color_pair(1) | curses.A_BOLD) if lit else (
+            0 if cell is not None else curses.A_DIM)
+        if cell is None:
+            frame(scr, by, bx, cw, ch, attr | curses.A_DIM)
+            continue
+        frame(scr, by, bx, cw, ch, attr, title="%d,%d" % cell)
+        names, _wall = app.tile_holds(cell)
+        for i, n in enumerate(names[:ch - 2]):
+            put(scr, by + 1 + i, bx + 1, n[:cw - 2])
+    put(scr, top + ny * ch, left, arrange_words(app)[:cols], curses.A_BOLD)
+
+
 def draw_physical(scr, app, b, cols, left):
     draw_desk(scr, app, 2, b - 6, cols, left)
     # The selected panel in full, below the drawing (see draw_virtual).
@@ -486,8 +520,9 @@ def render(scr, app, now):
     # One help line: this tab's keys, then the global ones. It wraps by
     # whole entries rather than lose its tail at the screen edge, and
     # everything above it moves up to make room.
-    keys = ["  ".join(line) for line in
-            pack((HELP[app.tab] + "  " + HELP_ALL).split("  "), w - 2)]
+    now_help = HELP_ARR if app.arr is not None and app.tab == 2 \
+        else HELP[app.tab] + "  " + HELP_ALL
+    keys = ["  ".join(line) for line in pack(now_help.split("  "), w - 2)]
     b = h - len(keys)
     # The sidebar everywhere but tab 2, which IS the list of names.
     sw = SIDE_W if w >= 70 and app.tab != 1 else 0
@@ -503,6 +538,8 @@ def render(scr, app, now):
         draw_physical(scr, app, b, w - 1 - left, left)
     elif app.tab == 1:
         draw_surfaces_tab(scr, app, 2, b - 3, w - 2, left)
+    elif app.tab == 2 and app.arr is not None:
+        draw_arrange(scr, app, 2, b - 4, w - 1 - left, left)
     elif app.tab == 2:
         draw_virtual(scr, app, 2, b - 5, w - 1 - left, left)
     else:
