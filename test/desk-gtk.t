@@ -580,6 +580,29 @@ want = {x.split()[0]: (int(x.split()[7]), int(x.split()[8]))
         for x in lay.splitlines()}
 check("each slice is its panel's size in the layout handed in",
       sizes == want, (sizes, want))
+# A cut is REMEMBERED per layout, wallpapers and image files, so a window
+# opened again draws at once instead of waiting on the slicer to find its
+# own cache current (about half a second); an edited image cuts again.
+import types
+asked = []
+class Counted:
+    def wallpaper_dir(self):
+        return WALLS
+    def slice_preview(self, w, lay_, out):
+        asked.append(1)
+        return real.slice_preview(w, lay_, out)
+sl = gui.Slices.__new__(gui.Slices)
+sl.win = types.SimpleNamespace(app=types.SimpleNamespace(hw=Counted()))
+od = sys.argv[2] + "/cache/memo-layout"
+os.makedirs(od)
+w1 = {(0, 0): "aurora.png"}
+f1, _ = sl._remembered(od, w1, lay)
+f2, _ = sl._remembered(od, w1, lay)
+check("a cut seen before is remembered, the slicer not asked again",
+      f1 and f2 == f1 and asked == [1], (asked, f2 == f1))
+os.utime(os.path.join(WALLS, "aurora.png"), (5, 5))
+f3, _ = sl._remembered(od, w1, lay)
+check("an edited image is cut again", asked == [1, 1] and f3, asked)
 check("no wallpapers is nothing to cut",
       real.slice_preview({}, lay, sys.argv[2] + "/cache/p") == ({}, ""))
 # A SHARED copy (/opt/hwdp) has no bin/wallpaper-slicer: the slicer is
@@ -664,6 +687,8 @@ def faint_and_lit():
           and abs(bottom[0] - 255) <= 3, bottom)
 
 def surfaces_tab(w, a, hw):
+    check("the wallpaper cut starts with the window, before the virtual tab",
+          w.grid.slices.want is not None, w.grid.slices.want)
     key(w, Gdk.KEY_2)
     check("2 is the surfaces tab", w.stack.get_visible_child_name()
           == "surfaces" and a.tab == 1, a.tab)

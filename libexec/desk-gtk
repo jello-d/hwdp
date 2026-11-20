@@ -55,6 +55,7 @@ about what a desk is or how it is saved.
 """
 import hashlib
 import itertools
+import json
 import os
 import queue
 import re
@@ -295,6 +296,24 @@ def prune(sub, keep, pattern):
                 os.remove(old)
         except OSError:
             pass                    # another may have taken it: no matter
+
+
+def cut_memo(outdir, walls, wdir):
+    """Where the cut of WALLS ({cell: file}) in OUTDIR (one layout) is
+    remembered: named by every wallpaper's name, size and mtime and the
+    slicer's own settings, so an edited image, another mode or another
+    wallpaper is a different name, never a stale answer."""
+    parts = [os.environ.get("WALLPAPER_SLICER_MODE", ""),
+             os.environ.get("WALLPAPER_SLICER_BG", "")]
+    for (x, y), f in sorted(walls.items()):
+        try:
+            st = os.stat(os.path.join(wdir, f))
+            parts.append("%d %d %s %d %d" % (x, y, f, st.st_mtime_ns,
+                                              st.st_size))
+        except OSError:
+            parts.append("%d %d %s gone" % (x, y, f))
+    key = hashlib.sha1("\0".join(parts).encode()).hexdigest()[:20]
+    return os.path.join(outdir, "memo-%s.json" % key)
 
 
 def touch(path):
@@ -585,14 +604,20 @@ class Slices:
         return (tuple(slicer_layout(self.win.app.desk, PREVIEW_SPAN)),
                 tuple(sorted(self.walls().items())))
 
-    def refresh(self):
+    def refresh(self, now=False):
+        """Cut for the desk as it is, once it holds still; NOW, with no
+        wait, for the first cut a window wants ready before it is asked."""
         k = self.key()
         if k == self.want or cairo is None:
             return
         self.want = k
         if self.timer:
             GLib.source_remove(self.timer)
-        self.timer = GLib.timeout_add(self.wait, self._start)
+            self.timer = None
+        if now:
+            self._start()
+        else:
+            self.timer = GLib.timeout_add(self.wait, self._start)
 
     def _start(self):
         self.timer = None
@@ -611,8 +636,7 @@ class Slices:
                 outdir = layout_dir(layout)
                 os.makedirs(outdir, exist_ok=True)
                 touch(outdir)
-                found, why = self.win.app.hw.slice_preview(
-                    dict(k[1]), layout, outdir)
+                found, why = self._remembered(outdir, dict(k[1]), layout)
                 prune("slices", KEEP_LAYOUTS, r"[0-9a-f]{16}")
         except Exception as e:
             found, why = {}, "the cut raised %r" % e
@@ -623,6 +647,34 @@ class Slices:
             except (cairo.Error, OSError) as e:
                 why = why or "%s: %s" % (path, e)
         GLib.idle_add(self._landed, k, imgs, why)
+
+    def _remembered(self, outdir, walls, layout):
+        """The slicer's answer for WALLS in this layout: REMEMBERED when it
+        was cut before and every slice is still there (the slicer itself
+        takes about half a second just to find its cache current), else
+        asked for and remembered. Nothing is remembered from a failed or a
+        partial cut."""
+        hw = self.win.app.hw
+        memo = cut_memo(outdir, walls, hw.wallpaper_dir())
+        try:
+            with open(memo) as fh:
+                got = {tuple(json.loads(k)): v
+                       for k, v in json.load(fh).items()}
+            if got and all(os.path.isfile(v) for v in got.values()):
+                touch(memo)
+                return got, ""
+        except (OSError, ValueError, TypeError):
+            pass
+        found, why = hw.slice_preview(walls, layout, outdir)
+        if found and not why:
+            try:
+                with open(memo + ".new", "w") as fh:
+                    json.dump({json.dumps(list(k)): v
+                               for k, v in found.items()}, fh)
+                os.replace(memo + ".new", memo)
+            except OSError:
+                pass
+        return found, why
 
     def _landed(self, k, imgs, why):
         self.running = False
@@ -1204,6 +1256,11 @@ class Window:
         self.win.add_controller(keys)
         self.win.connect("close-request", self.on_close)
         GLib.timeout_add(TICK_MS, self.tick)
+        # The virtual tab's wallpapers cut NOW, in the background, not when
+        # the tab is first drawn: it then opens on them in one go, and with
+        # no cache yet the building starts with the window (the user,
+        # 2026-11-20: "a noticeable delay ... when i click virtual").
+        self.grid.slices.refresh(now=True)
         self.sync()
 
     def _bar(self):
