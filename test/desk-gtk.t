@@ -63,7 +63,10 @@ class FakeHw:
     def default_wallpapers(self):
         return dict(self.defaultsv)
     def wallpaper_images(self):
-        return sorted(os.listdir(WALLS), key=str.lower)
+        try:                    # as the real one: no directory, no images
+            return sorted(os.listdir(WALLS), key=str.lower)
+        except OSError:
+            return []
     def wallpaper_dir(self):
         return WALLS
     def slice_preview(self, walls, layout, outdir):
@@ -317,6 +320,30 @@ check("a quarter-turned panel's millimetres are turned too",
       f[1][10:12] == ["340", "600"], f[1])
 o2.transform = "normal"
 check("and turned back with it", o2.mm() == (600, 340), o2.mm())
+
+# The cache: names stable for the same input, new for a changed one, and
+# pruning keeps the newest of its own names and nothing else.
+os.environ["XDG_CACHE_HOME"] = sys.argv[2] + "/cache-pure"
+check("one layout, one directory; another layout, another",
+      gui.layout_dir("a\n") == gui.layout_dir("a\n")
+      != gui.layout_dir("b\n"), gui.layout_dir("a\n"))
+img = sys.argv[2] + "/thumb-src.png"
+open(img, "wb").write(b"x")
+t1 = gui.thumb_file(img)
+os.utime(img, (1, 1))
+check("an edited image gets a new thumbnail name",
+      gui.thumb_file(img) != t1)
+base = os.path.join(gui.cache_root(), "slices")
+os.makedirs(base + "/not-ours")
+for i in range(5):
+    d = os.path.join(base, "%016x" % i)
+    os.makedirs(d)
+    os.utime(d, (1000 + i, 1000 + i))
+gui.prune("slices", 2, r"[0-9a-f]{16}")
+check("pruning keeps the newest, and leaves names it did not write",
+      sorted(os.listdir(base)) == ["%016x" % 3, "%016x" % 4, "not-ours"],
+      sorted(os.listdir(base)))
+os.environ["XDG_CACHE_HOME"] = sys.argv[2] + "/cache"
 
 # The name form, filled in whole: refused characters are said.
 a._name_add(0)
@@ -578,7 +605,7 @@ import sys, time, cairo
 exec(open(sys.argv[2] + "/common.py").read())
 make_walls()
 make_many()
-from gi.repository import Adw, Gdk, Gio, GLib
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
 def drawn(label, fn, area, w, h):
     """Draw a tab into an image: an exception in the drawing fails."""
@@ -730,6 +757,21 @@ def virtual_tab(w, a, hw, outs):
            if x.get_paintable() is None or x.get_tooltip_text()]
     check("EVERY row of a full picker gets its picture (%d)" % len(pics),
           len(pics) == 42 and not bad, (len(pics), bad[:3]))
+    imgs = [os.path.join(WALLS, x) for x in hw.wallpaper_images()]
+    check("every thumbnail is kept in the cache",
+          all(os.path.exists(gui.thumb_file(x)) for x in imgs),
+          [x for x in imgs if not os.path.exists(gui.thumb_file(x))][:3])
+    fresh = gui.Thumbs()
+    fresh._decode = lambda path: (None, "decoded, not read from the cache")
+    seen = Gtk.Picture()
+    fresh.into(imgs[0], seen)
+    for _ in range(40):
+        if seen.get_paintable() is not None:
+            break
+        yield
+    check("a later window shows it from the cache, decoding nothing",
+          seen.get_paintable() is not None and not seen.get_tooltip_text(),
+          seen.get_tooltip_text())
     if CUTTER:
         d.rows.select_row(d.rows.get_row_at_index(2))
         for _ in range(100):
@@ -754,6 +796,11 @@ def virtual_tab(w, a, hw, outs):
         check("the cell's wallpaper is cut across its panels to show it,"
               " and the default's cell too", set(g.slices.cut) == want,
               (sorted(g.slices.cut), g.slices.why))
+        here = gui.layout_dir("\n".join(
+            model.slicer_layout(a.desk, gui.PREVIEW_SPAN)) + "\n")
+        check("the cut is kept under this layout's own directory",
+              os.path.isdir(here) and any(x.startswith("img-")
+                                          for x in os.listdir(here)), here)
     check("the preview cuts the integrator's default where the desk sets"
           " none", g.shown_walls().get((2, 1)) == "aurora.png"
           and (1, 0) in g.shown_walls(), g.shown_walls())

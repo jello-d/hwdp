@@ -53,8 +53,12 @@ desk as data, the words both views say and every call out to hwdp live in
 lib/hwdp_desk, shared with the terminal tool, so the two cannot disagree
 about what a desk is or how it is saved.
 """
+import hashlib
+import itertools
 import os
 import queue
+import re
+import shutil
 import sys
 import threading
 import time
@@ -103,6 +107,8 @@ TICK_MS = 100
 PREVIEW_SPAN = 960  # the whole desk this many pixels across, for slices
 PREVIEW_WAIT = 400  # ms of no change before a preview is cut
 THUMB = (128, 72)   # the picker's thumbnails
+KEEP_LAYOUTS = 16   # slice sets kept, one per desk geometry, newest first
+KEEP_THUMBS = 2000  # thumbnails kept, newest first
 SLICE_ALPHA = 0.5   # a cell's wallpaper, faint, so the names stand out
 LIT_ALPHA = 1.0     # ... and the selected spot's part of it, whole (its
                     # label has a backing; 75% read too close to 50%)
@@ -239,6 +245,63 @@ def arr_hit(app, w, h, px, py):
             if inside(px, py, cell_rect(vf, ix, iy)):
                 return x0 + ix, y0 + iy
     return None
+
+
+# --- the cache: what makes a second look fast ---------------------------------
+# ~/.cache/hwdp/gdesk holds what is slow to make and stable across edits:
+# thumbs/, one small PNG per image, named by the image's path, mtime, size
+# and the thumbnail size (an edited image is a new name; the old one ages
+# out); slices/<layout>/, the slicer's cut of every wallpaper for ONE desk
+# geometry, so going back to a layout (an undone rotation) cuts nothing.
+# Both are pruned to the newest KEEP_*, and pruning touches only names of
+# the shape this writes, inside these directories.
+
+def cache_root():
+    return os.path.join(os.environ.get("XDG_CACHE_HOME") or
+                        os.path.expanduser("~/.cache"), "hwdp", "gdesk")
+
+
+def thumb_file(path):
+    """Where PATH's thumbnail is kept (OSError when PATH is gone)."""
+    st = os.stat(path)
+    key = "%s\0%d\0%d\0%dx%d" % ((path, st.st_mtime_ns, st.st_size)
+                                   + THUMB)
+    return os.path.join(cache_root(), "thumbs",
+                        hashlib.sha1(key.encode()).hexdigest()[:24] + ".png")
+
+
+def layout_dir(layout):
+    """Where the cut for LAYOUT (slicer_layout's text) is kept."""
+    return os.path.join(cache_root(), "slices",
+                        hashlib.sha1(layout.encode()).hexdigest()[:16])
+
+
+def prune(sub, keep, pattern):
+    """Keep the KEEP newest entries of cache_root()/SUB whose names match
+    PATTERN; remove the rest. Newest by mtime: a use touches an entry."""
+    base = os.path.join(cache_root(), sub)
+    try:
+        names = [n for n in os.listdir(base) if re.fullmatch(pattern, n)]
+        names.sort(key=lambda n: os.path.getmtime(os.path.join(base, n)),
+                   reverse=True)
+    except OSError:
+        return
+    for n in names[keep:]:
+        old = os.path.join(base, n)
+        try:
+            if os.path.isdir(old) and not os.path.islink(old):
+                shutil.rmtree(old)
+            else:
+                os.remove(old)
+        except OSError:
+            pass                    # another may have taken it: no matter
+
+
+def touch(path):
+    try:
+        os.utime(path)
+    except OSError:
+        pass
 
 
 def banner_text(desk):
@@ -501,21 +564,22 @@ def colours(area):
 
 # --- the wallpapers: the cells' slices, and the picker's thumbnails ----------
 
+CUT_LOCK = threading.Lock()     # one slicer at a time in the cache
+
+
 class Slices:
     """Wallpapers on the desk AS EDITED, small, cut by wallpaper-slicer the
     way the session's are (WALLPAPER_SLICER_LAYOUT), in the background,
-    into a cache of the tool's own (NAME, one per user of it). WALLS says
+    into the cache (a directory per layout, see layout_dir). WALLS says
     what to cut ({cell: file}), LANDED is called when a cut arrives. Cut
-    again once the layout and WALLS have held still for WAIT ms."""
+    again once the layout and WALLS have held still for WAIT ms; an image
+    already cut for this layout costs nothing."""
 
-    def __init__(self, win, walls, landed, name, wait=PREVIEW_WAIT):
+    def __init__(self, win, walls, landed, wait=PREVIEW_WAIT):
         self.win, self.cut, self.why = win, {}, ""
         self.walls, self.landed, self.wait = walls, landed, wait
         self.want = self.timer = None
         self.running = False
-        self.outdir = os.path.join(
-            os.environ.get("XDG_CACHE_HOME") or
-            os.path.expanduser("~/.cache"), "hwdp", name)
 
     def key(self):
         return (tuple(slicer_layout(self.win.app.desk, PREVIEW_SPAN)),
@@ -541,9 +605,15 @@ class Slices:
     def _work(self, k):
         # Whatever happens here is SAID: a worker that died in silence
         # would leave the preview running forever and never cut again.
+        layout = "\n".join(k[0]) + "\n"
         try:
-            found, why = self.win.app.hw.slice_preview(
-                dict(k[1]), "\n".join(k[0]) + "\n", self.outdir)
+            with CUT_LOCK:
+                outdir = layout_dir(layout)
+                os.makedirs(outdir, exist_ok=True)
+                touch(outdir)
+                found, why = self.win.app.hw.slice_preview(
+                    dict(k[1]), layout, outdir)
+                prune("slices", KEEP_LAYOUTS, r"[0-9a-f]{16}")
         except Exception as e:
             found, why = {}, "the cut raised %r" % e
         imgs = {}
@@ -572,13 +642,31 @@ class Thumbs:
     ones come first. Measured on 82 real wallpapers: a thread per image
     showed nothing for 1.6s (all of them competing) and one at a time took
     11s for the list; neither loses an image. One that fails shows an icon
-    saying so, its reason in the tooltip, never a blank square."""
+    saying so, its reason in the tooltip, never a blank square.
+
+    Each is KEPT in the cache (thumb_file), so a later window reads a small
+    PNG instead of decoding the image; WARM queues every image behind any
+    row that is waiting, so the picker is ready before it is opened."""
     WORKERS = 3
 
     def __init__(self):
         self.done, self.waiting = {}, {}
-        self.todo = queue.Queue()
+        self.todo = queue.PriorityQueue()
+        self.order = itertools.count()
         self.workers = []
+
+    def _queue(self, path, prio):
+        self.todo.put((prio, next(self.order), path))
+        while len(self.workers) < self.WORKERS:
+            t = threading.Thread(target=self._run, daemon=True)
+            t.start()
+            self.workers.append(t)
+
+    def warm(self, paths):
+        """Make every PATH's thumbnail ready, behind anything waited on."""
+        for p in paths:
+            if p not in self.done:
+                self._queue(p, 1)
 
     def into(self, path, picture):
         if path in self.done:
@@ -588,15 +676,11 @@ class Thumbs:
             self.waiting[path].append(picture)
             return
         self.waiting[path] = [picture]
-        self.todo.put(path)
-        while len(self.workers) < self.WORKERS:
-            t = threading.Thread(target=self._run, daemon=True)
-            t.start()
-            self.workers.append(t)
+        self._queue(path, 0)
 
     def _run(self):
         while True:
-            self._load(self.todo.get())
+            self._load(self.todo.get()[2])
 
     @staticmethod
     def _show(picture, tex, why):
@@ -610,9 +694,31 @@ class Thumbs:
         picture.set_paintable(tex)
 
     def _load(self, path):
-        """Decoded at twice THUMB (crisp on a scaled panel) and cropped to
-        exactly that, covering it, so every row's picture is one size
-        whatever the image's own shape."""
+        """From the cache when it is there, else decoded at twice THUMB
+        (crisp on a scaled panel), cropped to exactly that, covering it,
+        so every row's picture is one size whatever the image's own shape,
+        and kept."""
+        try:
+            kept = thumb_file(path)
+            pb = GdkPixbuf.Pixbuf.new_from_file(kept)
+            touch(kept)
+            GLib.idle_add(self._landed, path, pb, "")
+            return
+        except (OSError, GLib.Error):
+            pass
+        pb, why = self._decode(path)
+        if pb is not None:
+            try:
+                kept = thumb_file(path)
+                os.makedirs(os.path.dirname(kept), exist_ok=True)
+                pb.savev(kept + ".new", "png", [], [])
+                os.replace(kept + ".new", kept)
+            except (OSError, GLib.Error):
+                pass                # shown anyway; kept next time
+        GLib.idle_add(self._landed, path, pb, why)
+
+    @staticmethod
+    def _decode(path):
         tw, th = THUMB[0] * 2, THUMB[1] * 2
         try:
             info, w, h = GdkPixbuf.Pixbuf.get_file_info(path)
@@ -626,7 +732,7 @@ class Thumbs:
                                        tw, th), ""
         except (GLib.Error, TypeError, ZeroDivisionError) as e:
             pb, why = None, str(e) or "unreadable"
-        GLib.idle_add(self._landed, path, pb, why)
+        return pb, why
 
     def _landed(self, path, pb, why):
         tex = Gdk.Texture.new_for_pixbuf(pb) if pb else None
@@ -779,8 +885,7 @@ class GridPage:
 
     def __init__(self, win):
         self.win, self.shown = win, None
-        self.slices = Slices(win, self.shown_walls, self._landed,
-                             "gdesk-slices")
+        self.slices = Slices(win, self.shown_walls, self._landed)
         self.area = Gtk.DrawingArea(hexpand=True, vexpand=True)
         self.area.set_draw_func(self._draw)
         click = Gtk.GestureClick()
@@ -1045,6 +1150,13 @@ class Window:
         self.app = app
         self.alert = None       # (kind, its dialog, refresh) while one is up
         self.thumbs = Thumbs()
+        # Every wallpaper's thumbnail made ready now, in the background, so
+        # the picker opens on pictures; the oldest of the kept ones go.
+        threading.Thread(target=prune, args=("thumbs", KEEP_THUMBS,
+                                             r"[0-9a-f]{24}\.png"),
+                         daemon=True).start()
+        self.thumbs.warm(os.path.join(app.hw.wallpaper_dir(), n)
+                         for n in app.hw.wallpaper_images())
         self.win = Adw.ApplicationWindow(application=gapp,
                                          default_width=1200,
                                          default_height=760)
@@ -1403,7 +1515,7 @@ def wall_preview(win, chosen):
     area = Gtk.DrawingArea(content_height=170, margin_start=12,
                            margin_end=12, margin_top=6)
     sl = Slices(win, lambda: {cell: chosen()} if chosen() else {},
-                area.queue_draw, "gdesk-pick", wait=150)
+                area.queue_draw, wait=150)
 
     def draw(_a, cr, w, h):
         on = win.app.desk.on()

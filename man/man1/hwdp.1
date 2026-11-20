@@ -763,6 +763,14 @@ Layout templates and the sticky per-panel scale overrides.
 .I ~/.config/hwdp/providers/{layout,panels,wallpapers}/*
 User providers, tried before the machine and shipped ones.
 .TP
+.I ~/.cache/hwdp/gdesk/{thumbs,slices}
+.BR "hwdp gdesk" 's
+cache: a thumbnail per wallpaper (named by its path, time and size, so an
+edited image is simply a new one), made ready in the background when the
+window opens, and the wallpapers cut for each desk geometry, so a layout
+seen before (an undone rotation) cuts nothing. The newest 2000 thumbnails
+and 16 geometries are kept. Safe to delete at any time.
+.TP
 .I ~/.config/hwdp/surfaces/<id>.conf
 This desk's named surfaces (see
 .BR "hwdp surfaces" ),
