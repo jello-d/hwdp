@@ -563,8 +563,11 @@ _f() { run --follow "$@" 2>&1; }
 [ "$(_f 0fa1afa1afa2 2 1)" = "1 0 mail" ] \
   || fail "the built-in's surface comes first: $(_f 0fa1afa1afa2 2 1)"
 _rc=0; _o=$(run --follow 0fa1afa1afa1 1 1) || _rc=$?
+[ "$_rc" = 1 ] && [ "$_o" = "- - spare" ] \
+  || fail "names not placed here: exit 1, saying what to remember: $_rc '$_o'"
+_rc=0; _o=$(run --follow 0fa1afa1afa1 9 9) || _rc=$?
 [ "$_rc" = 1 ] && [ -z "$_o" ] \
-  || fail "names not placed here: exit 1 and nothing, got $_rc '$_o'"
+  || fail "nothing to look for: exit 1 and nothing, got $_rc '$_o'"
 [ "$(_f 0fa1afa1afa1 1 1 code)" = "0 1 code" ] \
   || fail "a remembered name carries it: $(_f 0fa1afa1afa1 1 1 code)"
 [ "$(_f '' 0 0 mail)" = "1 0 mail" ] \

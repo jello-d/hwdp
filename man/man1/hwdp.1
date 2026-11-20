@@ -550,7 +550,10 @@ of the
 (an integrator's memory of what it last followed, which carries it across a
 desk with nothing placed, as a dock still arriving is), printed as
 .IR "CX CY NAME" ;
-nothing and exit 1 when none is placed here.
+when none is placed here,
+.I "\- \- NAME"
+(the one looked for first, for the caller to remember) and exit 1; nothing
+and exit 1 when there was nothing to look for.
 .I FROM
 is read from its own file, else its kind's. Surface names are global, which
 is what makes the join.

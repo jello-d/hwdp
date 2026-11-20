@@ -32,8 +32,10 @@
 #             before halves, then reading order), then of NAME... (an
 #             integrator's memory of what it last followed, which carries
 #             it across a desk with nothing placed, as a dock that is still
-#             arriving is). Prints `CX CY NAME`; nothing and exit 1 when no
-#             candidate is placed here. FROM is a desk key (HWDP_PREVIOUS_
+#             arriving is). Prints `CX CY NAME`; when no candidate is placed
+#             here, `- - NAME` (the one it looked for first, for the caller
+#             to remember) and exit 1; nothing and exit 1 when there was no
+#             candidate at all. FROM is a desk key (HWDP_PREVIOUS_
 #             DESK, see `hwdp watch`), its own file else its kind's; empty
 #             for none. Surface names are global, which is the whole join
 #   --default-wallpapers  the wallpaper each cell has when this desk sets
@@ -458,9 +460,12 @@ if [ "$MODE" = follow ]; then
   } | awk -F"$TAB" '$1 == "c" { c[++k] = $2; next }
       $1 == "n" && !($2 in at) { at[$2] = $3 " " $4 }
       END { for (i = 1; i <= k; i++) if (c[i] in at) {
-              print at[c[i]], c[i]; exit } }')
-  [ -n "$_hit" ] || exit 1
-  printf '%s\n' "$_hit"
+              print at[c[i]], c[i]; exit }
+            if (k) print "- -", c[1] }')
+  [ -n "$_hit" ] && printf '%s\n' "$_hit"
+  case $_hit in
+    '- -'*|'') exit 1 ;;
+  esac
   exit 0
 fi
 
